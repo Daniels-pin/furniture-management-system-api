@@ -43,3 +43,9 @@ class UserResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class OrderResponse(BaseModel):
+    order_id: int
+    status: str
+    due_date: datetime
