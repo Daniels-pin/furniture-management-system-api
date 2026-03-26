@@ -6,7 +6,7 @@ db = SessionLocal()
 
 admin = User(
     name="Admin",
-    email="admin@company.com",
+    email="admin@nolimits.com",
     password=hash_password("admin123"),
     role="admin"
 )
