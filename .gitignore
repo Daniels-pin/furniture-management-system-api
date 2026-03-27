@@ -12,3 +12,5 @@ __pycache__/
 
 # pytest
 .pytest_cache/
+
+scripts/create_admin.py
