@@ -11,8 +11,7 @@ from app.routes.products import router as products_router
 
 
 app = FastAPI()
-# Create tables
-Base.metadata.create_all(bind=engine)
+
 
 @app.get("/")
 def home():
