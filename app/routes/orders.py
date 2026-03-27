@@ -36,9 +36,11 @@ def create_order(
     for item in order.items:
       order_item = models.OrderItem(
         order_id=new_order.id,
-        product_id=item.product_id,
+        item_name = item.item_name,
+        description = item.description,
         quantity=item.quantity
-    )
+     )
+     
     db.add(order_item)
 
     db.commit()
@@ -66,7 +68,8 @@ def get_orders(
             "due_date": order.due_date,
             "items": [
                 {
-                    "product_id": item.product_id,
+                    "item_name": item.item_name,
+                    "description": item.description,
                     "quantity": item.quantity
                 } for item in items
             ]
@@ -96,7 +99,8 @@ def get_order(
         "due_date": order.due_date,
         "items": [
             {
-                "product_id": item.product_id,
+                "item_name": item.item_name,
+                "description": item.description,
                 "quantity": item.quantity
             } for item in items
         ]

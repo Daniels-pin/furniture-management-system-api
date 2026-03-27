@@ -10,6 +10,12 @@ from app.routes.orders import router as orders_router
 from app.routes.products import router as products_router
 from app.database import engine
 
+from app.db.base import Base
+from app.database import engine
+
+
+
+
 app = FastAPI()
 
 
