@@ -4,7 +4,8 @@ from typing import List, Optional
 from enum import Enum
 
 class OrderItemSchema(BaseModel):
-    product_id: int
+    item_name: str
+    description: Optional[str] = None
     quantity: int
 
 

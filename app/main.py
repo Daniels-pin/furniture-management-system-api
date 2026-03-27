@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.database import engine, Base
+from app.db.base_class import  Base
 from app import models
 from app.auth.auth import router as auth_router
 from fastapi import Depends
@@ -8,7 +8,7 @@ from app.routes.customers import router as customers_router
 from app.routes.users import router as users_router
 from app.routes.orders import router as orders_router
 from app.routes.products import router as products_router
-
+from app.database import engine
 
 app = FastAPI()
 

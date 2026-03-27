@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float
-from app.database import Base
+from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -48,5 +48,6 @@ class OrderItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"))
-    product_id = Column(Integer, ForeignKey("products.id"))
+    item_name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
     quantity = Column(Integer)
