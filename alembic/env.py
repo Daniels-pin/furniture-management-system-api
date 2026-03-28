@@ -15,6 +15,16 @@ load_dotenv()
 # access to the values within the .ini file in use.
 config = context.config
 
+database_url = os.getenv("DATABASE_URL")
+
+if not database_url:
+    raise ValueError("DATABASE_URL is not set")
+
+config.set_main_option(
+    "sqlalchemy.url",
+    os.getenv("DATABASE_URL")
+)
+
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
@@ -83,9 +93,5 @@ if context.is_offline_mode():
 else:
     run_migrations_online()
 
-config.set_main_option(
-    "sqlalchemy.url",
-    os.getenv("DATABASE_URL")
-)
 
-print("RAW DB URL:", repr(os.getenv("DATABASE_URL")))
+
