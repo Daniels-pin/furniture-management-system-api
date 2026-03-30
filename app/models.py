@@ -42,12 +42,19 @@ class Order(Base):
     due_date = Column(DateTime)
 
     created_by = Column(Integer, ForeignKey("users.id"))
+    items = relationship(
+    "OrderItem",
+    back_populates="order",
+    cascade="all, delete-orphan"
+)
 
 class OrderItem(Base):
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id"))
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"))
     item_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     quantity = Column(Integer)
+
+    order = relationship("Order", back_populates="items")

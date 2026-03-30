@@ -3,16 +3,20 @@ from datetime import datetime
 from typing import List, Optional
 from enum import Enum
 
-class OrderItemSchema(BaseModel):
+class OrderItemCreate(BaseModel):
     item_name: str
     description: Optional[str] = None
     quantity: int
 
+class CustomerCreate(BaseModel):
+    name: str
+    phone: str
+    address: str
 
 class OrderCreate(BaseModel):
-    customer_id: int
-    items: List[OrderItemSchema]
-    due_date: datetime
+    customer: CustomerCreate    #instead of customer_id
+    items: List[OrderItemCreate]
+    due_date: Optional[datetime] = None
 
 class OrderStatus(str, Enum):
     pending = "pending"
@@ -45,8 +49,22 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class OrderItemResponse(BaseModel):
+    id: int
+    item_name: str
+    description: Optional[str]
+    quantity: int
+
+    class Config:
+        orm_mode = True
 
 class OrderResponse(BaseModel):
-    order_id: int
-    status: str
-    due_date: datetime
+    id: int
+    customer_id: int
+    status: OrderStatus
+    due_date: Optional[datetime]
+    created_at: datetime
+    items: List[OrderItemResponse]
+
+    class Config:
+        orm_mode = True
