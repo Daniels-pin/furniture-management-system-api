@@ -1,66 +1,184 @@
-from fastapi import APIRouter, Depends, HTTPException
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
 from app.auth.auth import require_role, get_current_user
 from datetime import datetime
-from app.schemas import OrderCreate, OrderResponse
+from app.schemas import OrderCreate, OrderPricingUpdate, OrderResponse, OrderUploadResponse
 from app.schemas import OrderStatus
 from datetime import datetime, timedelta
 from fastapi import Query
+from typing import List
+from app.utils.cloudinary import upload_image
+from app.utils.pricing import compute_pricing
 
 router = APIRouter()
 
 
-@router.post("/orders", response_model=OrderResponse)
+@router.post("/orders", response_model=OrderUploadResponse, response_model_exclude_none=True)
 def create_order(
-    order: OrderCreate,
+    customer_id: int = Form(...),
+    product_id: int | None = Form(None),
+    item_name: str | None = Form(None),
+    description: str | None = Form(None),
+    quantity: int = Form(...),
+    due_date: datetime | None = Form(None),
+    image: UploadFile | None = File(None),
+    total_price: Decimal | None = Form(None),
+    amount_paid: Decimal | None = Form(None),
     db: Session = Depends(get_db),
-    user = Depends(require_role(["showroom", "admin"]))
+    user=Depends(require_role(["showroom", "admin"])),
 ):
-    if not order.items:
-        raise HTTPException(status_code=400, detail="Order must have at least one item")
-    
-    new_customer = models.Customer(
-    name=order.customer.name,
-    phone=order.customer.phone,
-    address=order.customer.address
-)
+    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
 
-    db.add(new_customer)
-    db.commit()
-    db.refresh(new_customer)
-    # Create order
+    resolved_item_name = None
+    resolved_description = description
+
+    if product_id is not None:
+        product = db.query(models.Product).filter(models.Product.id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        resolved_item_name = product.name
+        resolved_description = resolved_description or None
+    else:
+        if not item_name:
+            raise HTTPException(
+                status_code=422, detail="item_name is required when product_id is not provided"
+            )
+        resolved_item_name = item_name
+
+    image_url = None
+    if image is not None:
+        image_url = upload_image(image)
+
+    pricing = compute_pricing(total_price, amount_paid)
+
     new_order = models.Order(
-    customer_id=new_customer.id,
-    due_date=order.due_date,
-    created_by=user.id
-)
+        customer_id=customer_id,
+        due_date=due_date,
+        created_by=user.id,
+        image_url=image_url,
+        total_price=pricing.total_price,
+        amount_paid=pricing.amount_paid,
+        balance=pricing.balance,
+        payment_status=pricing.payment_status,
+    )
 
     db.add(new_order)
     db.commit()
     db.refresh(new_order)
 
-    # Add items
+    order_item = models.OrderItem(
+        order_id=new_order.id,
+        item_name=resolved_item_name,
+        description=resolved_description,
+        quantity=quantity,
+    )
+    db.add(order_item)
+    db.commit()
+
+    return {
+        "order_id": new_order.id,
+        "customer_id": customer_id,
+        "product_id": product_id,
+        "quantity": quantity,
+        "item_name": resolved_item_name,
+        "description": resolved_description,
+        "image_url": new_order.image_url,
+        # Pricing fields are only visible to admin; showroom can input but cannot view
+        **(
+            {
+                "total_price": new_order.total_price,
+                "amount_paid": new_order.amount_paid,
+                "balance": new_order.balance,
+                "payment_status": new_order.payment_status,
+            }
+            if user.role == "admin"
+            else {}
+        ),
+        "status": new_order.status,
+        "due_date": new_order.due_date,
+    }
+
+
+# Legacy JSON endpoint (kept for backward compatibility)
+@router.post("/orders/json", response_model=OrderResponse, response_model_exclude_none=True)
+def create_order_json(
+    order: OrderCreate,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["showroom", "admin"])),
+):
+    if not order.items:
+        raise HTTPException(status_code=400, detail="Order must have at least one item")
+
+    new_customer = models.Customer(
+        name=order.customer.name, phone=order.customer.phone, address=order.customer.address
+    )
+
+    db.add(new_customer)
+    db.commit()
+    db.refresh(new_customer)
+
+    new_order = models.Order(
+        customer_id=new_customer.id, due_date=order.due_date, created_by=user.id
+    )
+
+    db.add(new_order)
+    db.commit()
+    db.refresh(new_order)
+
     items = []
     for item in order.items:
-      order_item = models.OrderItem(
-        order_id=new_order.id,
-        item_name = item.item_name,
-        description = item.description,
-        quantity=item.quantity
-     )
-    
-    db.add(order_item)
-    items.append(order_item)
- 
+        order_item = models.OrderItem(
+            order_id=new_order.id,
+            item_name=item.item_name,
+            description=item.description,
+            quantity=item.quantity,
+        )
+        db.add(order_item)
+        items.append(order_item)
 
     db.commit()
     new_order.items = items
-    return new_order
+    return {
+        "id": new_order.id,
+        "status": new_order.status,
+        "due_date": new_order.due_date,
+        "created_at": new_order.created_at,
+        "image_url": new_order.image_url,
+        **(
+            {
+                "total_price": new_order.total_price,
+                "amount_paid": new_order.amount_paid,
+                "balance": new_order.balance,
+                "payment_status": new_order.payment_status,
+            }
+            if user.role == "admin"
+            else {}
+        ),
+        "customer": {
+            "id": new_customer.id,
+            "name": new_customer.name,
+            "phone": new_customer.phone,
+            "address": new_customer.address,
+        },
+        "items": [
+            {
+                "id": oi.id,
+                "item_name": oi.item_name,
+                "description": oi.description,
+                "quantity": oi.quantity,
+            }
+            for oi in items
+        ],
+    }
     
 
-@router.get("/orders")
+@router.get("/orders", response_model=List[OrderResponse], response_model_exclude_none=True)
 def get_orders(
     db: Session = Depends(get_db),
     user = Depends(get_current_user)
@@ -77,23 +195,40 @@ def get_orders(
           models.Customer.id == order.customer_id
         ).first()
 
-        result.append({
-    "id": order.id,
-    "status": order.status,
-    "due_date": order.due_date,
-    "customer": {
-        "name": customer.name,
-        "phone": customer.phone,
-        "address": customer.address
-    },
-    "items": [
-        {
-            "item_name": item.item_name,
-            "description": item.description,
-            "quantity": item.quantity
-        } for item in items
-    ]
-    })
+        base = {
+            "id": order.id,
+            "status": order.status,
+            "due_date": order.due_date,
+            "created_at": order.created_at,
+            "image_url": order.image_url,
+            "customer": {
+                "id": customer.id,
+                "name": customer.name,
+                "phone": customer.phone,
+                "address": customer.address,
+            },
+            "items": [
+                {
+                    "id": item.id,
+                    "item_name": item.item_name,
+                    "description": item.description,
+                    "quantity": item.quantity,
+                }
+                for item in items
+            ],
+        }
+
+        if user.role == "admin":
+            base.update(
+                {
+                    "total_price": order.total_price,
+                    "amount_paid": order.amount_paid,
+                    "balance": order.balance,
+                    "payment_status": order.payment_status,
+                }
+            )
+
+        result.append(base)
         
 
     return result
@@ -134,7 +269,7 @@ def get_reminders(
     return result
 
 
-@router.get("/orders/{order_id}")
+@router.get("/orders/{order_id}", response_model=OrderResponse, response_model_exclude_none=True)
 def get_order(
     order_id: int,
     db: Session = Depends(get_db),
@@ -152,23 +287,40 @@ def get_order(
     models.Customer.id == order.customer_id
     ).first()
 
-    return {
-    "id": order.id,
-    "status": order.status,
-    "due_date": order.due_date,
-    "customer": {
-        "name": customer.name,
-        "phone": customer.phone,
-        "address": customer.address
-    },
-    "items": [
-        {
-            "item_name": item.item_name,
-            "description": item.description,
-            "quantity": item.quantity
-        } for item in items
-    ]
-}
+    base = {
+        "id": order.id,
+        "status": order.status,
+        "due_date": order.due_date,
+        "created_at": order.created_at,
+        "image_url": order.image_url,
+        "customer": {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+        },
+        "items": [
+            {
+                "id": item.id,
+                "item_name": item.item_name,
+                "description": item.description,
+                "quantity": item.quantity,
+            }
+            for item in items
+        ],
+    }
+
+    if user.role == "admin":
+        base.update(
+            {
+                "total_price": order.total_price,
+                "amount_paid": order.amount_paid,
+                "balance": order.balance,
+                "payment_status": order.payment_status,
+            }
+        )
+
+    return base
 
 @router.put("/orders/{order_id}")
 def update_order_status(
@@ -177,7 +329,7 @@ def update_order_status(
     db: Session = Depends(get_db),
     user = Depends(require_role(["manager", "admin"]))
 ):
-    allowed_status = ["pending", "in_progress", "completed", "delivered"]
+    allowed_status = set(OrderStatus)
 
     if status not in allowed_status:
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -187,10 +339,38 @@ def update_order_status(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    order.status = status
+    order.status = status.value
     db.commit()
 
     return {"message": "Order status updated"}
+
+
+@router.patch("/orders/{order_id}")
+def update_order_pricing(
+    order_id: int,
+    payload: OrderPricingUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    pricing = compute_pricing(payload.total_price, payload.amount_paid)
+    order.total_price = pricing.total_price
+    order.amount_paid = pricing.amount_paid
+    order.balance = pricing.balance
+    order.payment_status = pricing.payment_status
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "id": order.id,
+        "total_price": order.total_price,
+        "amount_paid": order.amount_paid,
+        "balance": order.balance,
+        "payment_status": order.payment_status,
+    }
 
 @router.delete("/orders/{order_id}")
 def delete_order(

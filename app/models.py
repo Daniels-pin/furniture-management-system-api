@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, Numeric
 from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy.orm import relationship
@@ -40,6 +40,11 @@ class Order(Base):
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime)
+    image_url = Column(String, nullable=True)
+    total_price = Column(Numeric(11, 2), nullable=True)
+    amount_paid = Column(Numeric(11, 2), nullable=True)
+    balance = Column(Numeric(11, 2), nullable=True)
+    payment_status = Column(String, default="unpaid")
 
     created_by = Column(Integer, ForeignKey("users.id"))
     items = relationship(

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import List, Optional
@@ -12,6 +14,13 @@ class CustomerCreate(BaseModel):
     name: str
     phone: str
     address: str
+
+
+class CustomerResponse(CustomerCreate):
+    id: int
+
+    class Config:
+        orm_mode = True
 
 class OrderCreate(BaseModel):
     customer: CustomerCreate    #instead of customer_id
@@ -46,8 +55,20 @@ class UserResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
+
+
+class ProductCreate(BaseModel):
+    name: str
+    price: float
+
+
+class ProductResponse(ProductCreate):
+    id: int
+
+    class Config:
+        orm_mode = True
 
 class OrderItemResponse(BaseModel):
     id: int
@@ -60,11 +81,37 @@ class OrderItemResponse(BaseModel):
 
 class OrderResponse(BaseModel):
     id: int
-    customer_id: int
     status: OrderStatus
     due_date: Optional[datetime]
     created_at: datetime
+    image_url: Optional[str] = None
+    total_price: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+    balance: Optional[Decimal] = None
+    payment_status: Optional[str] = None
+    customer: CustomerResponse
     items: List[OrderItemResponse]
 
     class Config:
         orm_mode = True
+
+
+class OrderUploadResponse(BaseModel):
+    order_id: int
+    customer_id: int
+    product_id: Optional[int] = None
+    quantity: int
+    item_name: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    total_price: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+    balance: Optional[Decimal] = None
+    payment_status: Optional[str] = None
+    status: OrderStatus
+    due_date: Optional[datetime] = None
+
+
+class OrderPricingUpdate(BaseModel):
+    total_price: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
