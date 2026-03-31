@@ -33,7 +33,6 @@ export function AppLayout() {
             <NavItem to="/dashboard" label="Dashboard" />
             <NavItem to="/orders" label="Orders" />
             <NavItem to="/customers" label="Customers" />
-            <NavItem to="/products" label="Products" />
             {auth.role === "admin" ? <NavItem to="/admin/users" label="Admin Users" /> : null}
           </nav>
 

@@ -1,4 +1,6 @@
 from decimal import Decimal
+import json
+import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -6,24 +8,65 @@ from app.database import get_db
 from app import models
 from app.auth.auth import require_role, get_current_user
 from datetime import datetime
-from app.schemas import OrderCreate, OrderPricingUpdate, OrderResponse, OrderUploadResponse
+from app.schemas import OrderCreate, OrderItemCreate, OrderPricingUpdate, OrderResponse, OrderUploadResponse
 from app.schemas import OrderStatus
 from datetime import datetime, timedelta
 from fastapi import Query
-from typing import List
+from typing import List, Optional
 from app.utils.cloudinary import upload_image
 from app.utils.pricing import compute_pricing
+from pydantic import TypeAdapter, ValidationError
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-@router.post("/orders", response_model=OrderUploadResponse, response_model_exclude_none=True)
+def _build_order_response(order: models.Order, customer: models.Customer, items: list[models.OrderItem], user) -> dict:
+    base: dict = {
+        "id": order.id,
+        "status": order.status,
+        "due_date": order.due_date,
+        "created_at": order.created_at,
+        "image_url": order.image_url,
+        "customer": {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+        },
+        "items": [
+            {
+                "id": it.id,
+                "item_name": it.item_name,
+                "description": it.description,
+                "quantity": it.quantity,
+            }
+            for it in items
+        ],
+    }
+
+    if user.role == "admin":
+        base.update(
+            {
+                "total_price": order.total_price,
+                "amount_paid": order.amount_paid,
+                "balance": order.balance,
+                "payment_status": order.payment_status,
+            }
+        )
+
+    return base
+
+
+@router.post("/orders", response_model=OrderResponse, response_model_exclude_none=True)
 def create_order(
-    customer_id: int = Form(...),
-    product_id: int | None = Form(None),
-    item_name: str | None = Form(None),
-    description: str | None = Form(None),
-    quantity: int = Form(...),
+    # Customer must always be provided (new customer)
+    customer_name: Optional[str] = Form(None),
+    customer_phone: Optional[str] = Form(None),
+    customer_address: Optional[str] = Form(None),
+
+    # Items (list of {item_name, description, quantity})
+    items_json: Optional[str] = Form(None),
     due_date: datetime | None = Form(None),
     image: UploadFile | None = File(None),
     total_price: Decimal | None = Form(None),
@@ -31,78 +74,91 @@ def create_order(
     db: Session = Depends(get_db),
     user=Depends(require_role(["showroom", "admin"])),
 ):
-    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    # 1) Parse items
+    items_payload: list[OrderItemCreate] = []
 
-    resolved_item_name = None
-    resolved_description = description
+    if not items_json:
+        raise HTTPException(status_code=422, detail="Invalid request format")
 
-    if product_id is not None:
-        product = db.query(models.Product).filter(models.Product.id == product_id).first()
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
-        resolved_item_name = product.name
-        resolved_description = resolved_description or None
-    else:
-        if not item_name:
-            raise HTTPException(
-                status_code=422, detail="item_name is required when product_id is not provided"
-            )
-        resolved_item_name = item_name
+    try:
+        raw = json.loads(items_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid request format")
 
+    try:
+        items_payload = TypeAdapter(List[OrderItemCreate]).validate_python(raw)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="Invalid request format")
+
+    if not items_payload:
+        raise HTTPException(status_code=422, detail="Items required")
+
+    # 2) Validate customer (always new)
+    name = (customer_name or "").strip()
+    phone = (customer_phone or "").strip()
+    address = (customer_address or "").strip()
+
+    if not name or not phone or not address:
+        raise HTTPException(status_code=422, detail="Customer info missing")
+
+    # 3) Upload image (optional) before DB writes
     image_url = None
     if image is not None:
         image_url = upload_image(image)
 
+    # 4) Pricing (showroom/admin can input; only admin can view)
     pricing = compute_pricing(total_price, amount_paid)
 
-    new_order = models.Order(
-        customer_id=customer_id,
-        due_date=due_date,
-        created_by=user.id,
-        image_url=image_url,
-        total_price=pricing.total_price,
-        amount_paid=pricing.amount_paid,
-        balance=pricing.balance,
-        payment_status=pricing.payment_status,
-    )
+    # 5) Transactional create (customer + order + items)
+    try:
+        # Session may already be inside a transaction (SQLAlchemy autobegin, or upstream usage).
+        # Use a nested transaction in that case to avoid InvalidRequestError.
+        had_outer_tx = db.in_transaction()
+        tx = db.begin_nested() if had_outer_tx else db.begin()
+        with tx:
+            customer = models.Customer(name=name, phone=phone, address=address)
+            db.add(customer)
+            db.flush()  # get customer.id
 
-    db.add(new_order)
-    db.commit()
-    db.refresh(new_order)
+            new_order = models.Order(
+                customer_id=customer.id,
+                due_date=due_date,
+                created_by=user.id,
+                image_url=image_url,
+                total_price=pricing.total_price,
+                amount_paid=pricing.amount_paid,
+                balance=pricing.balance,
+                payment_status=pricing.payment_status,
+            )
+            db.add(new_order)
+            db.flush()  # get new_order.id
 
-    order_item = models.OrderItem(
-        order_id=new_order.id,
-        item_name=resolved_item_name,
-        description=resolved_description,
-        quantity=quantity,
-    )
-    db.add(order_item)
-    db.commit()
+            created_items: list[models.OrderItem] = []
+            for it in items_payload:
+                oi = models.OrderItem(
+                    order_id=new_order.id,
+                    item_name=it.item_name,
+                    description=it.description,
+                    quantity=it.quantity,
+                )
+                db.add(oi)
+                created_items.append(oi)
+            db.flush()
+        # If we entered with an already-open transaction, begin_nested() only releases a SAVEPOINT.
+        # We must commit the outer transaction, otherwise the session will roll back on close and
+        # the newly created records won't be visible to subsequent requests.
+        if had_outer_tx:
+            db.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to create order")
+        # Return a concise error for debugging; remove/normalize in production if needed.
+        raise HTTPException(status_code=500, detail=f"Failed to create order: {type(e).__name__}: {e}") from e
 
-    return {
-        "order_id": new_order.id,
-        "customer_id": customer_id,
-        "product_id": product_id,
-        "quantity": quantity,
-        "item_name": resolved_item_name,
-        "description": resolved_description,
-        "image_url": new_order.image_url,
-        # Pricing fields are only visible to admin; showroom can input but cannot view
-        **(
-            {
-                "total_price": new_order.total_price,
-                "amount_paid": new_order.amount_paid,
-                "balance": new_order.balance,
-                "payment_status": new_order.payment_status,
-            }
-            if user.role == "admin"
-            else {}
-        ),
-        "status": new_order.status,
-        "due_date": new_order.due_date,
-    }
+    # 6) Build full response (customer + items)
+    # Avoid extra round-trips; ids are available after flush.
+    return _build_order_response(new_order, customer, created_items, user)
 
 
 # Legacy JSON endpoint (kept for backward compatibility)

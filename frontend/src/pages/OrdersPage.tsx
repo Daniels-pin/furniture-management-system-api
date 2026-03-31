@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Customer, Order, OrderStatus, Product } from "../types/api";
-import { customersApi, ordersApi, productsApi } from "../services/endpoints";
+import type { Order, OrderCreateItem, OrderStatus } from "../types/api";
+import { ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
 import { useToast } from "../state/toast";
@@ -39,8 +39,6 @@ export function OrdersPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
 
   const canCreate = auth.role === "showroom" || auth.role === "admin";
   const canDelete = auth.role === "admin";
@@ -80,13 +78,6 @@ export function OrdersPage() {
 
   async function openCreate() {
     setCreateOpen(true);
-    try {
-      const [c, p] = await Promise.all([customersApi.list(), productsApi.list()]);
-      setCustomers(Array.isArray(c) ? c : []);
-      setProducts(Array.isArray(p) ? p : []);
-    } catch (err) {
-      toast.push("error", getErrorMessage(err));
-    }
   }
 
   async function doDelete(orderId: number) {
@@ -244,8 +235,6 @@ export function OrdersPage() {
       <CreateOrderModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        customers={customers}
-        products={products}
         canInputPricing={canInputPricingOnCreate}
         onCreated={async () => {
           setCreateOpen(false);
@@ -259,23 +248,23 @@ export function OrdersPage() {
 function CreateOrderModal({
   open,
   onClose,
-  customers,
-  products,
   canInputPricing,
   onCreated
 }: {
   open: boolean;
   onClose(): void;
-  customers: Customer[];
-  products: Product[];
   canInputPricing: boolean;
   onCreated(): Promise<void>;
 }) {
   const toast = useToast();
 
-  const [customerId, setCustomerId] = useState<string>("");
-  const [productId, setProductId] = useState<string>("");
-  const [quantity, setQuantity] = useState<string>("1");
+  const [customerName, setCustomerName] = useState<string>("");
+  const [customerPhone, setCustomerPhone] = useState<string>("");
+  const [customerAddress, setCustomerAddress] = useState<string>("");
+
+  const [items, setItems] = useState<Array<{ item_name: string; description: string; quantity: string }>>([
+    { item_name: "", description: "", quantity: "1" }
+  ]);
   const [dueDate, setDueDate] = useState<string>("");
   const [image, setImage] = useState<File | null>(null);
   const [totalPrice, setTotalPrice] = useState<string>("");
@@ -286,23 +275,39 @@ function CreateOrderModal({
 
   useEffect(() => {
     if (!open) return;
-    setCustomerId(customers[0]?.id ? String(customers[0].id) : "");
-    setProductId(products[0]?.id ? String(products[0].id) : "");
-    setQuantity("1");
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerAddress("");
+    setItems([{ item_name: "", description: "", quantity: "1" }]);
     setDueDate("");
     setImage(null);
     setTotalPrice("");
     setAmountPaid("");
     setFieldError({});
     setIsSubmitting(false);
-  }, [open, customers, products]);
+  }, [open]);
 
   function validate() {
     const e: Record<string, string> = {};
-    if (!customerId) e.customerId = "Customer is required";
-    if (!productId) e.productId = "Product is required";
-    const qNum = Number(quantity);
-    if (!Number.isFinite(qNum) || qNum <= 0) e.quantity = "Quantity must be a positive number";
+
+    if (!customerName.trim()) e.customerName = "Customer name is required";
+    if (!customerPhone.trim()) e.customerPhone = "Phone is required";
+    if (!customerAddress.trim()) e.customerAddress = "Address is required";
+
+    const normalizedItems: OrderCreateItem[] = [];
+    items.forEach((it, idx) => {
+      const name = it.item_name.trim();
+      const desc = it.description.trim();
+      const qty = Number(it.quantity);
+      if (!name) e[`items.${idx}.item_name`] = "Item name is required";
+      if (!desc) e[`items.${idx}.description`] = "Description is required";
+      if (!Number.isFinite(qty) || qty <= 0) e[`items.${idx}.quantity`] = "Quantity must be > 0";
+      if (name && desc && Number.isFinite(qty) && qty > 0)
+        normalizedItems.push({ item_name: name, description: desc, quantity: qty } as any);
+    });
+
+    if (normalizedItems.length === 0) e.items = "Items required";
+
     if (canInputPricing) {
       if (totalPrice && Number(totalPrice) < 0) e.totalPrice = "Total price cannot be negative";
       if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Amount paid cannot be negative";
@@ -318,9 +323,25 @@ function CreateOrderModal({
     setIsSubmitting(true);
     try {
       const form = new FormData();
-      form.append("customer_id", customerId);
-      form.append("product_id", productId);
-      form.append("quantity", quantity);
+      form.append("customer_name", customerName.trim());
+      form.append("customer_phone", customerPhone.trim());
+      form.append("customer_address", customerAddress.trim());
+
+      const payload = items
+        .map((it) => ({
+          item_name: it.item_name.trim(),
+          description: it.description.trim(),
+          quantity: Number(it.quantity)
+        }))
+        .filter(
+          (it) =>
+            it.item_name &&
+            it.description &&
+            Number.isFinite(it.quantity) &&
+            it.quantity > 0
+        );
+      form.append("items_json", JSON.stringify(payload));
+
       if (dueDate) form.append("due_date", new Date(dueDate).toISOString());
       if (image) form.append("image", image);
 
@@ -343,32 +364,26 @@ function CreateOrderModal({
     <Modal open={open} title="Create order" onClose={onClose}>
       <form className="space-y-4" onSubmit={submit}>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Select
-            label="Customer"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            error={fieldError.customerId}
-            options={[
-              { value: "", label: customers.length ? "Select customer…" : "No customers available" },
-              ...customers.map((c) => ({ value: String(c.id), label: c.name }))
-            ]}
-          />
-          <Select
-            label="Product"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-            error={fieldError.productId}
-            options={[
-              { value: "", label: products.length ? "Select product…" : "No products available" },
-              ...products.map((p) => ({ value: String(p.id), label: `${p.name} — ${p.price}` }))
-            ]}
+          <Input
+            label="Customer name"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            error={fieldError.customerName}
+            required
           />
           <Input
-            label="Quantity"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            inputMode="numeric"
-            error={fieldError.quantity}
+            label="Phone"
+            value={customerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            error={fieldError.customerPhone}
+            required
+          />
+          <Input
+            label="Address"
+            value={customerAddress}
+            onChange={(e) => setCustomerAddress(e.target.value)}
+            error={fieldError.customerAddress}
+            required
           />
           <Input
             label="Due date"
@@ -376,6 +391,68 @@ function CreateOrderModal({
             onChange={(e) => setDueDate(e.target.value)}
             type="date"
           />
+        </div>
+
+        <div>
+          <div className="text-sm font-semibold">Items</div>
+          <div className="mt-2 space-y-2">
+            {items.map((it, idx) => (
+              <div
+                key={idx}
+                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_160px_90px] md:items-end"
+              >
+                <Input
+                  label={idx === 0 ? "Item name" : undefined}
+                  value={it.item_name}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, item_name: v } : x)));
+                  }}
+                  error={fieldError[`items.${idx}.item_name`]}
+                  placeholder="e.g. Chair"
+                />
+                <Input
+                  label={idx === 0 ? "Description" : undefined}
+                  value={it.description}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                  }}
+                  error={fieldError[`items.${idx}.description`]}
+                  placeholder="e.g. Dining chair, walnut finish"
+                />
+                <Input
+                  label={idx === 0 ? "Quantity" : undefined}
+                  value={it.quantity}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, quantity: v } : x)));
+                  }}
+                  inputMode="numeric"
+                  error={fieldError[`items.${idx}.quantity`]}
+                  placeholder="1"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={items.length <= 1}
+                  onClick={() => setItems((xs) => xs.filter((_, i) => i !== idx))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+          {fieldError.items ? <div className="mt-2 text-xs text-black/70">{fieldError.items}</div> : null}
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1" }])}
+            >
+              Add item
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

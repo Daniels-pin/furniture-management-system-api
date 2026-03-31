@@ -5,9 +5,6 @@ import type {
   LoginRequest,
   LoginResponse,
   Order,
-  OrderUploadResponse,
-  Product,
-  ProductCreate,
   User,
   UserCreate
 } from "../types/api";
@@ -30,24 +27,13 @@ export const customersApi = {
   }
 };
 
-export const productsApi = {
-  async list() {
-    const { data } = await api.get<Product[]>("/products");
-    return data;
-  },
-  async create(payload: ProductCreate) {
-    const { data } = await api.post<Product>("/products", payload);
-    return data;
-  }
-};
-
 export const ordersApi = {
   async list() {
     const { data } = await api.get<Order[]>("/orders");
     return data;
   },
   async createMultipart(form: FormData) {
-    const { data } = await api.post<OrderUploadResponse>("/orders", form, {
+    const { data } = await api.post<Order>("/orders", form, {
       headers: { "Content-Type": "multipart/form-data" }
     });
     return data;

@@ -5,7 +5,6 @@ import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { CustomersPage } from "./pages/CustomersPage";
-import { ProductsPage } from "./pages/ProductsPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 
 export default function App() {
@@ -25,7 +24,6 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="customers" element={<CustomersPage />} />
-        <Route path="products" element={<ProductsPage />} />
         <Route
           path="admin/users"
           element={

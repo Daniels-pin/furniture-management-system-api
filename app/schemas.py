@@ -1,17 +1,17 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import List, Optional
 from enum import Enum
 
 class OrderItemCreate(BaseModel):
-    item_name: str
-    description: Optional[str] = None
-    quantity: int
+    item_name: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    quantity: int = Field(..., gt=0)
 
 class CustomerCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1)
     phone: str
     address: str
 
@@ -33,7 +33,7 @@ class CustomerResponse(CustomerCreate):
         orm_mode = True
 
 class OrderCreate(BaseModel):
-    customer: CustomerCreate    #instead of customer_id
+    customer: CustomerCreate
     items: List[OrderItemCreate]
     due_date: Optional[datetime] = None
 

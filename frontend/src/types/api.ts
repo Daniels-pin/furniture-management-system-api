@@ -16,18 +16,13 @@ export type CustomerCreate = {
   address: string;
 };
 
-export type Product = {
-  id: number;
-  name: string;
-  price: number;
-};
-
-export type ProductCreate = {
-  name: string;
-  price: number;
-};
-
 export type OrderStatus = "pending" | "in_progress" | "completed" | "delivered";
+
+export type OrderCreateItem = {
+  item_name: string;
+  description: string;
+  quantity: number;
+};
 
 export type OrderItem = {
   id: number;
@@ -53,7 +48,6 @@ export type Order = {
 export type OrderUploadResponse = {
   order_id: number;
   customer_id: number;
-  product_id?: number | null;
   quantity: number;
   item_name: string;
   description?: string | null;

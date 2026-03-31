@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "../components/ui/Card";
-import { customersApi, ordersApi, productsApi } from "../services/endpoints";
+import { customersApi, ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 
 export function DashboardPage() {
   const toast = useToast();
   const [isLoading, setIsLoading] = useState(true);
-  const [counts, setCounts] = useState({ orders: 0, customers: 0, products: 0 });
+  const [counts, setCounts] = useState({ orders: 0, customers: 0 });
 
   const items = useMemo(
     () => [
       { label: "Orders", value: counts.orders },
-      { label: "Customers", value: counts.customers },
-      { label: "Products", value: counts.products }
+      { label: "Customers", value: counts.customers }
     ],
     [counts]
   );
@@ -23,16 +22,11 @@ export function DashboardPage() {
     (async () => {
       setIsLoading(true);
       try {
-        const [orders, customers, products] = await Promise.all([
-          ordersApi.list(),
-          customersApi.list(),
-          productsApi.list()
-        ]);
+        const [orders, customers] = await Promise.all([ordersApi.list(), customersApi.list()]);
         if (!alive) return;
         setCounts({
           orders: Array.isArray(orders) ? orders.length : 0,
-          customers: Array.isArray(customers) ? customers.length : 0,
-          products: Array.isArray(products) ? products.length : 0
+          customers: Array.isArray(customers) ? customers.length : 0
         });
       } catch (err) {
         toast.push("error", getErrorMessage(err));
@@ -52,7 +46,7 @@ export function DashboardPage() {
         <div className="mt-1 text-sm text-black/60">Overview of your system.</div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {items.map((x) => (
           <Card key={x.label}>
             <div className="text-sm font-semibold text-black/60">{x.label}</div>

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
 from app.auth.auth import get_current_user
+from app.auth.auth import require_role
 from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
 from typing import List
 
@@ -55,3 +56,22 @@ def create_customer(
     db.refresh(new_customer)
 
     return new_customer
+
+
+@router.delete("/customers/{customer_id}")
+def delete_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    has_orders = db.query(models.Order).filter(models.Order.customer_id == customer_id).first()
+    if has_orders:
+        raise HTTPException(status_code=400, detail="Customer has existing orders")
+
+    db.delete(customer)
+    db.commit()
+    return {"message": "Customer deleted"}
