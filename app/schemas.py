@@ -16,6 +16,16 @@ class CustomerCreate(BaseModel):
     address: str
 
 
+class CustomerPublicResponse(BaseModel):
+    id: int
+    name: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
 class CustomerResponse(CustomerCreate):
     id: int
 

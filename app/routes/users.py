@@ -5,10 +5,19 @@ from app import models
 from app.auth.utils import hash_password
 from app.auth.auth import require_role
 from app.schemas import UserRole, UserCreate, UserResponse
+from typing import List
 
 
 
 router = APIRouter()
+
+@router.get("/users", response_model=List[UserResponse])
+def list_users(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["admin"]))
+):
+    return db.query(models.User).order_by(models.User.id.desc()).all()
+
 
 @router.post("/users", response_model=UserResponse)
 def create_user(
@@ -35,3 +44,17 @@ def create_user(
     db.refresh(new_user)
 
     return new_user
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["admin"]))
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.delete(user)
+    db.commit()
+    return {"message": "User deleted"}

@@ -20,6 +20,16 @@ A FastAPI backend system for managing furniture manufacturing orders.
 - Pydantic
 - Pytest
 
+## Frontend (React)
+
+The frontend lives in `frontend/` and connects to this API via `VITE_API_BASE_URL`.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
 ## Setup
 
 ```bash

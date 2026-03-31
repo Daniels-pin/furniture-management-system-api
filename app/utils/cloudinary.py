@@ -6,9 +6,9 @@ from fastapi import HTTPException, UploadFile
 
 
 def _configure_cloudinary() -> None:
-    cloud_name = os.getenv("CLOUD_NAME")
-    api_key = os.getenv("API_KEY")
-    api_secret = os.getenv("API_SECRET")
+    cloud_name = (os.getenv("CLOUD_NAME") or "").strip()
+    api_key = (os.getenv("API_KEY") or "").strip()
+    api_secret = (os.getenv("API_SECRET") or "").strip()
 
     if not cloud_name or not api_key or not api_secret:
         raise RuntimeError(

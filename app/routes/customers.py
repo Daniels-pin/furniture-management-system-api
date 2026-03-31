@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
 from app.auth.auth import get_current_user
-from app.schemas import CustomerCreate, CustomerResponse
+from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
+from typing import List
 
 router = APIRouter()
 
 
-@router.get("/customers")
+@router.get("/customers", response_model=List[CustomerPublicResponse], response_model_exclude_none=True)
 def get_customers(
     db: Session = Depends(get_db),
     user = Depends(get_current_user)
