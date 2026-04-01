@@ -16,7 +16,8 @@ def list_users(
     db: Session = Depends(get_db),
     current_user = Depends(require_role(["admin"]))
 ):
-    return db.query(models.User).order_by(models.User.id.desc()).all()
+    users = db.query(models.User).order_by(models.User.id.desc()).all()
+    return [{"id": u.id, "username": u.email, "role": u.role} for u in users]
 
 
 @router.post("/users", response_model=UserResponse)
@@ -25,16 +26,20 @@ def create_user(
     db: Session = Depends(get_db),
     current_user = Depends(require_role(["admin"]))
 ):
-    existing_user = db.query(models.User).filter(
-        models.User.email == user_data.email
-    ).first()
+    username = user_data.username.strip()
+    if username.lower() not in {"admin", "showroom", "manager"}:
+        # no-op; role validation handled by schema enum; keep here for clarity
+        pass
+
+    # Use username as unique email identifier in DB
+    existing_user = db.query(models.User).filter(models.User.email == username).first()
 
     if existing_user:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(status_code=400, detail="username must be unique")
 
     new_user = models.User(
-        name=user_data.name,
-        email=user_data.email,
+        name=username,
+        email=username,
         password=hash_password(user_data.password),
         role=user_data.role.value
     )
@@ -43,7 +48,7 @@ def create_user(
     db.commit()
     db.refresh(new_user)
 
-    return new_user
+    return {"id": new_user.id, "username": new_user.email, "role": new_user.role}
 
 
 @router.delete("/users/{user_id}")

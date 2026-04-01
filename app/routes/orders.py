@@ -3,12 +3,13 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
 from app.auth.auth import require_role, get_current_user
 from datetime import datetime
-from app.schemas import OrderCreate, OrderItemCreate, OrderPricingUpdate, OrderResponse, OrderUploadResponse
+from app.schemas import OrderCreate, OrderDetailsResponse, OrderItemCreate, OrderPricingUpdate, OrderResponse, OrderUploadResponse
+from app.schemas import OrderAlertItem, OrdersAlertsResponse, OrdersListResponse
 from app.schemas import OrderStatus
 from datetime import datetime, timedelta
 from fastapi import Query
@@ -45,7 +46,7 @@ def _build_order_response(order: models.Order, customer: models.Customer, items:
         ],
     }
 
-    if user.role == "admin":
+    if user.role in ("admin", "showroom"):
         base.update(
             {
                 "total_price": order.total_price,
@@ -234,30 +235,56 @@ def create_order_json(
     }
     
 
-@router.get("/orders", response_model=List[OrderResponse], response_model_exclude_none=True)
+@router.get("/orders", response_model=OrdersListResponse, response_model_exclude_none=True)
 def get_orders(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user = Depends(get_current_user),
+    search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
 ):
-    orders = db.query(models.Order).all()
+    q = (
+        db.query(models.Order)
+        .options(joinedload(models.Order.items), joinedload(models.Order.customer))
+        .join(models.Customer, models.Order.customer_id == models.Customer.id)
+    )
 
-    result = []
+    if status:
+        allowed = {"pending", "in_progress", "completed"}
+        if status not in allowed:
+            raise HTTPException(status_code=400, detail="Invalid status value")
+        q = q.filter(models.Order.status == status)
 
-    for order in orders:
-        items = db.query(models.OrderItem).filter(
-            models.OrderItem.order_id == order.id
-        ).all()
-        customer = db.query(models.Customer).filter(
-          models.Customer.id == order.customer_id
-        ).first()
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(
+            (models.Customer.name.ilike(s)) | (models.Customer.phone.ilike(s))
+        )
 
+    total = q.count()
+    total_pages = max(1, (total + limit - 1) // limit)
+
+    offset = (page - 1) * limit
+    rows = (
+        q.order_by(models.Order.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    data: list[dict] = []
+    for order in rows:
+        customer = order.customer
         base = {
             "id": order.id,
             "status": order.status,
             "due_date": order.due_date,
             "created_at": order.created_at,
             "image_url": order.image_url,
-            "customer": {
+            "customer": None
+            if user.role == "manager"
+            else {
                 "id": customer.id,
                 "name": customer.name,
                 "phone": customer.phone,
@@ -270,11 +297,11 @@ def get_orders(
                     "description": item.description,
                     "quantity": item.quantity,
                 }
-                for item in items
+                for item in (order.items or [])
             ],
         }
 
-        if user.role == "admin":
+        if user.role in ("admin", "showroom"):
             base.update(
                 {
                     "total_price": order.total_price,
@@ -284,10 +311,44 @@ def get_orders(
                 }
             )
 
-        result.append(base)
-        
+        data.append(base)
 
-    return result
+    return {"data": data, "total": total, "page": page, "total_pages": total_pages}
+
+
+@router.get("/orders/alerts", response_model=OrdersAlertsResponse)
+def get_orders_alerts(
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    today = datetime.utcnow()
+    upcoming = today + timedelta(days=14)
+    q = (
+        db.query(models.Order)
+        .options(joinedload(models.Order.customer))
+        .filter(models.Order.due_date.isnot(None))
+        .filter(models.Order.due_date <= upcoming)
+        .filter(models.Order.status != "completed")
+        .order_by(models.Order.due_date.asc())
+    )
+
+    due_soon_count = q.count()
+    rows = q.limit(20).all()
+
+    orders: list[dict] = []
+    for o in rows:
+        orders.append(
+            {
+                "order_id": o.id,
+                "status": o.status,
+                "due_date": o.due_date,
+                "customer": None
+                if user.role == "manager"
+                else {"name": o.customer.name if o.customer else None},
+            }
+        )
+
+    return {"due_soon_count": due_soon_count, "orders": orders}
 
 
 @router.get("/orders/reminders")
@@ -325,7 +386,7 @@ def get_reminders(
     return result
 
 
-@router.get("/orders/{order_id}", response_model=OrderResponse, response_model_exclude_none=True)
+@router.get("/orders/{order_id}", response_model=OrderDetailsResponse, response_model_exclude_none=True)
 def get_order(
     order_id: int,
     db: Session = Depends(get_db),
@@ -344,12 +405,13 @@ def get_order(
     ).first()
 
     base = {
-        "id": order.id,
+        "order_id": order.id,
         "status": order.status,
         "due_date": order.due_date,
-        "created_at": order.created_at,
         "image_url": order.image_url,
-        "customer": {
+        "customer": None
+        if user.role == "manager"
+        else {
             "id": customer.id,
             "name": customer.name,
             "phone": customer.phone,
@@ -366,7 +428,7 @@ def get_order(
         ],
     }
 
-    if user.role == "admin":
+    if user.role in ("admin", "showroom"):
         base.update(
             {
                 "total_price": order.total_price,
@@ -443,6 +505,46 @@ def delete_order(
     db.commit()
 
     return {"message": "Order deleted"}
+
+
+@router.patch("/orders/{order_id}/status")
+def update_order_status_patch(
+    order_id: int,
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["manager", "admin"])),
+):
+    allowed = {"pending", "in_progress", "completed"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid status value")
+
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    order.status = status
+    db.commit()
+    return {"message": "Order status updated"}
+
+
+@router.post("/orders/{order_id}/mark_paid")
+def mark_order_fully_paid(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.total_price is None:
+        raise HTTPException(status_code=400, detail="total_price is required to mark as paid")
+
+    pricing = compute_pricing(order.total_price, order.total_price)
+    order.amount_paid = pricing.amount_paid
+    order.balance = pricing.balance
+    order.payment_status = pricing.payment_status
+    db.commit()
+    return {"message": "Order marked as fully paid"}
 
 
 @router.put("/orders/{order_id}/full")

@@ -24,6 +24,8 @@ class Customer(Base):
     phone = Column(String)
     address = Column(String)
 
+    orders = relationship("Order", back_populates="customer")
+
 # PRODUCTS TABLE
 class Product(Base):
     __tablename__ = "products"
@@ -47,6 +49,7 @@ class Order(Base):
     payment_status = Column(String, default="unpaid")
 
     created_by = Column(Integer, ForeignKey("users.id"))
+    customer = relationship("Customer", back_populates="orders")
     items = relationship(
     "OrderItem",
     back_populates="order",

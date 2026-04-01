@@ -4,12 +4,14 @@ import { ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
 import { useToast } from "../state/toast";
-import { Badge } from "../components/ui/Badge";
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Select } from "../components/ui/Select";
+import { useNavigate } from "react-router-dom";
+import { formatMoney } from "../utils/money";
 
 function daysRemaining(dueDateIso?: string | null) {
   if (!dueDateIso) return null;
@@ -28,9 +30,13 @@ function statusLabel(s: OrderStatus) {
 export function OrdersPage() {
   const auth = useAuth();
   const toast = useToast();
+  const nav = useNavigate();
 
   const [isLoading, setIsLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const limit = 10;
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<OrderStatus | "all">("all");
@@ -42,28 +48,26 @@ export function OrdersPage() {
 
   const canCreate = auth.role === "showroom" || auth.role === "admin";
   const canDelete = auth.role === "admin";
-  const canSeePricing = auth.role === "admin";
+  const canSeePricing = auth.role === "admin" || auth.role === "showroom";
   const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "admin";
+  const canUpdateStatus = auth.role === "admin" || auth.role === "manager";
 
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    return orders.filter((o) => {
-      if (status !== "all" && o.status !== status) return false;
-      if (!query) return true;
-      const customerName = o.customer?.name?.toLowerCase?.() ?? "";
-      return (
-        String(o.id).includes(query) ||
-        customerName.includes(query) ||
-        o.status.toLowerCase().includes(query)
-      );
-    });
-  }, [orders, q, status]);
+  const statusParam =
+    status === "pending" || status === "in_progress" || status === "completed" ? status : undefined;
 
-  async function refresh() {
+  async function refresh(nextPage?: number) {
+    const targetPage = Math.max(1, nextPage ?? page);
     setIsLoading(true);
     try {
-      const data = await ordersApi.list();
-      setOrders(Array.isArray(data) ? data : []);
+      const res = await ordersApi.list({
+        search: q.trim() || undefined,
+        status: statusParam,
+        page: targetPage,
+        limit
+      });
+      setOrders(Array.isArray(res.data) ? res.data : []);
+      setPage(res.page || targetPage);
+      setTotalPages(res.total_pages || 1);
     } catch (err) {
       toast.push("error", getErrorMessage(err));
     } finally {
@@ -72,9 +76,18 @@ export function OrdersPage() {
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Server-side search/filter with debounce
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void refresh(1);
+    }, 300);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, status]);
 
   async function openCreate() {
     setCreateOpen(true);
@@ -107,7 +120,7 @@ export function OrdersPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => void refresh()} isLoading={isLoading}>
+          <Button variant="secondary" onClick={() => void refresh(page)} isLoading={isLoading}>
             Refresh
           </Button>
           {canCreate ? <Button onClick={() => void openCreate()}>Create order</Button> : null}
@@ -156,21 +169,52 @@ export function OrdersPage() {
                     Loading…
                   </td>
                 </tr>
-              ) : filtered.length === 0 ? (
+              ) : orders.length === 0 ? (
                 <tr>
                   <td className="py-6 text-black/60" colSpan={canSeePricing ? 7 : 6}>
                     No orders found.
                   </td>
                 </tr>
               ) : (
-                filtered.map((o) => {
+                orders.map((o, idx) => {
+                  const displayNumber = String((page - 1) * limit + idx + 1).padStart(3, "0");
                   const d = daysRemaining(o.due_date ?? null);
                   return (
-                    <tr key={o.id} className="border-b border-black/5">
-                      <td className="py-3 pr-4 font-semibold">#{o.id}</td>
+                    <tr
+                      key={o.id}
+                      className="cursor-pointer border-b border-black/5 transition hover:bg-black/[0.02]"
+                      onClick={() => nav(`/orders/${o.id}`, { state: { displayNumber } })}
+                    >
+                      <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
                       <td className="py-3 pr-4">{o.customer?.name ?? "—"}</td>
                       <td className="py-3 pr-4">
-                        <Badge>{statusLabel(o.status)}</Badge>
+                        {canUpdateStatus ? (
+                          <select
+                            className="w-full min-w-[160px] rounded-xl border border-black/15 bg-white px-2 py-1.5 text-sm shadow-sm"
+                            value={o.status}
+                            onChange={async (e) => {
+                              e.stopPropagation();
+                              const next = e.target.value as "pending" | "in_progress" | "completed";
+                              try {
+                                setOrders((xs) =>
+                                  xs.map((x) => (x.id === o.id ? { ...x, status: next } : x))
+                                );
+                                await ordersApi.updateStatus(o.id, next);
+                                await refresh(page);
+                              } catch (err) {
+                                toast.push("error", getErrorMessage(err));
+                                await refresh(page);
+                              }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="pending">pending</option>
+                            <option value="in_progress">in_progress</option>
+                            <option value="completed">completed</option>
+                          </select>
+                        ) : (
+                          <StatusBadge status={o.status} />
+                        )}
                       </td>
                       <td className="py-3 pr-4">
                         {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
@@ -178,7 +222,7 @@ export function OrdersPage() {
                       <td className="py-3 pr-4">{d === null ? "—" : d}</td>
                       {canSeePricing ? (
                         <td className="py-3 pr-4 text-black/70">
-                          {o.total_price != null ? `Total: ${o.total_price}` : "—"}
+                          {o.total_price != null ? `Total: ${formatMoney(o.total_price)}` : "—"}
                         </td>
                       ) : null}
                       <td className="py-3 pr-0 text-right">
@@ -186,7 +230,8 @@ export function OrdersPage() {
                           <Button
                             variant="ghost"
                             disabled={deletingId === o.id}
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (typeof o.id === "number") setConfirmDeleteId(o.id);
                             }}
                           >
@@ -202,6 +247,28 @@ export function OrdersPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-xs font-semibold text-black/50">
+            Page {page} of {totalPages}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              disabled={page <= 1 || isLoading}
+              onClick={() => void refresh(page - 1)}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={page >= totalPages || isLoading}
+              onClick={() => void refresh(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </Card>
 

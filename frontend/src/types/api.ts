@@ -62,14 +62,12 @@ export type OrderUploadResponse = {
 
 export type User = {
   id: number;
-  name: string;
-  email: string;
+  username: string;
   role: Role;
 };
 
 export type UserCreate = {
-  name: string;
-  email: string;
+  username: string;
   password: string;
   role: Role;
 };

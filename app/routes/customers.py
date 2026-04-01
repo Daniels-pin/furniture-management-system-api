@@ -70,7 +70,10 @@ def delete_customer(
 
     has_orders = db.query(models.Order).filter(models.Order.customer_id == customer_id).first()
     if has_orders:
-        raise HTTPException(status_code=400, detail="Customer has existing orders")
+        raise HTTPException(
+            status_code=400,
+            detail="Customer has existing orders and cannot be deleted",
+        )
 
     db.delete(customer)
     db.commit()

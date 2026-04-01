@@ -24,18 +24,77 @@ export const customersApi = {
   async create(payload: CustomerCreate) {
     const { data } = await api.post<Customer>("/customers", payload);
     return data;
+  },
+  async delete(customerId: number) {
+    const { data } = await api.delete<{ message: string }>(`/customers/${customerId}`);
+    return data;
   }
 };
 
 export const ordersApi = {
-  async list() {
-    const { data } = await api.get<Order[]>("/orders");
+  async list(params?: {
+    search?: string;
+    status?: "pending" | "in_progress" | "completed";
+    page?: number;
+    limit?: number;
+  }) {
+    const qp: Record<string, any> = {};
+    if (params?.search) qp.search = params.search;
+    if (params?.status) qp.status = params.status;
+    if (params?.page) qp.page = params.page;
+    if (params?.limit) qp.limit = params.limit;
+
+    const { data } = await api.get<{
+      data: Order[];
+      total: number;
+      page: number;
+      total_pages: number;
+    }>("/orders", { params: qp });
+    return data;
+  },
+  async get(orderId: number) {
+    const { data } = await api.get<{
+      order_id: number;
+      customer: Customer | null;
+      items: Order["items"];
+      status: Order["status"];
+      due_date?: string | null;
+      image_url?: string | null;
+      total_price?: string | number | null;
+      amount_paid?: string | number | null;
+      balance?: string | number | null;
+      payment_status?: string | null;
+    }>(`/orders/${orderId}`);
     return data;
   },
   async createMultipart(form: FormData) {
     const { data } = await api.post<Order>("/orders", form, {
       headers: { "Content-Type": "multipart/form-data" }
     });
+    return data;
+  },
+  async updateStatus(orderId: number, status: "pending" | "in_progress" | "completed") {
+    const form = new FormData();
+    form.append("status", status);
+    const { data } = await api.patch<{ message: string }>(`/orders/${orderId}/status`, form, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async markFullyPaid(orderId: number) {
+    const { data } = await api.post<{ message: string }>(`/orders/${orderId}/mark_paid`);
+    return data;
+  },
+  async alerts() {
+    const { data } = await api.get<{
+      due_soon_count: number;
+      orders: Array<{
+        order_id: number;
+        status: Order["status"];
+        due_date?: string | null;
+        customer: { name: string | null } | null;
+      }>;
+    }>("/orders/alerts");
     return data;
   },
   async delete(orderId: number) {
@@ -55,6 +114,34 @@ export const usersApi = {
   },
   async delete(userId: number) {
     const { data } = await api.delete<{ message: string }>(`/users/${userId}`);
+    return data;
+  }
+};
+
+export const dashboardApi = {
+  async get() {
+    const { data } = await api.get<{
+      total_orders: number;
+      total_customers: number;
+      pending_orders: number;
+      in_progress_orders: number;
+      completed_orders: number;
+      total_revenue?: string | number;
+      amount_paid?: string | number;
+      outstanding_balance?: string | number;
+      upcoming_due_orders: Array<{
+        order_id: number;
+        status: Order["status"];
+        due_date?: string | null;
+        customer: { name: string | null } | null;
+      }>;
+      recent_orders: Array<{
+        order_id: number;
+        status: Order["status"];
+        due_date?: string | null;
+        customer: { name: string | null } | null;
+      }>;
+    }>("/dashboard");
     return data;
   }
 };

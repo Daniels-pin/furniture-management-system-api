@@ -14,6 +14,8 @@ export function AdminUsersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
@@ -23,11 +25,17 @@ export function AdminUsersPage() {
     const query = q.trim().toLowerCase();
     if (!query) return users;
     return users.filter((u) => {
-      const name = u.name?.toLowerCase?.() ?? "";
-      const email = u.email?.toLowerCase?.() ?? "";
-      return String(u.id).includes(query) || name.includes(query) || email.includes(query) || u.role.includes(query as any);
+      const username = u.username?.toLowerCase?.() ?? "";
+      return String(u.id).includes(query) || username.includes(query) || u.role.includes(query as any);
     });
   }, [users, q]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filtered.length / limit)), [filtered.length]);
+  const safePage = useMemo(() => Math.min(Math.max(1, page), totalPages), [page, totalPages]);
+  const pageRows = useMemo(() => {
+    const start = (safePage - 1) * limit;
+    return filtered.slice(start, start + limit);
+  }, [filtered, safePage]);
 
   async function refresh() {
     setIsLoading(true);
@@ -45,6 +53,10 @@ export function AdminUsersPage() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q]);
 
   async function doDelete(userId: number) {
     if (!Number.isFinite(userId)) return;
@@ -79,14 +91,13 @@ export function AdminUsersPage() {
       </div>
 
       <Card>
-        <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, name, email, role…" />
+        <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, username, role…" />
         <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">
                 <th className="py-3 pr-4 font-semibold">ID</th>
-                <th className="py-3 pr-4 font-semibold">Name</th>
-                <th className="py-3 pr-4 font-semibold">Email</th>
+                <th className="py-3 pr-4 font-semibold">Username</th>
                 <th className="py-3 pr-4 font-semibold">Role</th>
                 <th className="py-3 pr-0 text-right font-semibold">Actions</th>
               </tr>
@@ -94,22 +105,23 @@ export function AdminUsersPage() {
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td className="py-6 text-black/60" colSpan={5}>
+                  <td className="py-6 text-black/60" colSpan={4}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td className="py-6 text-black/60" colSpan={5}>
+                  <td className="py-6 text-black/60" colSpan={4}>
                     No users found.
                   </td>
                 </tr>
               ) : (
-                filtered.map((u) => (
+                pageRows.map((u, idx) => {
+                  const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+                  return (
                   <tr key={u.id} className="border-b border-black/5">
-                    <td className="py-3 pr-4 font-semibold">#{u.id}</td>
-                    <td className="py-3 pr-4">{u.name}</td>
-                    <td className="py-3 pr-4 text-black/70">{u.email}</td>
+                    <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
+                    <td className="py-3 pr-4">{u.username}</td>
                     <td className="py-3 pr-4">{u.role}</td>
                     <td className="py-3 pr-0 text-right">
                       <Button
@@ -123,10 +135,33 @@ export function AdminUsersPage() {
                       </Button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-xs font-semibold text-black/50">
+            Page {safePage} of {totalPages}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              disabled={safePage <= 1 || isLoading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={safePage >= totalPages || isLoading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -165,8 +200,7 @@ export function AdminUsersPage() {
 
 function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>("showroom");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -176,15 +210,13 @@ function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
     setIsSubmitting(true);
     try {
       const created = await usersApi.create({
-        name: name.trim(),
-        email: email.trim(),
+        username: username.trim(),
         password,
         role
       });
       toast.push("success", "User created");
       onCreated(created);
-      setName("");
-      setEmail("");
+      setUsername("");
       setPassword("");
       setRole("showroom");
     } catch (err) {
@@ -197,12 +229,10 @@ function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
   return (
     <form className="space-y-3" onSubmit={submit}>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input
-          label="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          inputMode="email"
+          label="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           required
         />
         <Input

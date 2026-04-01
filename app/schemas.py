@@ -49,15 +49,15 @@ class UserRole(str, Enum):
     admin = "admin"
 
 class UserCreate(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
+    # Keep existing DB fields, but support "username" for the UI/API.
+    # We map username -> email and name -> username by default for stability.
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
     role: UserRole
 
 class UserResponse(BaseModel):
     id: int
-    name: str
-    email: str
+    username: str
     role: UserRole
 
     class Config:
@@ -99,11 +99,24 @@ class OrderResponse(BaseModel):
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
-    customer: CustomerResponse
+    customer: Optional[CustomerResponse] = None
     items: List[OrderItemResponse]
 
     class Config:
         orm_mode = True
+
+
+class OrderDetailsResponse(BaseModel):
+    order_id: int
+    customer: Optional[CustomerResponse] = None
+    items: List[OrderItemResponse]
+    status: OrderStatus
+    due_date: Optional[datetime] = None
+    image_url: Optional[str] = None
+    total_price: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+    balance: Optional[Decimal] = None
+    payment_status: Optional[str] = None
 
 
 class OrderUploadResponse(BaseModel):
@@ -125,3 +138,22 @@ class OrderUploadResponse(BaseModel):
 class OrderPricingUpdate(BaseModel):
     total_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
+
+
+class OrdersListResponse(BaseModel):
+    data: List[OrderResponse]
+    total: int
+    page: int
+    total_pages: int
+
+
+class OrderAlertItem(BaseModel):
+    order_id: int
+    status: OrderStatus
+    due_date: Optional[datetime] = None
+    customer: Optional[dict] = None
+
+
+class OrdersAlertsResponse(BaseModel):
+    due_soon_count: int
+    orders: List[OrderAlertItem]
