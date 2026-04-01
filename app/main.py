@@ -15,14 +15,30 @@ app = FastAPI()
 frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
 
+# CORS: comma-separated FRONTEND_ORIGINS (https://app.example.com,...).
+# Temporary testing only: set FRONTEND_ORIGINS=* (wildcard; cannot use credentials with *).
+_use_cors_wildcard = frontend_origins == ["*"]
+if _use_cors_wildcard:
+    _cors_origins = ["*"]
+    _cors_regex = None
+    _cors_credentials = False
+elif frontend_origins:
+    _cors_origins = [o for o in frontend_origins if o != "*"]
+    _cors_regex = None
+    _cors_credentials = True
+else:
+    _cors_origins = []
+    _cors_regex = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
+    _cors_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=frontend_origins,
-    allow_origin_regex=None if frontend_origins else r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
- )
+)
 
 
 @app.get("/")
