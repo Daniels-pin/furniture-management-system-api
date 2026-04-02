@@ -14,6 +14,7 @@ class CustomerCreate(BaseModel):
     name: str = Field(..., min_length=1)
     phone: str
     address: str
+    email: Optional[EmailStr] = None
 
 
 class CustomerPublicResponse(BaseModel):
@@ -21,6 +22,7 @@ class CustomerPublicResponse(BaseModel):
     name: str
     phone: Optional[str] = None
     address: Optional[str] = None
+    email: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -117,6 +119,37 @@ class OrderDetailsResponse(BaseModel):
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
+
+
+class OrderAdminPut(BaseModel):
+    """Admin-only full order update (items, pricing, status)."""
+
+    status: OrderStatus
+    due_date: Optional[datetime] = None
+    items: List[OrderItemCreate] = Field(..., min_length=1)
+    total_price: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+
+
+class InvoiceListItem(BaseModel):
+    id: int
+    invoice_number: str
+    order_id: int
+    customer_id: int
+    total_price: Optional[Decimal] = None
+    deposit_paid: Optional[Decimal] = None
+    balance: Optional[Decimal] = None
+    status: str
+    created_at: datetime
+    due_date: Optional[datetime] = None
+    customer: Optional[CustomerPublicResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InvoiceDetailResponse(InvoiceListItem):
+    items: List[OrderItemResponse]
 
 
 class OrderUploadResponse(BaseModel):

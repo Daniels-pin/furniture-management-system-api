@@ -32,7 +32,8 @@ def get_customers(
                 "id": c.id,
                 "name": c.name,
                 "phone": c.phone,
-                "address": c.address
+                "address": c.address,
+                "email": c.email,
             })
 
     return result
@@ -49,6 +50,7 @@ def create_customer(
         name=customer.name,
         phone=customer.phone,
         address=customer.address,
+        email=str(customer.email) if customer.email is not None else None,
     )
 
     db.add(new_customer)

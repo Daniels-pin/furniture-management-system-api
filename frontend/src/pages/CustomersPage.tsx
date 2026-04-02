@@ -109,6 +109,7 @@ export function CustomersPage() {
                   {canSeePrivate ? (
                     <>
                       <th className="py-3 pr-4 font-semibold">Phone</th>
+                      <th className="py-3 pr-4 font-semibold">Email</th>
                       <th className="py-3 pr-0 font-semibold">Address</th>
                     </>
                   ) : (
@@ -120,13 +121,13 @@ export function CustomersPage() {
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 5 : 4) : (canSeePrivate ? 4 : 3)}>
+                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}>
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 5 : 4) : (canSeePrivate ? 4 : 3)}>
+                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}>
                       No customers found.
                     </td>
                   </tr>
@@ -140,6 +141,7 @@ export function CustomersPage() {
                       {canSeePrivate ? (
                         <>
                           <td className="py-3 pr-4 text-black/70">{c.phone ?? "—"}</td>
+                          <td className="py-3 pr-4 text-black/70">{c.email ?? "—"}</td>
                           <td className="py-3 pr-0 text-black/70">{c.address ?? "—"}</td>
                         </>
                       ) : (
@@ -232,22 +234,30 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    const em = email.trim();
+    if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      toast.push("error", "Enter a valid email or leave blank");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const created = await customersApi.create({
         name: name.trim(),
         phone: phone.trim(),
-        address: address.trim()
+        address: address.trim(),
+        email: em || undefined
       });
       toast.push("success", "Customer created");
       onCreated(created);
       setName("");
       setPhone("");
       setAddress("");
+      setEmail("");
     } catch (err) {
       toast.push("error", getErrorMessage(err));
     } finally {
@@ -262,6 +272,7 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
       <form className="mt-4 space-y-3" onSubmit={submit}>
         <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+        <Input label="Email (optional)" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <Input label="Address" value={address} onChange={(e) => setAddress(e.target.value)} required />
         <Button type="submit" className="w-full" isLoading={isSubmitting}>
           Create

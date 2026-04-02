@@ -2,9 +2,12 @@ import { api } from "./api";
 import type {
   Customer,
   CustomerCreate,
+  InvoiceDetail,
+  InvoiceListItem,
   LoginRequest,
   LoginResponse,
   Order,
+  OrderAdminUpdate,
   User,
   UserCreate
 } from "../types/api";
@@ -67,6 +70,21 @@ export const ordersApi = {
     }>(`/orders/${orderId}`);
     return data;
   },
+  async updateAdmin(orderId: number, payload: OrderAdminUpdate) {
+    const { data } = await api.put<{
+      order_id: number;
+      customer: Customer | null;
+      items: Order["items"];
+      status: Order["status"];
+      due_date?: string | null;
+      image_url?: string | null;
+      total_price?: string | number | null;
+      amount_paid?: string | number | null;
+      balance?: string | number | null;
+      payment_status?: string | null;
+    }>(`/orders/${orderId}`, payload);
+    return data;
+  },
   async createMultipart(form: FormData) {
     const { data } = await api.post<Order>("/orders", form, {
       headers: { "Content-Type": "multipart/form-data" }
@@ -99,6 +117,21 @@ export const ordersApi = {
   },
   async delete(orderId: number) {
     const { data } = await api.delete<{ message: string }>(`/orders/${orderId}`);
+    return data;
+  }
+};
+
+export const invoicesApi = {
+  async list() {
+    const { data } = await api.get<InvoiceListItem[]>("/invoices");
+    return data;
+  },
+  async get(invoiceId: number) {
+    const { data } = await api.get<InvoiceDetail>(`/invoices/${invoiceId}`);
+    return data;
+  },
+  async getByOrder(orderId: number) {
+    const { data } = await api.get<InvoiceDetail>(`/invoices/order/${orderId}`);
     return data;
   }
 };

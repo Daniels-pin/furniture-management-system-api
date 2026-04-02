@@ -8,12 +8,14 @@ export type Customer = {
   name: string;
   phone?: string;
   address?: string;
+  email?: string | null;
 };
 
 export type CustomerCreate = {
   name: string;
   phone: string;
   address: string;
+  email?: string | null;
 };
 
 export type OrderStatus = "pending" | "in_progress" | "completed" | "delivered";
@@ -70,5 +72,31 @@ export type UserCreate = {
   username: string;
   password: string;
   role: Role;
+};
+
+export type InvoiceListItem = {
+  id: number;
+  invoice_number: string;
+  order_id: number;
+  customer_id: number;
+  total_price?: string | number | null;
+  deposit_paid?: string | number | null;
+  balance?: string | number | null;
+  status: string;
+  created_at: string;
+  due_date?: string | null;
+  customer?: Customer | null;
+};
+
+export type InvoiceDetail = InvoiceListItem & {
+  items: OrderItem[];
+};
+
+export type OrderAdminUpdate = {
+  status: OrderStatus;
+  due_date?: string | null;
+  items: OrderCreateItem[];
+  total_price?: string | number | null;
+  amount_paid?: string | number | null;
 };
 

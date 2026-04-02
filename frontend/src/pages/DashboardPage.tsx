@@ -71,7 +71,7 @@ export function DashboardPage() {
               <div className="mt-1 text-sm font-semibold">{formatMoney(data?.total_revenue)}</div>
             </div>
             <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-              <div className="text-xs font-semibold text-black/60">Amount Paid</div>
+              <div className="text-xs font-semibold text-black/60">Deposits made</div>
               <div className="mt-1 text-sm font-semibold">{formatMoney(data?.amount_paid)}</div>
             </div>
             <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">

@@ -328,6 +328,7 @@ function CreateOrderModal({
   const [customerName, setCustomerName] = useState<string>("");
   const [customerPhone, setCustomerPhone] = useState<string>("");
   const [customerAddress, setCustomerAddress] = useState<string>("");
+  const [customerEmail, setCustomerEmail] = useState<string>("");
 
   const [items, setItems] = useState<Array<{ item_name: string; description: string; quantity: string }>>([
     { item_name: "", description: "", quantity: "1" }
@@ -345,6 +346,7 @@ function CreateOrderModal({
     setCustomerName("");
     setCustomerPhone("");
     setCustomerAddress("");
+    setCustomerEmail("");
     setItems([{ item_name: "", description: "", quantity: "1" }]);
     setDueDate("");
     setImage(null);
@@ -360,6 +362,10 @@ function CreateOrderModal({
     if (!customerName.trim()) e.customerName = "Customer name is required";
     if (!customerPhone.trim()) e.customerPhone = "Phone is required";
     if (!customerAddress.trim()) e.customerAddress = "Address is required";
+    const em = customerEmail.trim();
+    if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      e.customerEmail = "Enter a valid email or leave blank";
+    }
 
     const normalizedItems: OrderCreateItem[] = [];
     items.forEach((it, idx) => {
@@ -377,7 +383,7 @@ function CreateOrderModal({
 
     if (canInputPricing) {
       if (totalPrice && Number(totalPrice) < 0) e.totalPrice = "Total price cannot be negative";
-      if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Amount paid cannot be negative";
+      if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
     }
     setFieldError(e);
     return Object.keys(e).length === 0;
@@ -393,6 +399,7 @@ function CreateOrderModal({
       form.append("customer_name", customerName.trim());
       form.append("customer_phone", customerPhone.trim());
       form.append("customer_address", customerAddress.trim());
+      if (customerEmail.trim()) form.append("customer_email", customerEmail.trim());
 
       const payload = items
         .map((it) => ({
@@ -429,7 +436,15 @@ function CreateOrderModal({
 
   return (
     <Modal open={open} title="Create order" onClose={onClose}>
-      <form className="space-y-4" onSubmit={submit}>
+      <form
+        className="space-y-4"
+        onSubmit={submit}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" && (ev.target as HTMLElement).tagName !== "TEXTAREA") {
+            ev.preventDefault();
+          }
+        }}
+      >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Input
             label="Customer name"
@@ -451,6 +466,14 @@ function CreateOrderModal({
             onChange={(e) => setCustomerAddress(e.target.value)}
             error={fieldError.customerAddress}
             required
+          />
+          <Input
+            label="Email (optional)"
+            type="email"
+            value={customerEmail}
+            onChange={(e) => setCustomerEmail(e.target.value)}
+            error={fieldError.customerEmail}
+            placeholder="customer@example.com"
           />
           <Input
             label="Due date"
@@ -478,16 +501,25 @@ function CreateOrderModal({
                   error={fieldError[`items.${idx}.item_name`]}
                   placeholder="e.g. Chair"
                 />
-                <Input
-                  label={idx === 0 ? "Description" : undefined}
-                  value={it.description}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: v } : x)));
-                  }}
-                  error={fieldError[`items.${idx}.description`]}
-                  placeholder="e.g. Dining chair, walnut finish"
-                />
+                <label className="block md:col-span-1">
+                  {idx === 0 ? <div className="mb-1 text-sm font-medium">Description</div> : null}
+                  <textarea
+                    className={[
+                      "min-h-[88px] w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm outline-none transition",
+                      fieldError[`items.${idx}.description`] ? "border-black/30" : "border-black/15",
+                      "focus:border-black/40"
+                    ].join(" ")}
+                    value={it.description}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                    }}
+                    placeholder="e.g. Dining chair, walnut finish"
+                  />
+                  {fieldError[`items.${idx}.description`] ? (
+                    <div className="mt-1 text-xs text-black/70">{fieldError[`items.${idx}.description`]}</div>
+                  ) : null}
+                </label>
                 <Input
                   label={idx === 0 ? "Quantity" : undefined}
                   value={it.quantity}
@@ -546,7 +578,7 @@ function CreateOrderModal({
               placeholder="e.g. 2500.00"
             />
             <Input
-              label="Amount paid (optional)"
+              label="Deposit made (optional)"
               value={amountPaid}
               onChange={(e) => setAmountPaid(e.target.value)}
               inputMode="decimal"
@@ -561,7 +593,7 @@ function CreateOrderModal({
             Cancel
           </Button>
           <Button type="submit" isLoading={isSubmitting}>
-            Create
+            Create order
           </Button>
         </div>
       </form>

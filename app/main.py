@@ -7,6 +7,7 @@ from app.auth.auth import get_current_user
 from app.auth.auth import router as auth_router
 from app.routes.customers import router as customers_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.invoices import router as invoices_router
 from app.routes.orders import router as orders_router
 from app.routes.users import router as users_router
 
@@ -54,5 +55,6 @@ def protected(user = Depends(get_current_user)):
 app.include_router(customers_router, tags=["Customers"])
 app.include_router(users_router, tags=["Users"])
 app.include_router(orders_router, tags=["Orders"])
+app.include_router(invoices_router, tags=["Invoices"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 

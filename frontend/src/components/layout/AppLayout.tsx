@@ -85,6 +85,7 @@ export function AppLayout() {
           <nav className="space-y-1">
             <NavItem to="/dashboard" label="Dashboard" />
             <NavItem to="/orders" label="Orders" />
+            <NavItem to="/invoices" label="Invoices" />
             <NavItem to="/customers" label="Customers" />
             {auth.role === "admin" ? <NavItem to="/admin/users" label="Admin Users" /> : null}
           </nav>

@@ -7,6 +7,8 @@ import { OrdersPage } from "./pages/OrdersPage";
 import { OrderDetailsPage } from "./pages/OrderDetailsPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { InvoicesPage } from "./pages/InvoicesPage";
+import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="orders/:orderId" element={<OrderDetailsPage />} />
+        <Route path="invoices" element={<InvoicesPage />} />
+        <Route path="invoices/:invoiceId" element={<InvoiceDetailPage />} />
         <Route path="customers" element={<CustomersPage />} />
         <Route
           path="admin/users"

@@ -2,14 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Modal } from "../components/ui/Modal";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
+import type { OrderCreateItem, OrderStatus } from "../types/api";
 
 type Details = Awaited<ReturnType<typeof ordersApi.get>>;
+
+function isoToDateInput(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
 
 export function OrderDetailsPage() {
   const { orderId } = useParams();
@@ -33,6 +43,9 @@ export function OrderDetailsPage() {
   const [imgError, setImgError] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+
+  const canEditOrder = auth.role === "admin";
 
   useEffect(() => {
     let alive = true;
@@ -52,6 +65,7 @@ export function OrderDetailsPage() {
         const status = err?.response?.status;
         if (status === 404) {
           setNotFound(true);
+          setData(null);
         } else {
           toast.push("error", getErrorMessage(err));
         }
@@ -79,10 +93,13 @@ export function OrderDetailsPage() {
                   : "—"}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => nav("/orders")}>
             Back to orders
           </Button>
+          {canEditOrder && data && !isLoading && !notFound ? (
+            <Button onClick={() => setEditOpen(true)}>Edit order</Button>
+          ) : null}
         </div>
       </div>
 
@@ -143,6 +160,10 @@ export function OrderDetailsPage() {
                     <div className="text-xs font-semibold text-black/60">Address</div>
                     <div className="mt-1 text-sm font-semibold">{data.customer.address ?? "—"}</div>
                   </div>
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 md:col-span-3">
+                    <div className="text-xs font-semibold text-black/60">Email</div>
+                    <div className="mt-1 text-sm font-semibold">{data.customer.email ?? "—"}</div>
+                  </div>
                 </div>
               </Card>
             ) : null}
@@ -187,7 +208,7 @@ export function OrderDetailsPage() {
                       <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).total_price)}</div>
                     </div>
                     <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                      <div className="text-xs font-semibold text-black/60">Amount paid</div>
+                      <div className="text-xs font-semibold text-black/60">Deposit made</div>
                       <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
                     </div>
                     <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
@@ -277,6 +298,25 @@ export function OrderDetailsPage() {
         </div>
       )}
 
+      {data && canEditOrder ? (
+        <EditOrderModal
+          open={editOpen}
+          orderId={data.order_id}
+          initial={data}
+          onClose={() => setEditOpen(false)}
+          onSaved={async () => {
+            setEditOpen(false);
+            try {
+              const refreshed = await ordersApi.get(id);
+              setData(refreshed);
+              toast.push("success", "Order updated");
+            } catch (err) {
+              toast.push("error", getErrorMessage(err));
+            }
+          }}
+        />
+      ) : null}
+
       {zoomOpen && data?.image_url ? (
         <div className="fixed inset-0 z-50">
           <button className="absolute inset-0 bg-black/60" onClick={() => setZoomOpen(false)} />
@@ -297,6 +337,207 @@ export function OrderDetailsPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function EditOrderModal({
+  open,
+  orderId,
+  initial,
+  onClose,
+  onSaved
+}: {
+  open: boolean;
+  orderId: number;
+  initial: Details;
+  onClose(): void;
+  onSaved(): Promise<void>;
+}) {
+  const toast = useToast();
+  const [status, setStatus] = useState<OrderStatus>(initial.status);
+  const [dueDate, setDueDate] = useState(isoToDateInput(initial.due_date));
+  const [totalPrice, setTotalPrice] = useState(
+    initial.total_price != null ? String(initial.total_price) : ""
+  );
+  const [deposit, setDeposit] = useState(
+    initial.amount_paid != null ? String(initial.amount_paid) : ""
+  );
+  const [items, setItems] = useState<
+    Array<{ item_name: string; description: string; quantity: string }>
+  >(
+    initial.items.map((it) => ({
+      item_name: it.item_name,
+      description: it.description ?? "",
+      quantity: String(it.quantity)
+    }))
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    setStatus(initial.status);
+    setDueDate(isoToDateInput(initial.due_date));
+    setTotalPrice(initial.total_price != null ? String(initial.total_price) : "");
+    setDeposit(initial.amount_paid != null ? String(initial.amount_paid) : "");
+    setItems(
+      initial.items.map((it) => ({
+        item_name: it.item_name,
+        description: it.description ?? "",
+        quantity: String(it.quantity)
+      }))
+    );
+    setErr({});
+  }, [open, initial]);
+
+  function validate() {
+    const e: Record<string, string> = {};
+    const payload: OrderCreateItem[] = [];
+    items.forEach((it, idx) => {
+      const name = it.item_name.trim();
+      const desc = it.description.trim();
+      const qty = Number(it.quantity);
+      if (!name) e[`n${idx}`] = "Item name required";
+      if (!desc) e[`d${idx}`] = "Description required";
+      if (!Number.isFinite(qty) || qty <= 0) e[`q${idx}`] = "Invalid quantity";
+      if (name && desc && Number.isFinite(qty) && qty > 0) {
+        payload.push({ item_name: name, description: desc, quantity: qty });
+      }
+    });
+    if (payload.length === 0) e.items = "At least one valid item required";
+    setErr(e);
+    return { ok: Object.keys(e).length === 0, payload };
+  }
+
+  async function submit(ev: React.FormEvent) {
+    ev.preventDefault();
+    const { ok, payload } = validate();
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await ordersApi.updateAdmin(orderId, {
+        status,
+        due_date: dueDate ? new Date(dueDate).toISOString() : null,
+        items: payload,
+        total_price: totalPrice.trim() === "" ? null : Number(totalPrice),
+        amount_paid: deposit.trim() === "" ? null : Number(deposit)
+      });
+      await onSaved();
+    } catch (er) {
+      toast.push("error", getErrorMessage(er));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={open} title="Edit order" onClose={onClose}>
+      <form
+        className="space-y-4"
+        onSubmit={submit}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" && (ev.target as HTMLElement).tagName !== "TEXTAREA") {
+            ev.preventDefault();
+          }
+        }}
+      >
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="block">
+            <div className="mb-1 text-sm font-medium">Status</div>
+            <select
+              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as OrderStatus)}
+            >
+              <option value="pending">pending</option>
+              <option value="in_progress">in_progress</option>
+              <option value="completed">completed</option>
+              <option value="delivered">delivered</option>
+            </select>
+          </label>
+          <Input label="Due date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </div>
+
+        <div>
+          <div className="text-sm font-semibold">Items</div>
+          <div className="mt-2 space-y-3">
+            {items.map((it, idx) => (
+              <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_120px_auto] md:items-end">
+                <Input
+                  label={idx === 0 ? "Item name" : undefined}
+                  value={it.item_name}
+                  onChange={(e) =>
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, item_name: e.target.value } : x)))
+                  }
+                  error={err[`n${idx}`]}
+                />
+                <label className="block">
+                  {idx === 0 ? <div className="mb-1 text-sm font-medium">Description</div> : null}
+                  <textarea
+                    className={[
+                      "min-h-[72px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-black/40",
+                      err[`d${idx}`] ? "border-black/30" : ""
+                    ].join(" ")}
+                    value={it.description}
+                    onChange={(e) =>
+                      setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))
+                    }
+                  />
+                  {err[`d${idx}`] ? <div className="mt-1 text-xs text-black/70">{err[`d${idx}`]}</div> : null}
+                </label>
+                <Input
+                  label={idx === 0 ? "Qty" : undefined}
+                  value={it.quantity}
+                  onChange={(e) =>
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, quantity: e.target.value } : x)))
+                  }
+                  inputMode="numeric"
+                  error={err[`q${idx}`]}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={items.length <= 1}
+                  onClick={() => setItems((xs) => xs.filter((_, i) => i !== idx))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+          {err.items ? <div className="mt-2 text-xs text-black/70">{err.items}</div> : null}
+          <div className="mt-2">
+            <Button type="button" variant="secondary" onClick={() => setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1" }])}>
+              Add item
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Input
+            label="Total price (optional)"
+            value={totalPrice}
+            onChange={(e) => setTotalPrice(e.target.value)}
+            inputMode="decimal"
+          />
+          <Input
+            label="Deposit made (optional)"
+            value={deposit}
+            onChange={(e) => setDeposit(e.target.value)}
+            inputMode="decimal"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" isLoading={busy}>
+            Save changes
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
