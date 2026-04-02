@@ -181,6 +181,27 @@ export function InvoiceDetailPage() {
                   <div className="mt-1 text-base font-bold text-black">{formatMoney(data.total_price)}</div>
                 </div>
                 <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
+                  <div className="text-xs font-semibold uppercase text-black/60">Final price</div>
+                  <div className="mt-1 text-base font-bold text-black">
+                    {formatMoney((data as any).final_price ?? data.total_price)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
+                  <div className="text-xs font-semibold uppercase text-black/60">Discount</div>
+                  <div className="mt-1 text-sm font-semibold text-black">
+                    {(data as any).discount_type
+                      ? `${(data as any).discount_type === "percentage" ? "Percentage" : "Fixed"} • ${
+                          (data as any).discount_type === "percentage"
+                            ? `${Number((data as any).discount_value)}%`
+                            : formatMoney((data as any).discount_value)
+                        } • -${formatMoney((data as any).discount_amount)}`
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 print:grid-cols-2">
+                <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
                   <div className="text-xs font-semibold uppercase text-black/60">Deposit made</div>
                   <div className="mt-1 text-base font-bold text-black">{formatMoney(data.deposit_paid)}</div>
                 </div>

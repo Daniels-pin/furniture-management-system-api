@@ -21,6 +21,24 @@ function isoToDateInput(iso?: string | null) {
   return d.toISOString().slice(0, 10);
 }
 
+function discountLabel(dType?: unknown) {
+  const t = typeof dType === "string" ? dType : "";
+  if (t === "percentage") return "Percentage";
+  if (t === "fixed") return "Fixed";
+  return null;
+}
+
+function discountValueText(dType?: unknown, dValue?: unknown) {
+  const t = typeof dType === "string" ? dType : "";
+  if (!t) return null;
+  if (t === "percentage") {
+    const n = Number(dValue);
+    return Number.isFinite(n) ? `${n}%` : `${String(dValue ?? "")}%`;
+  }
+  // fixed
+  return formatMoney(dValue as any);
+}
+
 export function OrderDetailsPage() {
   const { orderId } = useParams();
   const nav = useNavigate();
@@ -202,21 +220,60 @@ export function OrderDetailsPage() {
                 </div>
 
                 {auth.role === "admin" || auth.role === "showroom" ? (
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                      <div className="text-xs font-semibold text-black/60">Total price</div>
-                      <div className="mt-1 text-sm font-semibold">
-                        {formatMoney((data as any).final_price ?? (data as any).total_price)}
+                  <div className="mt-4 space-y-3">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Total price</div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {formatMoney((data as any).total_price)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Deposit made</div>
+                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
+                      </div>
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Balance remaining</div>
+                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).balance)}</div>
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                      <div className="text-xs font-semibold text-black/60">Deposit made</div>
-                      <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
-                    </div>
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                      <div className="text-xs font-semibold text-black/60">Balance remaining</div>
-                      <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).balance)}</div>
-                    </div>
+
+                    {discountLabel((data as any).discount_type) ? (
+                      <div className="rounded-2xl border border-black/10 bg-white p-4">
+                        <div className="text-xs font-semibold text-black/60">Discount</div>
+                        <div className="mt-2 grid grid-cols-1 gap-2 text-sm md:grid-cols-3">
+                          <div>
+                            <div className="text-xs font-semibold text-black/50">Type</div>
+                            <div className="mt-0.5 font-semibold">{discountLabel((data as any).discount_type)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-black/50">Value</div>
+                            <div className="mt-0.5 font-semibold">
+                              {discountValueText((data as any).discount_type, (data as any).discount_value) ?? "—"}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-black/50">Amount deducted</div>
+                            <div className="mt-0.5 font-semibold">
+                              -{formatMoney((data as any).discount_amount)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                          <div className="text-xs font-semibold text-black/60">Final price</div>
+                          <div className="mt-0.5 text-sm font-bold">
+                            {formatMoney((data as any).final_price ?? (data as any).total_price)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-black/10 bg-white p-4">
+                        <div className="text-xs font-semibold text-black/60">Final price</div>
+                        <div className="mt-1 text-sm font-bold">
+                          {formatMoney((data as any).final_price ?? (data as any).total_price)}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="mt-3 text-sm text-black/60">Pricing is hidden for your role.</div>

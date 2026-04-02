@@ -35,6 +35,11 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     c = inv.customer
     due = inv.due_date.strftime("%B %d, %Y") if inv.due_date else "—"
     issued = inv.created_at.strftime("%B %d, %Y") if inv.created_at else "—"
+    order = inv.order
+    discount_type = getattr(order, "discount_type", None) if order else None
+    discount_value = getattr(order, "discount_value", None) if order else None
+    discount_amount = getattr(order, "discount_amount", None) if order else None
+    final_price = getattr(order, "final_price", None) if order else None
 
     # Build rows
     rows = []
@@ -49,6 +54,26 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
             """
         )
     rows_html = "\n".join(rows) if rows else "<tr><td colspan='3' style='padding:10px 12px;color:#666'>No items</td></tr>"
+
+    discount_block = ""
+    if discount_type:
+        dtype = "Percentage" if str(discount_type) == "percentage" else "Fixed"
+        if str(discount_type) == "percentage":
+            dval = f"{escape(str(discount_value))}%"
+        else:
+            dval = _money(discount_value)
+        discount_block = f"""
+                <tr>
+                  <td style="padding:6px 0;color:#666;font-size:13px">Discount</td>
+                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">
+                    {escape(dtype)} ({dval}) • -{_money(discount_amount)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#666;font-size:13px">Final price</td>
+                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:900">{_money(final_price or inv.total_price)}</td>
+                </tr>
+        """
 
     return f"""
     <div style="margin:0;padding:0;background:#f6f6f6">
@@ -99,6 +124,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
                   <td style="padding:6px 0;color:#666;font-size:13px">Total price</td>
                   <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(inv.total_price)}</td>
                 </tr>
+                {discount_block}
                 <tr>
                   <td style="padding:6px 0;color:#666;font-size:13px">Deposit made</td>
                   <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(inv.deposit_paid)}</td>
