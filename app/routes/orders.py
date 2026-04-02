@@ -24,7 +24,7 @@ from app.schemas import (
 from fastapi import Query
 from typing import List, Optional
 from app.utils.cloudinary import upload_image
-from app.utils.pricing import compute_pricing
+from app.utils.pricing import compute_discount, compute_pricing, compute_pricing_with_discount
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
 
@@ -71,6 +71,10 @@ def _build_order_response(order: models.Order, customer: models.Customer, items:
         base.update(
             {
                 "total_price": order.total_price,
+                "discount_type": order.discount_type,
+                "discount_value": order.discount_value,
+                "discount_amount": order.discount_amount,
+                "final_price": order.final_price,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
                 "payment_status": order.payment_status,
@@ -94,6 +98,8 @@ def create_order(
     image: UploadFile | None = File(None),
     total_price: Decimal | None = Form(None),
     amount_paid: Decimal | None = Form(None),
+    discount_type: Optional[str] = Form(None),
+    discount_value: Decimal | None = Form(None),
     db: Session = Depends(get_db),
     user=Depends(require_role(["showroom", "admin"])),
 ):
@@ -131,8 +137,9 @@ def create_order(
     if image is not None:
         image_url = upload_image(image)
 
-    # 4) Pricing (showroom/admin can input; only admin can view)
-    pricing = compute_pricing(total_price, amount_paid)
+    # 4) Pricing + discount
+    pricing, discount = compute_pricing_with_discount(total_price, amount_paid, discount_type, discount_value)
+    original_total = compute_pricing(total_price, None).total_price
 
     # 5) Transactional create (customer + order + items)
     try:
@@ -160,7 +167,11 @@ def create_order(
                 due_date=due_date,
                 created_by=user.id,
                 image_url=image_url,
-                total_price=pricing.total_price,
+                total_price=original_total,
+                discount_type=discount.discount_type,
+                discount_value=discount.discount_value,
+                discount_amount=discount.discount_amount,
+                final_price=discount.final_price if discount.final_price is not None else original_total,
                 amount_paid=pricing.amount_paid,
                 balance=pricing.balance,
                 payment_status=pricing.payment_status,
@@ -304,7 +315,7 @@ def get_orders(
             "created_at": order.created_at,
             "image_url": order.image_url,
             "customer": None
-            if user.role == "manager"
+            if user.role == "factory"
             else {
                 "id": customer.id,
                 "name": customer.name,
@@ -327,6 +338,10 @@ def get_orders(
             base.update(
                 {
                     "total_price": order.total_price,
+                    "discount_type": order.discount_type,
+                    "discount_value": order.discount_value,
+                    "discount_amount": order.discount_amount,
+                    "final_price": order.final_price,
                     "amount_paid": order.amount_paid,
                     "balance": order.balance,
                     "payment_status": order.payment_status,
@@ -365,7 +380,7 @@ def get_orders_alerts(
                 "status": o.status,
                 "due_date": o.due_date,
                 "customer": None
-                if user.role == "manager"
+                if user.role == "factory"
                 else {"name": o.customer.name if o.customer else None},
             }
         )
@@ -389,7 +404,7 @@ def get_reminders(
             models.Order.due_date >= today
         ).all()
     else:
-        # manager + admin
+        # factory + admin
         orders = db.query(models.Order).filter(
             models.Order.due_date <= upcoming,
             models.Order.due_date >= today
@@ -432,7 +447,7 @@ def get_order(
         "due_date": order.due_date,
         "image_url": order.image_url,
         "customer": None
-        if user.role == "manager"
+        if user.role == "factory"
         else {
             "id": customer.id,
             "name": customer.name,
@@ -455,6 +470,10 @@ def get_order(
         base.update(
             {
                 "total_price": order.total_price,
+                "discount_type": order.discount_type,
+                "discount_value": order.discount_value,
+                "discount_amount": order.discount_amount,
+                "final_price": order.final_price,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
                 "payment_status": order.payment_status,
@@ -476,8 +495,18 @@ def put_order_admin(
 
     tp = payload.total_price if payload.total_price is not None else order.total_price
     ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
-    pricing = compute_pricing(tp, ap)
-    order.total_price = pricing.total_price
+    dt = payload.discount_type if payload.discount_type is not None else order.discount_type
+    dv = payload.discount_value if payload.discount_value is not None else order.discount_value
+
+    original_total = compute_pricing(tp, None).total_price
+    discount = compute_discount(original_total, dt, dv)
+    pricing = compute_pricing(discount.final_price, ap)
+
+    order.total_price = original_total
+    order.discount_type = discount.discount_type
+    order.discount_value = discount.discount_value
+    order.discount_amount = discount.discount_amount
+    order.final_price = discount.final_price
     order.amount_paid = pricing.amount_paid
     order.balance = pricing.balance
     order.payment_status = pricing.payment_status
@@ -511,7 +540,7 @@ def put_order_admin(
         "due_date": order.due_date,
         "image_url": order.image_url,
         "customer": None
-        if user.role == "manager"
+        if user.role == "factory"
         else {
             "id": customer.id,
             "name": customer.name,
@@ -533,6 +562,10 @@ def put_order_admin(
         base.update(
             {
                 "total_price": order.total_price,
+                "discount_type": order.discount_type,
+                "discount_value": order.discount_value,
+                "discount_amount": order.discount_amount,
+                "final_price": order.final_price,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
                 "payment_status": order.payment_status,
@@ -552,8 +585,14 @@ def update_order_pricing(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    pricing = compute_pricing(payload.total_price, payload.amount_paid)
-    order.total_price = pricing.total_price
+    tp = payload.total_price if payload.total_price is not None else order.total_price
+    ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
+    original_total = compute_pricing(tp, None).total_price
+    discount = compute_discount(original_total, order.discount_type, order.discount_value)
+    pricing = compute_pricing(discount.final_price, ap)
+    order.total_price = original_total
+    order.final_price = discount.final_price
+    order.discount_amount = discount.discount_amount
     order.amount_paid = pricing.amount_paid
     order.balance = pricing.balance
     order.payment_status = pricing.payment_status
@@ -591,7 +630,7 @@ def update_order_status_patch(
     order_id: int,
     status: str = Form(...),
     db: Session = Depends(get_db),
-    user=Depends(require_role(["manager", "admin"])),
+    user=Depends(require_role(["factory", "admin"])),
 ):
     allowed = {"pending", "in_progress", "completed"}
     if status not in allowed:
@@ -618,7 +657,9 @@ def mark_order_fully_paid(
     if order.total_price is None:
         raise HTTPException(status_code=400, detail="total_price is required to mark as paid")
 
-    pricing = compute_pricing(order.total_price, order.total_price)
+    tp = order.total_price
+    discount = compute_discount(tp, order.discount_type, order.discount_value)
+    pricing = compute_pricing(discount.final_price, discount.final_price)
     order.amount_paid = pricing.amount_paid
     order.balance = pricing.balance
     order.payment_status = pricing.payment_status

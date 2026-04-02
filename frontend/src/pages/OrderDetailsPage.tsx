@@ -144,7 +144,7 @@ export function OrderDetailsPage() {
               </div>
             </Card>
 
-            {auth.role !== "manager" && data.customer ? (
+            {auth.role !== "factory" && data.customer ? (
               <Card>
                 <div className="text-sm font-semibold">Customer</div>
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -168,7 +168,7 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
-            {auth.role !== "manager" ? (
+            {auth.role !== "factory" ? (
               <Card>
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -205,7 +205,9 @@ export function OrderDetailsPage() {
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
                       <div className="text-xs font-semibold text-black/60">Total price</div>
-                      <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).total_price)}</div>
+                      <div className="mt-1 text-sm font-semibold">
+                        {formatMoney((data as any).final_price ?? (data as any).total_price)}
+                      </div>
                     </div>
                     <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
                       <div className="text-xs font-semibold text-black/60">Deposit made</div>
@@ -362,6 +364,12 @@ function EditOrderModal({
   const [deposit, setDeposit] = useState(
     initial.amount_paid != null ? String(initial.amount_paid) : ""
   );
+  const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">(
+    (initial as any).discount_type ?? ""
+  );
+  const [discountValue, setDiscountValue] = useState(
+    (initial as any).discount_value != null ? String((initial as any).discount_value) : ""
+  );
   const [items, setItems] = useState<
     Array<{ item_name: string; description: string; quantity: string }>
   >(
@@ -380,6 +388,8 @@ function EditOrderModal({
     setDueDate(isoToDateInput(initial.due_date));
     setTotalPrice(initial.total_price != null ? String(initial.total_price) : "");
     setDeposit(initial.amount_paid != null ? String(initial.amount_paid) : "");
+    setDiscountType(((initial as any).discount_type ?? "") as any);
+    setDiscountValue((initial as any).discount_value != null ? String((initial as any).discount_value) : "");
     setItems(
       initial.items.map((it) => ({
         item_name: it.item_name,
@@ -420,7 +430,9 @@ function EditOrderModal({
         due_date: dueDate ? new Date(dueDate).toISOString() : null,
         items: payload,
         total_price: totalPrice.trim() === "" ? null : Number(totalPrice),
-        amount_paid: deposit.trim() === "" ? null : Number(deposit)
+        amount_paid: deposit.trim() === "" ? null : Number(deposit),
+        discount_type: discountType || null,
+        discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(discountValue)) : null
       });
       await onSaved();
     } catch (er) {
@@ -525,6 +537,25 @@ function EditOrderModal({
             value={deposit}
             onChange={(e) => setDeposit(e.target.value)}
             inputMode="decimal"
+          />
+          <label className="block">
+            <div className="mb-1 text-sm font-medium">Discount type (optional)</div>
+            <select
+              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm"
+              value={discountType}
+              onChange={(e) => setDiscountType(e.target.value as any)}
+            >
+              <option value="">No discount</option>
+              <option value="fixed">Fixed</option>
+              <option value="percentage">Percentage</option>
+            </select>
+          </label>
+          <Input
+            label="Discount value (optional)"
+            value={discountValue}
+            onChange={(e) => setDiscountValue(e.target.value)}
+            inputMode="decimal"
+            placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
           />
         </div>
 

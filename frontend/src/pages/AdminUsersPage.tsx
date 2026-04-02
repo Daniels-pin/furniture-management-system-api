@@ -248,7 +248,7 @@ function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
           onChange={(e) => setRole(e.target.value as Role)}
           options={[
             { value: "showroom", label: "showroom" },
-            { value: "manager", label: "manager" },
+            { value: "factory", label: "factory" },
             { value: "admin", label: "admin" }
           ]}
         />

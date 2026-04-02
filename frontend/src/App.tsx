@@ -27,8 +27,22 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="orders/:orderId" element={<OrderDetailsPage />} />
-        <Route path="invoices" element={<InvoicesPage />} />
-        <Route path="invoices/:invoiceId" element={<InvoiceDetailPage />} />
+        <Route
+          path="invoices"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <InvoicesPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="invoices/:invoiceId"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <InvoiceDetailPage />
+            </RequireAuth>
+          }
+        />
         <Route path="customers" element={<CustomersPage />} />
         <Route
           path="admin/users"

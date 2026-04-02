@@ -27,9 +27,7 @@ def create_user(
     current_user = Depends(require_role(["admin"]))
 ):
     username = user_data.username.strip()
-    if username.lower() not in {"admin", "showroom", "manager"}:
-        # no-op; role validation handled by schema enum; keep here for clarity
-        pass
+    # Role validation is handled by the schema enum; no additional checks here.
 
     # Use username as unique email identifier in DB
     existing_user = db.query(models.User).filter(models.User.email == username).first()

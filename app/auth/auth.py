@@ -10,6 +10,17 @@ from app.schemas import LoginRequest
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 router = APIRouter()
 
+ROLE_ALIASES = {
+    # Backwards compatibility: old role name -> new role name
+    "manager": "factory",
+}
+
+
+def normalize_role(role: str | None) -> str | None:
+    if role is None:
+        return None
+    return ROLE_ALIASES.get(role, role)
+
 
 @router.post("/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
@@ -20,7 +31,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({
         "user_id": user.id,
-        "role": user.role
+        "role": normalize_role(user.role)
     })
 
     return {"access_token": token, "token_type": "bearer"}
@@ -52,7 +63,9 @@ def get_current_user(
 
 def require_role(allowed_roles: list):
     def role_checker(user = Depends(get_current_user)):
-        if user.role not in allowed_roles:
+        effective_role = normalize_role(getattr(user, "role", None))
+        effective_allowed = {normalize_role(r) for r in allowed_roles}
+        if effective_role not in effective_allowed:
             raise HTTPException(status_code=403, detail="Not authorized")
         return user
     return role_checker

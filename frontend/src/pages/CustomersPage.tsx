@@ -21,7 +21,7 @@ export function CustomersPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const canSeePrivate = auth.role !== "manager";
+  const canSeePrivate = auth.role !== "factory";
   const canDelete = auth.role === "admin";
 
   const filtered = useMemo(() => {
@@ -145,7 +145,7 @@ export function CustomersPage() {
                           <td className="py-3 pr-0 text-black/70">{c.address ?? "—"}</td>
                         </>
                       ) : (
-                        <td className="py-3 pr-0 text-black/30">Hidden for manager role</td>
+                        <td className="py-3 pr-0 text-black/30">Hidden for factory role</td>
                       )}
                       {canDelete ? (
                         <td className="py-3 pr-0 text-right">
@@ -189,7 +189,7 @@ export function CustomersPage() {
           </div>
         </Card>
 
-        {auth.role !== "manager" ? (
+        {auth.role !== "factory" ? (
           <CreateCustomerCard
             onCreated={(c) => {
               setCustomers((xs) => [c, ...xs]);
@@ -235,6 +235,8 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [email, setEmail] = useState("");
+  const [birthDay, setBirthDay] = useState("");
+  const [birthMonth, setBirthMonth] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -244,13 +246,25 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
       toast.push("error", "Enter a valid email or leave blank");
       return;
     }
+    const bd = birthDay.trim() ? Number(birthDay) : null;
+    const bm = birthMonth.trim() ? Number(birthMonth) : null;
+    if (bd !== null && (!Number.isFinite(bd) || bd < 1 || bd > 31)) {
+      toast.push("error", "Birth day must be between 1 and 31");
+      return;
+    }
+    if (bm !== null && (!Number.isFinite(bm) || bm < 1 || bm > 12)) {
+      toast.push("error", "Birth month must be between 1 and 12");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const created = await customersApi.create({
         name: name.trim(),
         phone: phone.trim(),
         address: address.trim(),
-        email: em || undefined
+        email: em || undefined,
+        birth_day: bd ?? undefined,
+        birth_month: bm ?? undefined
       });
       toast.push("success", "Customer created");
       onCreated(created);
@@ -258,6 +272,8 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
       setPhone("");
       setAddress("");
       setEmail("");
+      setBirthDay("");
+      setBirthMonth("");
     } catch (err) {
       toast.push("error", getErrorMessage(err));
     } finally {
@@ -273,6 +289,22 @@ function CreateCustomerCard({ onCreated }: { onCreated(c: Customer): void }) {
         <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} required />
         <Input label="Email (optional)" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Input
+            label="Birth day (optional)"
+            value={birthDay}
+            onChange={(e) => setBirthDay(e.target.value)}
+            inputMode="numeric"
+            placeholder="1-31"
+          />
+          <Input
+            label="Birth month (optional)"
+            value={birthMonth}
+            onChange={(e) => setBirthMonth(e.target.value)}
+            inputMode="numeric"
+            placeholder="1-12"
+          />
+        </div>
         <Input label="Address" value={address} onChange={(e) => setAddress(e.target.value)} required />
         <Button type="submit" className="w-full" isLoading={isSubmitting}>
           Create

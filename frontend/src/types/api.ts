@@ -1,4 +1,4 @@
-export type Role = "showroom" | "manager" | "admin";
+export type Role = "showroom" | "factory" | "admin";
 
 export type LoginRequest = { email: string; password: string };
 export type LoginResponse = { access_token: string; token_type: "bearer" | string };
@@ -9,6 +9,8 @@ export type Customer = {
   phone?: string;
   address?: string;
   email?: string | null;
+  birth_day?: number | null;
+  birth_month?: number | null;
 };
 
 export type CustomerCreate = {
@@ -16,6 +18,8 @@ export type CustomerCreate = {
   phone: string;
   address: string;
   email?: string | null;
+  birth_day?: number | null;
+  birth_month?: number | null;
 };
 
 export type OrderStatus = "pending" | "in_progress" | "completed" | "delivered";
@@ -42,6 +46,10 @@ export type Order = {
   customer: Customer;
   items: OrderItem[];
   total_price?: string | number | null;
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: string | number | null;
+  discount_amount?: string | number | null;
+  final_price?: string | number | null;
   amount_paid?: string | number | null;
   balance?: string | number | null;
   payment_status?: string | null;
@@ -86,6 +94,10 @@ export type InvoiceListItem = {
   created_at: string;
   due_date?: string | null;
   customer?: Customer | null;
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: string | number | null;
+  discount_amount?: string | number | null;
+  final_price?: string | number | null;
 };
 
 export type InvoiceDetail = InvoiceListItem & {
@@ -98,5 +110,7 @@ export type OrderAdminUpdate = {
   items: OrderCreateItem[];
   total_price?: string | number | null;
   amount_paid?: string | number | null;
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: string | number | null;
 };
 

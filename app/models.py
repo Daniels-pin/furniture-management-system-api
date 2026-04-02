@@ -24,6 +24,8 @@ class Customer(Base):
     phone = Column(String)
     address = Column(String)
     email = Column(String, nullable=True, index=True)
+    birth_day = Column(Integer, nullable=True)
+    birth_month = Column(Integer, nullable=True)
 
     orders = relationship("Order", back_populates="customer")
 
@@ -45,6 +47,10 @@ class Order(Base):
     due_date = Column(DateTime)
     image_url = Column(String, nullable=True)
     total_price = Column(Numeric(11, 2), nullable=True)
+    discount_type = Column(String, nullable=True)
+    discount_value = Column(Numeric(11, 2), nullable=True)
+    discount_amount = Column(Numeric(11, 2), nullable=True)
+    final_price = Column(Numeric(11, 2), nullable=True)
     amount_paid = Column(Numeric(11, 2), nullable=True)
     balance = Column(Numeric(11, 2), nullable=True)
     payment_status = Column(String, default="unpaid")

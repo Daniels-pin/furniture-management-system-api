@@ -8,6 +8,7 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import type { InvoiceDetail } from "../types/api";
 import { formatMoney } from "../utils/money";
+import { APP_NAME } from "../config/app";
 
 export function InvoiceDetailPage() {
   const { invoiceId } = useParams();
@@ -18,6 +19,7 @@ export function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<InvoiceDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -65,6 +67,25 @@ export function InvoiceDetailPage() {
             Print invoice
           </Button>
           {data ? (
+            <Button
+              variant="secondary"
+              isLoading={sending}
+              onClick={async () => {
+                try {
+                  setSending(true);
+                  const res = await invoicesApi.sendEmail(data.id);
+                  toast.push("success", res.message || "Invoice sent");
+                } catch (e) {
+                  toast.push("error", getErrorMessage(e));
+                } finally {
+                  setSending(false);
+                }
+              }}
+            >
+              Send to Email
+            </Button>
+          ) : null}
+          {data ? (
             <Button variant="secondary" onClick={() => nav(`/orders/${data.order_id}`)}>
               View order
             </Button>
@@ -84,7 +105,7 @@ export function InvoiceDetailPage() {
         <div className="invoice-print-area">
           <article className="rounded-3xl border border-black/10 bg-white p-6 shadow-soft print:rounded-none print:border-0 print:p-0 print:shadow-none">
             <header className="border-b border-black/10 pb-4 print:border-black print:pb-3">
-              <h1 className="text-xl font-bold tracking-tight text-black">Nolimits Furniture Nig Ltd</h1>
+              <h1 className="text-xl font-bold tracking-tight text-black">{APP_NAME}</h1>
               <p className="mt-2 text-sm font-semibold text-black">Invoice #{data.invoice_number}</p>
               <p className="mt-1 text-sm text-black/80">
                 Date issued: {new Date(data.created_at).toLocaleDateString(undefined, { dateStyle: "long" })}
@@ -103,7 +124,7 @@ export function InvoiceDetailPage() {
               </div>
             </div>
 
-            {auth.role !== "manager" && data.customer ? (
+            {auth.role !== "factory" && data.customer ? (
               <section className="mt-6 border-b border-black/10 pb-4 print:mt-5 print:border-black print:pb-3">
                 <h2 className="text-sm font-bold uppercase tracking-wide text-black">Customer</h2>
                 <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 print:gap-1">

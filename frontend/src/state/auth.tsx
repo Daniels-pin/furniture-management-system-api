@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import { authStore } from "./authStore";
 import { decodeJwt, JwtPayload } from "../utils/jwt";
 
-export type Role = "showroom" | "manager" | "admin";
+export type Role = "showroom" | "factory" | "admin";
 
 type AuthState = {
   token: string | null;
@@ -32,9 +32,11 @@ function deriveState(token: string | null): AuthState {
     authStore.clear();
     return { token: null, role: null, userId: null };
   }
+  const normalizedRole =
+    payload?.role === "manager" ? ("factory" as Role) : ((payload?.role as Role | undefined) ?? null);
   return {
     token,
-    role: (payload?.role as Role | undefined) ?? null,
+    role: normalizedRole,
     userId: typeof payload?.user_id === "number" ? payload.user_id : null
   };
 }

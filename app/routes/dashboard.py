@@ -58,7 +58,7 @@ def get_dashboard(
                 "status": o.status,
                 "due_date": o.due_date,
                 "customer": None
-                if user.role == "manager"
+                if user.role == "factory"
                 else {"name": o.customer.name if o.customer else None},
             }
         )
@@ -79,7 +79,7 @@ def get_dashboard(
                 "status": o.status,
                 "due_date": o.due_date,
                 "customer": None
-                if user.role == "manager"
+                if user.role == "factory"
                 else {"name": o.customer.name if o.customer else None},
             }
         )
@@ -96,7 +96,9 @@ def get_dashboard(
 
     # Admin-only financials
     if user.role == "admin":
-        total_revenue = db.query(func.coalesce(func.sum(models.Order.total_price), 0)).scalar()
+        total_revenue = db.query(
+            func.coalesce(func.sum(func.coalesce(models.Order.final_price, models.Order.total_price)), 0)
+        ).scalar()
         amount_paid = db.query(func.coalesce(func.sum(models.Order.amount_paid), 0)).scalar()
         outstanding_balance = db.query(func.coalesce(func.sum(models.Order.balance), 0)).scalar()
 

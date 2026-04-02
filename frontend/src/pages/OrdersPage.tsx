@@ -50,7 +50,7 @@ export function OrdersPage() {
   const canDelete = auth.role === "admin";
   const canSeePricing = auth.role === "admin" || auth.role === "showroom";
   const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "admin";
-  const canUpdateStatus = auth.role === "admin" || auth.role === "manager";
+  const canUpdateStatus = auth.role === "admin" || auth.role === "factory";
 
   const statusParam =
     status === "pending" || status === "in_progress" || status === "completed" ? status : undefined;
@@ -222,7 +222,9 @@ export function OrdersPage() {
                       <td className="py-3 pr-4">{d === null ? "—" : d}</td>
                       {canSeePricing ? (
                         <td className="py-3 pr-4 text-black/70">
-                          {o.total_price != null ? `Total: ${formatMoney(o.total_price)}` : "—"}
+                          {o.final_price != null || o.total_price != null
+                            ? `Total: ${formatMoney(o.final_price ?? o.total_price)}`
+                            : "—"}
                         </td>
                       ) : null}
                       <td className="py-3 pr-0 text-right">
@@ -337,6 +339,8 @@ function CreateOrderModal({
   const [image, setImage] = useState<File | null>(null);
   const [totalPrice, setTotalPrice] = useState<string>("");
   const [amountPaid, setAmountPaid] = useState<string>("");
+  const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">("");
+  const [discountValue, setDiscountValue] = useState<string>("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<Record<string, string>>({});
@@ -352,6 +356,8 @@ function CreateOrderModal({
     setImage(null);
     setTotalPrice("");
     setAmountPaid("");
+    setDiscountType("");
+    setDiscountValue("");
     setFieldError({});
     setIsSubmitting(false);
   }, [open]);
@@ -384,6 +390,17 @@ function CreateOrderModal({
     if (canInputPricing) {
       if (totalPrice && Number(totalPrice) < 0) e.totalPrice = "Total price cannot be negative";
       if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
+      if (discountType) {
+        const dv = Number(discountValue);
+        if (!discountValue.trim() || !Number.isFinite(dv) || dv < 0) {
+          e.discountValue = "Enter a valid discount value";
+        }
+        if (discountType === "percentage" && dv > 100) {
+          e.discountValue = "Percentage discount must be <= 100";
+        }
+      } else if (discountValue.trim()) {
+        e.discountType = "Select a discount type";
+      }
     }
     setFieldError(e);
     return Object.keys(e).length === 0;
@@ -422,6 +439,8 @@ function CreateOrderModal({
       if (canInputPricing) {
         if (totalPrice) form.append("total_price", totalPrice);
         if (amountPaid) form.append("amount_paid", amountPaid);
+        if (discountType) form.append("discount_type", discountType);
+        if (discountType && discountValue.trim()) form.append("discount_value", discountValue);
       }
 
       await ordersApi.createMultipart(form);
@@ -584,6 +603,24 @@ function CreateOrderModal({
               inputMode="decimal"
               error={fieldError.amountPaid}
               placeholder="e.g. 500.00"
+            />
+            <Select
+              label="Discount type (optional)"
+              value={discountType}
+              onChange={(e) => setDiscountType(e.target.value as any)}
+              options={[
+                { value: "", label: "No discount" },
+                { value: "fixed", label: "Fixed" },
+                { value: "percentage", label: "Percentage" }
+              ]}
+            />
+            <Input
+              label="Discount value (optional)"
+              value={discountValue}
+              onChange={(e) => setDiscountValue(e.target.value)}
+              inputMode="decimal"
+              error={fieldError.discountType || fieldError.discountValue}
+              placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
             />
           </div>
         ) : null}

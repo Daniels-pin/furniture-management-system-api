@@ -15,6 +15,8 @@ class CustomerCreate(BaseModel):
     phone: str
     address: str
     email: Optional[EmailStr] = None
+    birth_day: Optional[int] = Field(None, ge=1, le=31)
+    birth_month: Optional[int] = Field(None, ge=1, le=12)
 
 
 class CustomerPublicResponse(BaseModel):
@@ -23,6 +25,8 @@ class CustomerPublicResponse(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     email: Optional[str] = None
+    birth_day: Optional[int] = None
+    birth_month: Optional[int] = None
 
     class Config:
         orm_mode = True
@@ -47,7 +51,7 @@ class OrderStatus(str, Enum):
 
 class UserRole(str, Enum):
     showroom = "showroom"
-    manager = "manager"
+    factory = "factory"
     admin = "admin"
 
 class UserCreate(BaseModel):
@@ -98,6 +102,10 @@ class OrderResponse(BaseModel):
     created_at: datetime
     image_url: Optional[str] = None
     total_price: Optional[Decimal] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
@@ -116,6 +124,10 @@ class OrderDetailsResponse(BaseModel):
     due_date: Optional[datetime] = None
     image_url: Optional[str] = None
     total_price: Optional[Decimal] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
@@ -129,6 +141,8 @@ class OrderAdminPut(BaseModel):
     items: List[OrderItemCreate] = Field(..., min_length=1)
     total_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
 
 
 class InvoiceListItem(BaseModel):
@@ -143,6 +157,10 @@ class InvoiceListItem(BaseModel):
     created_at: datetime
     due_date: Optional[datetime] = None
     customer: Optional[CustomerPublicResponse] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
 
     class Config:
         from_attributes = True

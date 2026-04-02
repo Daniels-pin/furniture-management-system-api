@@ -6,6 +6,7 @@ from app.auth.auth import get_current_user
 from app.auth.auth import require_role
 from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
 from typing import List
+from datetime import datetime
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ def get_customers(
     result = []
 
     for c in customers:
-        if user.role == "manager":
+        if user.role == "factory":
             # 🔒 Limited view
             result.append({
                 "id": c.id,
@@ -34,6 +35,8 @@ def get_customers(
                 "phone": c.phone,
                 "address": c.address,
                 "email": c.email,
+                "birth_day": c.birth_day,
+                "birth_month": c.birth_month,
             })
 
     return result
@@ -51,6 +54,8 @@ def create_customer(
         phone=customer.phone,
         address=customer.address,
         email=str(customer.email) if customer.email is not None else None,
+        birth_day=customer.birth_day,
+        birth_month=customer.birth_month,
     )
 
     db.add(new_customer)
@@ -58,6 +63,41 @@ def create_customer(
     db.refresh(new_customer)
 
     return new_customer
+
+
+@router.get(
+    "/customers/birthdays/today",
+    response_model=List[CustomerPublicResponse],
+    response_model_exclude_none=True,
+)
+def birthdays_today(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    today = datetime.utcnow()
+    q = db.query(models.Customer).filter(
+        models.Customer.birth_day == today.day,
+        models.Customer.birth_month == today.month,
+    )
+    customers = q.order_by(models.Customer.id.desc()).all()
+
+    result = []
+    for c in customers:
+        if user.role == "factory":
+            result.append({"id": c.id, "name": c.name})
+        else:
+            result.append(
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "phone": c.phone,
+                    "address": c.address,
+                    "email": c.email,
+                    "birth_day": c.birth_day,
+                    "birth_month": c.birth_month,
+                }
+            )
+    return result
 
 
 @router.delete("/customers/{customer_id}")

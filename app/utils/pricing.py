@@ -34,6 +34,47 @@ class PricingResult:
     payment_status: str
 
 
+@dataclass(frozen=True)
+class DiscountResult:
+    discount_type: Optional[str]
+    discount_value: Optional[Decimal]
+    discount_amount: Optional[Decimal]
+    final_price: Optional[Decimal]
+
+
+def compute_discount(total_price_in: object, discount_type_in: object, discount_value_in: object) -> DiscountResult:
+    validated_total = compute_pricing(total_price_in, None).total_price
+    if validated_total is None:
+        return DiscountResult(None, None, None, None)
+
+    dt_raw = (str(discount_type_in).strip() if discount_type_in is not None else "").lower()
+    if dt_raw == "":
+        return DiscountResult(None, None, Decimal("0.00"), validated_total)
+
+    if dt_raw not in {"fixed", "percentage"}:
+        raise HTTPException(status_code=400, detail="Invalid discount_type")
+
+    dv = _to_decimal(discount_value_in, "discount_value")
+    if dv is None:
+        raise HTTPException(status_code=400, detail="discount_value is required")
+    dv = _q2(dv)
+    if dv < 0:
+        raise HTTPException(status_code=400, detail="discount_value must be >= 0")
+
+    if dt_raw == "percentage":
+        if dv > Decimal("100.00"):
+            raise HTTPException(status_code=400, detail="discount_value must be <= 100 for percentage")
+        discount_amount = _q2(validated_total * (dv / Decimal("100")))
+    else:
+        discount_amount = dv
+
+    final_price = _q2(validated_total - discount_amount)
+    if final_price < 0:
+        raise HTTPException(status_code=400, detail="final_price must be >= 0")
+
+    return DiscountResult(dt_raw, dv, discount_amount, final_price)
+
+
 def compute_pricing(total_price_in: object, amount_paid_in: object) -> PricingResult:
     """
     Validates monetary inputs and computes balance/payment_status.
@@ -86,3 +127,14 @@ def compute_pricing(total_price_in: object, amount_paid_in: object) -> PricingRe
         balance=balance,
         payment_status=payment_status,
     )
+
+
+def compute_pricing_with_discount(
+    total_price_in: object,
+    amount_paid_in: object,
+    discount_type_in: object,
+    discount_value_in: object,
+) -> tuple[PricingResult, DiscountResult]:
+    discount = compute_discount(total_price_in, discount_type_in, discount_value_in)
+    pricing = compute_pricing(discount.final_price, amount_paid_in)
+    return pricing, discount

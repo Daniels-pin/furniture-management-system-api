@@ -6,6 +6,7 @@ import { useToast } from "../state/toast";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
+import { APP_NAME } from "../config/app";
 
 export function DashboardPage() {
   const toast = useToast();
@@ -47,7 +48,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div>
         <div className="text-2xl font-bold tracking-tight">Dashboard</div>
-        <div className="mt-1 text-sm text-black/60">Business insights for Nolimits Furniture Nig Ltd.</div>
+        <div className="mt-1 text-sm text-black/60">Business insights for {APP_NAME}.</div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-5">

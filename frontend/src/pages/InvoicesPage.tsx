@@ -58,7 +58,7 @@ export function InvoicesPage() {
               <tr className="border-b border-black/10">
                 <th className="py-3 pr-4 font-semibold">Invoice</th>
                 <th className="py-3 pr-4 font-semibold">Order</th>
-                {auth.role !== "manager" ? <th className="py-3 pr-4 font-semibold">Customer</th> : null}
+                {auth.role !== "factory" ? <th className="py-3 pr-4 font-semibold">Customer</th> : null}
                 <th className="py-3 pr-4 font-semibold">Status</th>
                 <th className="py-3 pr-4 font-semibold">Total</th>
                 <th className="py-3 pr-0 font-semibold">Balance</th>
@@ -67,13 +67,13 @@ export function InvoicesPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={auth.role !== "manager" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.role !== "factory" ? 6 : 5} className="py-6 text-black/60">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={auth.role !== "manager" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.role !== "factory" ? 6 : 5} className="py-6 text-black/60">
                     No invoices yet.
                   </td>
                 </tr>
@@ -89,7 +89,7 @@ export function InvoicesPage() {
                       <td className="py-3 pr-4 text-black/70">
                         Order #{String(inv.order_id).padStart(3, "0")}
                       </td>
-                      {auth.role !== "manager" ? (
+                      {auth.role !== "factory" ? (
                         <td className="py-3 pr-4">{inv.customer?.name ?? "—"}</td>
                       ) : null}
                       <td className="py-3 pr-4">{invoiceStatusBadge(inv.status)}</td>

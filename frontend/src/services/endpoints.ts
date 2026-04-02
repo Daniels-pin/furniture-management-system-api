@@ -24,6 +24,10 @@ export const customersApi = {
     const { data } = await api.get<Customer[]>("/customers");
     return data;
   },
+  async birthdaysToday() {
+    const { data } = await api.get<Customer[]>("/customers/birthdays/today");
+    return data;
+  },
   async create(payload: CustomerCreate) {
     const { data } = await api.post<Customer>("/customers", payload);
     return data;
@@ -64,6 +68,10 @@ export const ordersApi = {
       due_date?: string | null;
       image_url?: string | null;
       total_price?: string | number | null;
+      discount_type?: "fixed" | "percentage" | null;
+      discount_value?: string | number | null;
+      discount_amount?: string | number | null;
+      final_price?: string | number | null;
       amount_paid?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
@@ -79,6 +87,10 @@ export const ordersApi = {
       due_date?: string | null;
       image_url?: string | null;
       total_price?: string | number | null;
+      discount_type?: "fixed" | "percentage" | null;
+      discount_value?: string | number | null;
+      discount_amount?: string | number | null;
+      final_price?: string | number | null;
       amount_paid?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
@@ -132,6 +144,10 @@ export const invoicesApi = {
   },
   async getByOrder(orderId: number) {
     const { data } = await api.get<InvoiceDetail>(`/invoices/order/${orderId}`);
+    return data;
+  },
+  async sendEmail(invoiceId: number) {
+    const { data } = await api.post<{ message: string }>(`/invoices/${invoiceId}/send-email`);
     return data;
   }
 };
