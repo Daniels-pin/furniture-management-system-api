@@ -221,21 +221,9 @@ export function OrderDetailsPage() {
 
                 {auth.role === "admin" || auth.role === "showroom" ? (
                   <div className="mt-4 space-y-3">
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Total price</div>
-                        <div className="mt-1 text-sm font-semibold">
-                          {formatMoney((data as any).total_price)}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Deposit made</div>
-                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
-                      </div>
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Balance remaining</div>
-                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).balance)}</div>
-                      </div>
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                      <div className="text-xs font-semibold text-black/60">Total price</div>
+                      <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).total_price)}</div>
                     </div>
 
                     {discountLabel((data as any).discount_type) ? (
@@ -259,21 +247,32 @@ export function OrderDetailsPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="mt-3 rounded-xl border border-black/10 bg-black/[0.02] p-3">
-                          <div className="text-xs font-semibold text-black/60">Final price</div>
-                          <div className="mt-0.5 text-sm font-bold">
-                            {formatMoney((data as any).final_price ?? (data as any).total_price)}
-                          </div>
-                        </div>
                       </div>
                     ) : (
-                      <div className="rounded-2xl border border-black/10 bg-white p-4">
-                        <div className="text-xs font-semibold text-black/60">Final price</div>
-                        <div className="mt-1 text-sm font-bold">
-                          {formatMoney((data as any).final_price ?? (data as any).total_price)}
-                        </div>
-                      </div>
+                      <></>
                     )}
+
+                    <div className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="text-xs font-semibold text-black/60">Final price</div>
+                      <div className="mt-1 text-sm font-bold">
+                        {formatMoney(
+                          discountLabel((data as any).discount_type)
+                            ? (data as any).final_price ?? (data as any).total_price
+                            : (data as any).total_price
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Deposit made</div>
+                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
+                      </div>
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Balance remaining</div>
+                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).balance)}</div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-3 text-sm text-black/60">Pricing is hidden for your role.</div>

@@ -19,7 +19,8 @@ def create_invoice_for_order(db: Session, order: models.Order, customer_id: int)
         invoice_number=invoice_number,
         order_id=order.id,
         customer_id=customer_id,
-        total_price=order.final_price if order.final_price is not None else order.total_price,
+        # Store the original total on the invoice row; the discounted final is derived from the order.
+        total_price=order.total_price,
         deposit_paid=deposit,
         balance=order.balance,
         status=order.payment_status or "unpaid",
@@ -34,7 +35,8 @@ def sync_invoice_from_order(db: Session, order: models.Order) -> None:
     inv = db.query(models.Invoice).filter(models.Invoice.order_id == order.id).first()
     if not inv:
         return
-    inv.total_price = order.final_price if order.final_price is not None else order.total_price
+    # Keep invoice row as the original total; discounted final is derived from the order.
+    inv.total_price = order.total_price
     inv.deposit_paid = order.amount_paid if order.amount_paid is not None else Decimal("0")
     inv.balance = order.balance
     inv.status = order.payment_status or "unpaid"

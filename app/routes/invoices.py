@@ -39,6 +39,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     discount_type = getattr(order, "discount_type", None) if order else None
     discount_value = getattr(order, "discount_value", None) if order else None
     discount_amount = getattr(order, "discount_amount", None) if order else None
+    original_total = getattr(order, "total_price", None) if order else inv.total_price
     final_price = getattr(order, "final_price", None) if order else None
 
     # Build rows
@@ -71,7 +72,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
                 </tr>
                 <tr>
                   <td style="padding:6px 0;color:#666;font-size:13px">Final price</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:900">{_money(final_price or inv.total_price)}</td>
+                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:900">{_money(final_price or original_total)}</td>
                 </tr>
         """
 
@@ -122,7 +123,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
               <table style="width:100%;border-collapse:collapse;font-family:Inter,Arial,sans-serif">
                 <tr>
                   <td style="padding:6px 0;color:#666;font-size:13px">Total price</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(inv.total_price)}</td>
+                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(original_total)}</td>
                 </tr>
                 {discount_block}
                 <tr>
@@ -157,7 +158,8 @@ def _invoice_to_list_item(inv: models.Invoice, user) -> dict:
         "invoice_number": inv.invoice_number,
         "order_id": inv.order_id,
         "customer_id": inv.customer_id,
-        "total_price": inv.total_price,
+        # Expose original total from the order for UI clarity
+        "total_price": getattr(order, "total_price", None) if order else inv.total_price,
         "deposit_paid": inv.deposit_paid,
         "balance": inv.balance,
         "status": inv.status or "unpaid",
