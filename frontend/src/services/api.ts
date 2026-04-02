@@ -1,6 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { env } from "../env";
 import { authStore } from "../state/authStore";
+import { decodeJwt } from "../utils/jwt";
 
 export type ApiErrorShape =
   | { detail?: string }
@@ -35,9 +36,35 @@ export const api = axios.create({
   timeout: 20000
 });
 
+function sleep(ms: number) {
+  return new Promise((r) => window.setTimeout(r, ms));
+}
+
+function isTokenExpired(token: string): boolean {
+  const payload = decodeJwt(token);
+  const exp = payload?.exp;
+  if (typeof exp !== "number") return false;
+  return exp * 1000 <= Date.now();
+}
+
+function shouldRetry(config: any, status?: number): boolean {
+  const method = String(config?.method || "get").toLowerCase();
+  // Only retry safe/idempotent requests
+  if (!["get", "head", "options"].includes(method)) return false;
+  if (!status) return true; // network / no response
+  // Render cold start / transient errors (per requirements, include 404 retry)
+  return status === 404 || status === 502 || status === 503 || status === 504;
+}
+
 api.interceptors.request.use((config) => {
   const token = authStore.getToken();
   if (token) {
+    // If token is expired, clear it and let RequireAuth redirect cleanly.
+    if (isTokenExpired(token)) {
+      authStore.clear();
+      if (window.location.pathname !== "/login") window.location.assign("/login");
+      return config;
+    }
     config.headers = config.headers ?? {};
     (config.headers as any).Authorization = `Bearer ${token}`;
   }
@@ -46,15 +73,44 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (res) => res,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
+
+    // Central auth handling
     if (status === 401) {
       authStore.clear();
       // Avoid hard navigation loops; RequireAuth will redirect.
-      if (window.location.pathname !== "/login") {
-        window.location.assign("/login");
-      }
+      if (window.location.pathname !== "/login") window.location.assign("/login");
+      return Promise.reject(error);
     }
+
+    const config = error?.config;
+    if (!config) return Promise.reject(error);
+
+    // Retry logic (Render sleep/cold start etc.)
+    const attempt = Number(config.__retryAttempt || 0);
+    const maxAttempts = 2;
+    if (attempt < maxAttempts && shouldRetry(config, status)) {
+      config.__retryAttempt = attempt + 1;
+      const delay = attempt === 0 ? 2000 : 4500;
+
+      // Lightweight production debugging signal
+      try {
+        console.warn("[api] retrying", {
+          url: config?.url,
+          method: config?.method,
+          status: status ?? "NETWORK",
+          attempt: config.__retryAttempt,
+          delayMs: delay
+        });
+      } catch {
+        // ignore
+      }
+
+      await sleep(delay);
+      return api.request(config);
+    }
+
     return Promise.reject(error);
   }
 );

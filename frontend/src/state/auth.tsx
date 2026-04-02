@@ -18,9 +18,20 @@ type AuthContextValue = AuthState & {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function isExpired(payload: JwtPayload | null): boolean {
+  const exp = payload?.exp;
+  if (typeof exp !== "number") return false;
+  // exp is seconds since epoch
+  return exp * 1000 <= Date.now();
+}
+
 function deriveState(token: string | null): AuthState {
   if (!token) return { token: null, role: null, userId: null };
   const payload = decodeJwt(token) as JwtPayload | null;
+  if (isExpired(payload)) {
+    authStore.clear();
+    return { token: null, role: null, userId: null };
+  }
   return {
     token,
     role: (payload?.role as Role | undefined) ?? null,
