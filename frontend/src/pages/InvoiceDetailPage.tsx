@@ -43,7 +43,7 @@ export function InvoiceDetailPage() {
   }, [id, toast]);
 
   return (
-    <div className="space-y-6 print:space-y-4">
+    <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end print:hidden">
         <div>
           <div className="text-2xl font-bold tracking-tight">Invoice</div>
@@ -57,11 +57,12 @@ export function InvoiceDetailPage() {
           </Button>
           <Button
             variant="secondary"
+            type="button"
             onClick={() => {
               window.print();
             }}
           >
-            Print / Download
+            Print invoice
           </Button>
           {data ? (
             <Button variant="secondary" onClick={() => nav(`/orders/${data.order_id}`)}>
@@ -72,64 +73,68 @@ export function InvoiceDetailPage() {
       </div>
 
       {loading ? (
-        <Card>
+        <Card className="print:hidden">
           <div className="text-sm text-black/60">Loading…</div>
         </Card>
       ) : notFound || !data ? (
-        <Card>
+        <Card className="print:hidden">
           <div className="text-sm font-semibold">Invoice not found</div>
         </Card>
       ) : (
-        <div id="invoice-print-root" className="space-y-4">
-          <Card className="print:border-0 print:shadow-none">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="invoice-print-area">
+          <article className="rounded-3xl border border-black/10 bg-white p-6 shadow-soft print:rounded-none print:border-0 print:p-0 print:shadow-none">
+            <header className="border-b border-black/10 pb-4 print:border-black print:pb-3">
+              <h1 className="text-xl font-bold tracking-tight text-black">Nolimits Furniture Nig Ltd</h1>
+              <p className="mt-2 text-sm font-semibold text-black">Invoice #{data.invoice_number}</p>
+              <p className="mt-1 text-sm text-black/80">
+                Date issued: {new Date(data.created_at).toLocaleDateString(undefined, { dateStyle: "long" })}
+              </p>
+            </header>
+
+            {/* Screen-only: order link context (not part of formal print layout) */}
+            <div className="mt-4 flex flex-wrap justify-between gap-4 border-b border-black/5 pb-4 text-sm print:hidden">
               <div>
-                <div className="text-lg font-bold">Nolimits Furniture Nig Ltd</div>
-                <div className="mt-1 text-sm text-black/60">Invoice #{data.invoice_number}</div>
-                <div className="mt-1 text-xs text-black/50">
-                  Issued {new Date(data.created_at).toLocaleString()}
-                </div>
+                <span className="font-semibold text-black/60">Linked order</span>
+                <div className="font-semibold">#{String(data.order_id).padStart(3, "0")}</div>
               </div>
-              <div className="text-right text-sm">
-                <div className="font-semibold">Order</div>
-                <div className="text-black/70">#{String(data.order_id).padStart(3, "0")}</div>
-                <div className="mt-2 font-semibold">Payment status</div>
-                <div className="capitalize text-black/70">{data.status}</div>
+              <div className="text-right">
+                <span className="font-semibold text-black/60">Payment status</span>
+                <div className="capitalize font-semibold">{data.status}</div>
               </div>
             </div>
 
             {auth.role !== "manager" && data.customer ? (
-              <div className="mt-6 border-t border-black/10 pt-4">
-                <div className="text-sm font-semibold">Bill to</div>
-                <div className="mt-2 grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
+              <section className="mt-6 border-b border-black/10 pb-4 print:mt-5 print:border-black print:pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-black">Customer</h2>
+                <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 print:gap-1">
                   <div>
-                    <span className="text-black/60">Name: </span>
-                    <span className="font-semibold">{data.customer.name}</span>
+                    <dt className="text-black/60">Name</dt>
+                    <dd className="font-semibold text-black">{data.customer.name}</dd>
                   </div>
                   <div>
-                    <span className="text-black/60">Phone: </span>
-                    <span className="font-semibold">{data.customer.phone ?? "—"}</span>
+                    <dt className="text-black/60">Phone</dt>
+                    <dd className="font-semibold text-black">{data.customer.phone ?? "—"}</dd>
                   </div>
                   <div>
-                    <span className="text-black/60">Email: </span>
-                    <span className="font-semibold">{data.customer.email ?? "—"}</span>
+                    <dt className="text-black/60">Email</dt>
+                    <dd className="font-semibold text-black">{data.customer.email ?? "—"}</dd>
                   </div>
-                  <div>
-                    <span className="text-black/60">Address: </span>
-                    <span className="font-semibold">{data.customer.address ?? "—"}</span>
+                  <div className="sm:col-span-2">
+                    <dt className="text-black/60">Address</dt>
+                    <dd className="font-semibold text-black">{data.customer.address ?? "—"}</dd>
                   </div>
-                </div>
-              </div>
+                </dl>
+              </section>
             ) : (
-              <div className="mt-6 text-sm text-black/60 print:hidden">Customer details hidden for your role.</div>
+              <p className="mt-6 text-sm text-black/60 print:hidden">Customer details hidden for your role.</p>
             )}
 
-            <div className="mt-6 border-t border-black/10 pt-4">
-              <div className="text-sm font-semibold">Line items</div>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead className="text-black/60">
-                    <tr className="border-b border-black/10">
+            <section className="mt-6 print:mt-5">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-black">Items</h2>
+              <div className="mt-3 overflow-x-auto print:overflow-visible">
+                <table className="w-full min-w-[520px] border-collapse text-left text-sm print:min-w-0">
+                  <thead>
+                    <tr className="border-b-2 border-black text-black">
                       <th className="py-2 pr-4 font-semibold">Item</th>
                       <th className="py-2 pr-4 font-semibold">Description</th>
                       <th className="py-2 pr-0 text-right font-semibold">Qty</th>
@@ -137,37 +142,39 @@ export function InvoiceDetailPage() {
                   </thead>
                   <tbody>
                     {data.items.map((it) => (
-                      <tr key={it.id} className="border-b border-black/5">
-                        <td className="py-2 pr-4 font-semibold">{it.item_name}</td>
-                        <td className="py-2 pr-4 text-black/70">{it.description ?? "—"}</td>
-                        <td className="py-2 pr-0 text-right">{it.quantity}</td>
+                      <tr key={it.id} className="border-b border-black/15 print:border-black/40">
+                        <td className="py-2 pr-4 font-semibold text-black">{it.item_name}</td>
+                        <td className="py-2 pr-4 text-black">{it.description ?? "—"}</td>
+                        <td className="py-2 pr-0 text-right font-semibold text-black">{it.quantity}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </section>
 
-            <div className="mt-6 grid grid-cols-1 gap-3 border-t border-black/10 pt-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                <div className="text-xs font-semibold text-black/60">Total price</div>
-                <div className="mt-1 text-sm font-bold">{formatMoney(data.total_price)}</div>
+            <section className="mt-6 space-y-3 border-t border-black/10 pt-4 print:mt-5 print:border-black print:pt-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 print:grid-cols-3">
+                <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
+                  <div className="text-xs font-semibold uppercase text-black/60">Total price</div>
+                  <div className="mt-1 text-base font-bold text-black">{formatMoney(data.total_price)}</div>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
+                  <div className="text-xs font-semibold uppercase text-black/60">Deposit made</div>
+                  <div className="mt-1 text-base font-bold text-black">{formatMoney(data.deposit_paid)}</div>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 print:rounded-none print:border-black print:bg-white print:p-3">
+                  <div className="text-xs font-semibold uppercase text-black/60">Balance</div>
+                  <div className="mt-1 text-base font-bold text-black">{formatMoney(data.balance)}</div>
+                </div>
               </div>
-              <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                <div className="text-xs font-semibold text-black/60">Deposit made</div>
-                <div className="mt-1 text-sm font-bold">{formatMoney(data.deposit_paid)}</div>
-              </div>
-              <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                <div className="text-xs font-semibold text-black/60">Balance</div>
-                <div className="mt-1 text-sm font-bold">{formatMoney(data.balance)}</div>
-              </div>
-            </div>
-            {data.due_date ? (
-              <div className="mt-4 text-sm text-black/60">
-                Due date: {new Date(data.due_date).toLocaleDateString()}
-              </div>
-            ) : null}
-          </Card>
+              {data.due_date ? (
+                <p className="text-sm font-semibold text-black">
+                  Due date: {new Date(data.due_date).toLocaleDateString(undefined, { dateStyle: "long" })}
+                </p>
+              ) : null}
+            </section>
+          </article>
         </div>
       )}
     </div>
