@@ -3,6 +3,9 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
+import logging
+import smtplib
+
 from app import models
 from app.auth.auth import get_current_user, require_role
 from app.database import get_db
@@ -11,6 +14,7 @@ from app.constants import APP_NAME
 from app.utils.emailer import EmailConfigError, send_email
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _invoice_to_list_item(inv: models.Invoice, user) -> dict:
@@ -163,7 +167,17 @@ def send_invoice_email(
         send_email(to_email, subject, html)
     except EmailConfigError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    except Exception:
-        raise HTTPException(status_code=502, detail="Failed to send email")
+    except smtplib.SMTPAuthenticationError as e:
+        logger.exception("SMTP auth failed for invoice_email")
+        raise HTTPException(status_code=502, detail="SMTP authentication failed") from e
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError) as e:
+        logger.exception("SMTP connection failed for invoice_email")
+        raise HTTPException(status_code=502, detail="SMTP connection failed") from e
+    except smtplib.SMTPException as e:
+        logger.exception("SMTP error for invoice_email")
+        raise HTTPException(status_code=502, detail="SMTP error") from e
+    except Exception as e:
+        logger.exception("Failed to send invoice email")
+        raise HTTPException(status_code=502, detail="Failed to send email") from e
 
     return {"message": "Invoice sent"}
