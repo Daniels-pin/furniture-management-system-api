@@ -9,9 +9,25 @@ from sqlalchemy.orm import Session
 from app import models
 
 
+def next_invoice_number(db: Session) -> str:
+    """Next INV-### suffix based on existing numbers so deleted rows do not cause duplicates."""
+    max_seq = 0
+    for (raw,) in db.query(models.Invoice.invoice_number).all():
+        s = (raw or "").strip().upper()
+        if not s.startswith("INV-"):
+            continue
+        tail = s[4:].strip()
+        if not tail:
+            continue
+        try:
+            max_seq = max(max_seq, int(tail, 10))
+        except ValueError:
+            continue
+    return f"INV-{max_seq + 1:03d}"
+
+
 def create_invoice_for_order(db: Session, order: models.Order, customer_id: int) -> models.Invoice:
-    count = db.query(func.count(models.Invoice.id)).scalar() or 0
-    invoice_number = f"INV-{int(count) + 1:03d}"
+    invoice_number = next_invoice_number(db)
 
     deposit = order.amount_paid if order.amount_paid is not None else Decimal("0")
 

@@ -12,5 +12,6 @@ __pycache__/
 
 # pytest
 .pytest_cache/
+_pytest_app_dummy.db
 
 scripts/create_admin.py

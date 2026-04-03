@@ -6,6 +6,8 @@ from app.auth.auth import get_current_user
 from app.schemas import ProductCreate, ProductResponse
 from typing import List
 
+from app.utils.activity_log import log_activity, PRODUCT_CREATED
+
 router = APIRouter()
 
 
@@ -24,6 +26,16 @@ def create_product(
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
+
+    log_activity(
+        db,
+        action=PRODUCT_CREATED,
+        entity_type="product",
+        entity_id=new_product.id,
+        actor_user=user,
+        meta={"name": new_product.name},
+    )
+    db.commit()
 
     return new_product
 

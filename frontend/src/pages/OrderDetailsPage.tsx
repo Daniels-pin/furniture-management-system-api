@@ -5,11 +5,11 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { StatusBadge } from "../components/ui/StatusBadge";
-import { ordersApi } from "../services/endpoints";
+import { invoicesApi, ordersApi, waybillApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import { formatMoney } from "../utils/money";
+import { formatMoney, parseMoneyNumber } from "../utils/money";
 import type { OrderCreateItem, OrderStatus } from "../types/api";
 
 type Details = Awaited<ReturnType<typeof ordersApi.get>>;
@@ -62,8 +62,35 @@ export function OrderDetailsPage() {
   const [zoomOpen, setZoomOpen] = useState(false);
   const [paying, setPaying] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [creatingWaybill, setCreatingWaybill] = useState(false);
+  const [issuingInvoice, setIssuingInvoice] = useState(false);
+  const [preInvoicePromptOpen, setPreInvoicePromptOpen] = useState(false);
+  const [invoicePrepEditFlow, setInvoicePrepEditFlow] = useState(false);
 
-  const canEditOrder = auth.role === "admin";
+  const canEditOrder = auth.role === "admin" || auth.role === "showroom";
+  const canIssueInvoice = auth.role === "admin" || auth.role === "showroom";
+
+  async function runIssueInvoice(orderId: number, orderEditedBeforeInvoice: boolean) {
+    setIssuingInvoice(true);
+    try {
+      const res = await invoicesApi.issueForOrder(orderId, {
+        orderEditedBeforeInvoice: orderEditedBeforeInvoice || undefined
+      });
+      toast.push("success", res.message || "Invoice created");
+      const refreshed = await ordersApi.get(orderId);
+      setData(refreshed);
+      nav(`/invoices/${res.invoice_id}`);
+    } catch (err) {
+      toast.push("error", getErrorMessage(err));
+    } finally {
+      setIssuingInvoice(false);
+    }
+  }
+
+  function closeEditModal() {
+    setEditOpen(false);
+    setInvoicePrepEditFlow(false);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -144,6 +171,13 @@ export function OrderDetailsPage() {
                   <div className="mt-1 text-xl font-bold tracking-tight">
                     #{displayNumber ?? data.order_id}
                   </div>
+                  {(data as any).updated_by || (data as any).created_by ? (
+                    <div className="mt-1 text-xs font-semibold text-black/50">
+                      {(data as any).updated_by
+                        ? `Updated by ${(data as any).updated_by}`
+                        : `Done by ${(data as any).created_by}`}
+                    </div>
+                  ) : null}
                 </div>
                 <StatusBadge status={data.status} />
               </div>
@@ -186,97 +220,177 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
-            {auth.role !== "factory" ? (
+            {canIssueInvoice ? (
               <Card>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold">Pricing</div>
+                    <div className="text-sm font-semibold">Invoice</div>
                     <div className="mt-1 text-sm text-black/60">
-                      {auth.role === "admin" || auth.role === "showroom"
-                        ? "Totals and payment state"
-                        : "—"}
+                      {(data as any).invoice_id
+                        ? "Open the invoice for this order."
+                        : "No invoice on file. Create one from this order's totals and payment (e.g. after the previous invoice was removed)."}
                     </div>
                   </div>
-                  {auth.role === "admin" ? (
+                  <div className="flex flex-wrap gap-2">
+                    {(data as any).invoice_id ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => nav(`/invoices/${(data as any).invoice_id}`)}
+                      >
+                        View invoice
+                      </Button>
+                    ) : (
+                      <Button
+                        isLoading={issuingInvoice}
+                        onClick={() => {
+                          if (!data) return;
+                          setPreInvoicePromptOpen(true);
+                        }}
+                      >
+                        Generate invoice
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ) : null}
+
+            {auth.role === "admin" || auth.role === "showroom" ? (
+              <Card>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">Waybill</div>
+                    <div className="mt-1 text-sm text-black/60">Create a delivery document for this order.</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <Button
-                      isLoading={paying}
+                      isLoading={creatingWaybill}
                       onClick={async () => {
+                        if (!data) return;
                         try {
-                          setPaying(true);
-                          await ordersApi.markFullyPaid(data.order_id);
-                          const refreshed = await ordersApi.get(data.order_id);
-                          setData(refreshed);
-                          toast.push("success", "Marked as fully paid");
+                          setCreatingWaybill(true);
+                          const wb = await waybillApi.create(data.order_id);
+                          toast.push("success", "Waybill created.");
+                          nav(`/waybills/${wb.id}`);
                         } catch (err) {
                           toast.push("error", getErrorMessage(err));
                         } finally {
-                          setPaying(false);
+                          setCreatingWaybill(false);
                         }
                       }}
                     >
-                      Mark as Fully Paid
+                      Create waybill
                     </Button>
-                  ) : null}
-                </div>
-
-                {auth.role === "admin" || auth.role === "showroom" ? (
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-2xl border border-black/10 bg-white p-4">
-                      <div className="text-xs font-semibold text-black/60">Pricing</div>
-                      <div className="mt-3 space-y-2 text-sm">
-                        <div className="flex items-center justify-between">
-                          <div className="text-black/60">Subtotal</div>
-                          <div className="font-semibold">{formatMoney((data as any).total_price)}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-black/60">Discount</div>
-                          <div className="font-semibold">-{formatMoney((data as any).discount_amount)}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-black/60">Tax</div>
-                          <div className="font-semibold">{formatMoney((data as any).tax)}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-black/60">Paid</div>
-                          <div className="font-semibold">{formatMoney((data as any).amount_paid)}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-black/60">Balance</div>
-                          <div className="font-semibold">{formatMoney((data as any).balance)}</div>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between rounded-xl bg-black px-4 py-2 text-white">
-                          <div className="font-bold">Total</div>
-                          <div className="font-bold">{formatMoney((data as any).total)}</div>
-                        </div>
-
-                        {discountLabel((data as any).discount_type) ? (
-                          <div className="pt-2 text-xs font-semibold text-black/60">
-                            Discount: {discountLabel((data as any).discount_type)} •{" "}
-                            {discountValueText((data as any).discount_type, (data as any).discount_value) ?? "—"}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    {auth.role === "admin" && ((data as any).created_by || (data as any).updated_by) ? (
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Admin metadata</div>
-                        <div className="mt-2 text-sm text-black/70">
-                          Created by: <span className="font-semibold text-black">{(data as any).created_by ?? "—"}</span>
-                        </div>
-                        <div className="mt-1 text-sm text-black/70">
-                          Last updated by:{" "}
-                          <span className="font-semibold text-black">{(data as any).updated_by ?? "—"}</span>
-                        </div>
-                      </div>
-                    ) : null}
+                    <Button variant="secondary" onClick={() => nav("/waybills")}>
+                      All waybills
+                    </Button>
                   </div>
-                ) : (
-                  <div className="mt-3 text-sm text-black/60">Pricing is hidden for your role.</div>
-                )}
+                </div>
               </Card>
             ) : null}
+
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Pricing</div>
+                  <div className="mt-1 text-sm text-black/60">
+                    {auth.role === "admin" || auth.role === "showroom"
+                      ? "Totals and payment state"
+                      : "Pricing is hidden for your role."}
+                  </div>
+                </div>
+                {auth.role === "admin" ? (
+                  <Button
+                    isLoading={paying}
+                    onClick={async () => {
+                      try {
+                        setPaying(true);
+                        await ordersApi.markFullyPaid(data.order_id);
+                        const refreshed = await ordersApi.get(data.order_id);
+                        setData(refreshed);
+                        toast.push("success", "Marked as fully paid");
+                      } catch (err) {
+                        toast.push("error", getErrorMessage(err));
+                      } finally {
+                        setPaying(false);
+                      }
+                    }}
+                  >
+                    Mark as Fully Paid
+                  </Button>
+                ) : null}
+              </div>
+
+              {auth.role === "admin" || auth.role === "showroom" ? (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-2xl border border-black/10 bg-white p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-semibold text-black/60">Pricing</div>
+                      <TaxInlineEditor
+                        orderId={data.order_id}
+                        canEdit={auth.role === "admin" || auth.role === "showroom"}
+                        value={(data as any).tax}
+                        onSaved={async () => {
+                          const refreshed = await ordersApi.get(data.order_id);
+                          setData(refreshed);
+                        }}
+                      />
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="text-black/60">Subtotal</div>
+                        <div className="font-semibold">{formatMoney((data as any).total_price)}</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-black/60">Discount</div>
+                        <div className="font-semibold">-{formatMoney((data as any).discount_amount)}</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-black/60">Tax</div>
+                        <div className="font-semibold">{formatMoney((data as any).tax)}</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-black/60">Paid</div>
+                        <div className="font-semibold">{formatMoney((data as any).amount_paid)}</div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-black/60">Balance</div>
+                        <div className="font-semibold">{formatMoney((data as any).balance)}</div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between rounded-xl bg-black px-4 py-2 text-white">
+                        <div className="font-bold">Total</div>
+                        <div className="font-bold">{formatMoney((data as any).total)}</div>
+                      </div>
+
+                      {discountLabel((data as any).discount_type) ? (
+                        <div className="pt-2 text-xs font-semibold text-black/60">
+                          Discount: {discountLabel((data as any).discount_type)} •{" "}
+                          {discountValueText((data as any).discount_type, (data as any).discount_value) ?? "—"}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {auth.role === "admin" && ((data as any).created_by || (data as any).updated_by) ? (
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                      <div className="text-xs font-semibold text-black/60">Admin metadata</div>
+                      <div className="mt-2 text-sm text-black/70">
+                        Created by: <span className="font-semibold text-black">{(data as any).created_by ?? "—"}</span>
+                      </div>
+                      <div className="mt-1 text-sm text-black/70">
+                        Last updated by:{" "}
+                        <span className="font-semibold text-black">{(data as any).updated_by ?? "—"}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-4 text-sm text-black/70">
+                  Tax: <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
+                </div>
+              )}
+            </Card>
 
             <Card>
               <div className="text-sm font-semibold">Items</div>
@@ -287,23 +401,46 @@ export function OrderDetailsPage() {
                       <th className="py-3 pr-4 font-semibold">Item name</th>
                       <th className="py-3 pr-4 font-semibold">Description</th>
                       <th className="py-3 pr-0 text-right font-semibold">Qty</th>
+                      {auth.role === "admin" || auth.role === "showroom" ? (
+                        <>
+                          <th className="py-3 pr-0 text-right font-semibold">Amount</th>
+                          <th className="py-3 pr-0 text-right font-semibold">Total</th>
+                        </>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
                     {data.items.length === 0 ? (
                       <tr>
-                        <td colSpan={3} className="py-6 text-black/60">
+                        <td
+                          colSpan={auth.role === "admin" || auth.role === "showroom" ? 5 : 3}
+                          className="py-6 text-black/60"
+                        >
                           No items.
                         </td>
                       </tr>
                     ) : (
-                      data.items.map((it) => (
-                        <tr key={it.id} className="border-b border-black/5">
-                          <td className="py-3 pr-4 font-semibold">{it.item_name}</td>
-                          <td className="py-3 pr-4 text-black/70">{it.description ?? "—"}</td>
-                          <td className="py-3 pr-0 text-right font-semibold">{it.quantity}</td>
-                        </tr>
-                      ))
+                      data.items.map((it) => {
+                        const unit =
+                          auth.role === "admin" || auth.role === "showroom" ? parseMoneyNumber(it.amount) : null;
+                        const qty =
+                          typeof it.quantity === "number" ? it.quantity : Number(it.quantity);
+                        const line =
+                          unit !== null && Number.isFinite(qty) ? unit * qty : null;
+                        return (
+                          <tr key={it.id} className="border-b border-black/5">
+                            <td className="py-3 pr-4 font-semibold">{it.item_name}</td>
+                            <td className="py-3 pr-4 text-black/70">{it.description ?? "—"}</td>
+                            <td className="py-3 pr-0 text-right font-semibold">{it.quantity}</td>
+                            {auth.role === "admin" || auth.role === "showroom" ? (
+                              <>
+                                <td className="py-3 pr-0 text-right font-semibold">{formatMoney(unit)}</td>
+                                <td className="py-3 pr-0 text-right font-semibold">{formatMoney(line)}</td>
+                              </>
+                            ) : null}
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -354,20 +491,68 @@ export function OrderDetailsPage() {
         </div>
       )}
 
+      <Modal
+        open={preInvoicePromptOpen}
+        title="Generate invoice"
+        onClose={() => setPreInvoicePromptOpen(false)}
+      >
+        <p className="text-sm text-black/70">
+          Do you want to review and update order details before generating the invoice?
+        </p>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" onClick={() => setPreInvoicePromptOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (!data) return;
+              setPreInvoicePromptOpen(false);
+              void runIssueInvoice(data.order_id, false);
+            }}
+            disabled={issuingInvoice}
+          >
+            No, generate now
+          </Button>
+          <Button
+            onClick={() => {
+              setPreInvoicePromptOpen(false);
+              setInvoicePrepEditFlow(true);
+              setEditOpen(true);
+            }}
+          >
+            Yes, review first
+          </Button>
+        </div>
+      </Modal>
+
       {data && canEditOrder ? (
         <EditOrderModal
           open={editOpen}
           orderId={data.order_id}
           initial={data}
-          onClose={() => setEditOpen(false)}
-          onSaved={async () => {
+          invoicePrepFlow={invoicePrepEditFlow}
+          onClose={closeEditModal}
+          onSaved={async (updated, fromInvoicePrep) => {
             setEditOpen(false);
-            try {
-              const refreshed = await ordersApi.get(id);
-              setData(refreshed);
-              toast.push("success", "Order updated");
-            } catch (err) {
-              toast.push("error", getErrorMessage(err));
+            setInvoicePrepEditFlow(false);
+            setData(updated);
+            toast.push("success", "Order updated successfully");
+            if (fromInvoicePrep) {
+              try {
+                setIssuingInvoice(true);
+                const res = await invoicesApi.issueForOrder(updated.order_id, {
+                  orderEditedBeforeInvoice: true
+                });
+                toast.push("success", res.message || "Invoice created");
+                const refreshed = await ordersApi.get(updated.order_id);
+                setData(refreshed);
+                nav(`/invoices/${res.invoice_id}`);
+              } catch (err) {
+                toast.push("error", getErrorMessage(err));
+              } finally {
+                setIssuingInvoice(false);
+              }
             }
           }}
         />
@@ -400,14 +585,16 @@ function EditOrderModal({
   open,
   orderId,
   initial,
+  invoicePrepFlow,
   onClose,
   onSaved
 }: {
   open: boolean;
   orderId: number;
   initial: Details;
+  invoicePrepFlow: boolean;
   onClose(): void;
-  onSaved(): Promise<void>;
+  onSaved(updated: Details, fromInvoicePrep: boolean): Promise<void>;
 }) {
   const toast = useToast();
   const [status, setStatus] = useState<OrderStatus>(initial.status);
@@ -426,12 +613,13 @@ function EditOrderModal({
     (initial as any).discount_value != null ? String((initial as any).discount_value) : ""
   );
   const [items, setItems] = useState<
-    Array<{ item_name: string; description: string; quantity: string }>
+    Array<{ item_name: string; description: string; quantity: string; amount: string }>
   >(
     initial.items.map((it) => ({
       item_name: it.item_name,
       description: it.description ?? "",
-      quantity: String(it.quantity)
+      quantity: String(it.quantity),
+      amount: it.amount != null && it.amount !== "" ? String(it.amount) : ""
     }))
   );
   const [busy, setBusy] = useState(false);
@@ -450,7 +638,8 @@ function EditOrderModal({
       initial.items.map((it) => ({
         item_name: it.item_name,
         description: it.description ?? "",
-        quantity: String(it.quantity)
+        quantity: String(it.quantity),
+        amount: it.amount != null && it.amount !== "" ? String(it.amount) : ""
       }))
     );
     setErr({});
@@ -463,25 +652,31 @@ function EditOrderModal({
       const name = it.item_name.trim();
       const desc = it.description.trim();
       const qty = Number(it.quantity);
+      const amt = it.amount.trim() === "" ? NaN : Number(it.amount);
       if (!name) e[`n${idx}`] = "Item name required";
       if (!desc) e[`d${idx}`] = "Description required";
       if (!Number.isFinite(qty) || qty <= 0) e[`q${idx}`] = "Invalid quantity";
-      if (name && desc && Number.isFinite(qty) && qty > 0) {
-        payload.push({ item_name: name, description: desc, quantity: qty });
+      if (!Number.isFinite(amt) || amt < 0) e[`a${idx}`] = "Amount required (≥ 0)";
+      if (name && desc && Number.isFinite(qty) && qty > 0 && Number.isFinite(amt) && amt >= 0) {
+        payload.push({ item_name: name, description: desc, quantity: qty, amount: amt });
       }
     });
     if (payload.length === 0) e.items = "At least one valid item required";
     setErr(e);
-    return { ok: Object.keys(e).length === 0, payload };
+    return { ok: Object.keys(e).length === 0, payload, errors: e };
   }
 
   async function submit(ev: React.FormEvent) {
     ev.preventDefault();
-    const { ok, payload } = validate();
-    if (!ok) return;
+    const { ok, payload, errors } = validate();
+    if (!ok) {
+      const first = Object.values(errors)[0];
+      toast.push("error", typeof first === "string" ? first : "Please fix the highlighted fields.");
+      return;
+    }
     setBusy(true);
     try {
-      await ordersApi.updateAdmin(orderId, {
+      const updated = await ordersApi.updateAdmin(orderId, {
         status,
         due_date: dueDate ? new Date(dueDate).toISOString() : null,
         items: payload,
@@ -489,9 +684,10 @@ function EditOrderModal({
         amount_paid: deposit.trim() === "" ? null : Number(deposit),
         discount_type: discountType || null,
         discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(discountValue)) : null,
-        tax: tax.trim() === "" ? null : Number(tax)
+        tax: tax.trim() === "" ? null : Number(tax),
+        ...(invoicePrepFlow ? { update_context: "before_invoice" as const } : {})
       });
-      await onSaved();
+      await onSaved(updated, invoicePrepFlow);
     } catch (er) {
       toast.push("error", getErrorMessage(er));
     } finally {
@@ -531,7 +727,7 @@ function EditOrderModal({
           <div className="text-sm font-semibold">Items</div>
           <div className="mt-2 space-y-3">
             {items.map((it, idx) => (
-              <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_120px_auto] md:items-end">
+              <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_88px_120px_auto] md:items-end">
                 <Input
                   label={idx === 0 ? "Item name" : undefined}
                   value={it.item_name}
@@ -563,6 +759,16 @@ function EditOrderModal({
                   inputMode="numeric"
                   error={err[`q${idx}`]}
                 />
+                <Input
+                  label={idx === 0 ? "Amount" : undefined}
+                  value={it.amount}
+                  onChange={(e) =>
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, amount: e.target.value } : x)))
+                  }
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  error={err[`a${idx}`]}
+                />
                 <Button
                   type="button"
                   variant="ghost"
@@ -576,7 +782,13 @@ function EditOrderModal({
           </div>
           {err.items ? <div className="mt-2 text-xs text-black/70">{err.items}</div> : null}
           <div className="mt-2">
-            <Button type="button" variant="secondary" onClick={() => setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1" }])}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() =>
+                setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1", amount: "" }])
+              }
+            >
               Add item
             </Button>
           </div>
@@ -633,6 +845,81 @@ function EditOrderModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+function TaxInlineEditor({
+  orderId,
+  value,
+  canEdit,
+  onSaved
+}: {
+  orderId: number;
+  value: any;
+  canEdit: boolean;
+  onSaved(): Promise<void>;
+}) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tax, setTax] = useState(value != null ? String(value) : "");
+
+  useEffect(() => {
+    setTax(value != null ? String(value) : "");
+  }, [value]);
+
+  if (!canEdit) return null;
+
+  return open ? (
+    <div className="flex items-center gap-2">
+      <input
+        className="w-[140px] rounded-xl border border-black/15 bg-white px-3 py-1.5 text-sm shadow-sm"
+        value={tax}
+        onChange={(e) => setTax(e.target.value)}
+        inputMode="decimal"
+        placeholder="Tax"
+      />
+      <button
+        className="rounded-xl border border-black/15 bg-white px-3 py-1.5 text-sm font-semibold hover:bg-black/5 disabled:opacity-60"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await ordersApi.updatePricing(orderId, {
+              tax: tax.trim() === "" ? null : Number(tax)
+            });
+            await onSaved();
+            toast.push("success", "Tax updated");
+            setOpen(false);
+          } catch (err) {
+            toast.push("error", getErrorMessage(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        type="button"
+      >
+        Save
+      </button>
+      <button
+        className="rounded-xl px-2 py-1.5 text-sm font-semibold text-black/60 hover:bg-black/5"
+        onClick={() => {
+          setTax(value != null ? String(value) : "");
+          setOpen(false);
+        }}
+        type="button"
+      >
+        Cancel
+      </button>
+    </div>
+  ) : (
+    <button
+      className="rounded-xl px-2 py-1 text-xs font-semibold text-black/60 hover:bg-black/5"
+      type="button"
+      onClick={() => setOpen(true)}
+    >
+      Edit tax
+    </button>
   );
 }
 

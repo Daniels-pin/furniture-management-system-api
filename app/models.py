@@ -27,6 +27,7 @@ class Customer(Base):
     email = Column(String, nullable=True, index=True)
     birth_day = Column(Integer, nullable=True)
     birth_month = Column(Integer, nullable=True)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     orders = relationship("Order", back_populates="customer")
 
@@ -67,6 +68,7 @@ class Order(Base):
     cascade="all, delete-orphan"
     )
     invoice = relationship("Invoice", back_populates="order", uselist=False, cascade="all, delete-orphan")
+    waybills = relationship("Waybill", back_populates="order", cascade="all, delete-orphan")
 
 
 class Invoice(Base):
@@ -108,5 +110,121 @@ class OrderItem(Base):
     item_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     quantity = Column(Integer)
+    amount = Column(Numeric(11, 2), nullable=True)  # unit amount / unit price
 
     order = relationship("Order", back_populates="items")
+
+
+class ProformaInvoice(Base):
+    __tablename__ = "proforma_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proforma_number = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, nullable=False)  # draft | finalized | converted
+
+    customer_name = Column(String, nullable=False)
+    phone = Column(String, nullable=False)
+    address = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+
+    discount_type = Column(String, nullable=True)
+    discount_value = Column(Numeric(11, 2), nullable=True)
+    discount_amount = Column(Numeric(11, 2), nullable=True)
+    tax = Column(Numeric(11, 2), nullable=True)
+    subtotal = Column(Numeric(11, 2), nullable=True)
+    final_price = Column(Numeric(11, 2), nullable=True)
+    grand_total = Column(Numeric(11, 2), nullable=True)
+    due_date = Column(DateTime, nullable=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    converted_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+
+    items = relationship(
+        "ProformaItem",
+        back_populates="proforma",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProformaItem(Base):
+    __tablename__ = "proforma_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proforma_id = Column(Integer, ForeignKey("proforma_invoices.id", ondelete="CASCADE"), nullable=False)
+    item_name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    amount = Column(Numeric(11, 2), nullable=True)
+
+    proforma = relationship("ProformaInvoice", back_populates="items")
+
+
+class Quotation(Base):
+    __tablename__ = "quotations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quote_number = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, nullable=False)  # draft | finalized | converted
+
+    customer_name = Column(String, nullable=False)
+    phone = Column(String, nullable=False)
+    address = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+
+    discount_type = Column(String, nullable=True)
+    discount_value = Column(Numeric(11, 2), nullable=True)
+    discount_amount = Column(Numeric(11, 2), nullable=True)
+    tax = Column(Numeric(11, 2), nullable=True)
+    subtotal = Column(Numeric(11, 2), nullable=True)
+    final_price = Column(Numeric(11, 2), nullable=True)
+    grand_total = Column(Numeric(11, 2), nullable=True)
+    due_date = Column(DateTime, nullable=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    converted_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    converted_proforma_id = Column(Integer, ForeignKey("proforma_invoices.id", ondelete="SET NULL"), nullable=True)
+
+    items = relationship(
+        "QuotationItem",
+        back_populates="quotation",
+        cascade="all, delete-orphan",
+    )
+
+
+class QuotationItem(Base):
+    __tablename__ = "quotation_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quotation_id = Column(Integer, ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    item_name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    amount = Column(Numeric(11, 2), nullable=True)
+
+    quotation = relationship("Quotation", back_populates="items")
+
+
+class Waybill(Base):
+    __tablename__ = "waybills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    waybill_number = Column(String, unique=True, index=True, nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    delivery_status = Column(String, nullable=False, default="pending")  # pending | shipped | delivered
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+
+    order = relationship("Order", back_populates="waybills")

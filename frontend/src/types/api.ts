@@ -11,6 +11,8 @@ export type Customer = {
   email?: string | null;
   birth_day?: number | null;
   birth_month?: number | null;
+  /** Local-part of creator email, when known */
+  created_by?: string | null;
 };
 
 export type CustomerCreate = {
@@ -28,6 +30,7 @@ export type OrderCreateItem = {
   item_name: string;
   description: string;
   quantity: number;
+  amount?: string | number | null;
 };
 
 export type OrderItem = {
@@ -35,6 +38,7 @@ export type OrderItem = {
   item_name: string;
   description?: string | null;
   quantity: number;
+  amount?: string | number | null;
 };
 
 export type Order = {
@@ -111,6 +115,144 @@ export type InvoiceDetail = InvoiceListItem & {
   items: OrderItem[];
 };
 
+export type ProformaItem = {
+  id: number;
+  item_name: string;
+  description?: string | null;
+  quantity: number;
+  amount?: string | number | null;
+};
+
+export type ProformaListItem = {
+  id: number;
+  proforma_number: string;
+  status: string;
+  customer_name: string;
+  grand_total?: string | number | null;
+  created_at: string;
+  created_by?: string | null;
+};
+
+export type ProformaDetail = {
+  id: number;
+  proforma_number: string;
+  status: string;
+  customer_name: string;
+  phone: string;
+  address: string;
+  email?: string | null;
+  due_date?: string | null;
+  items: ProformaItem[];
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: string | number | null;
+  discount_amount?: string | number | null;
+  tax?: string | number | null;
+  subtotal?: string | number | null;
+  final_price?: string | number | null;
+  grand_total?: string | number | null;
+  created_at: string;
+  updated_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  converted_order_id?: number | null;
+};
+
+export type ProformaPayload = {
+  customer_name: string;
+  phone: string;
+  address: string;
+  email?: string | null;
+  due_date?: string | null;
+  items: Array<{ item_name: string; description: string; quantity: number; amount?: number | null }>;
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: number | null;
+  tax?: number | null;
+  save_as_draft: boolean;
+};
+
+export type QuotationItem = ProformaItem;
+
+export type QuotationListItem = {
+  id: number;
+  quote_number: string;
+  status: string;
+  customer_name: string;
+  grand_total?: string | number | null;
+  created_at: string;
+  created_by?: string | null;
+};
+
+export type QuotationDetail = {
+  id: number;
+  quote_number: string;
+  status: string;
+  customer_name: string;
+  phone: string;
+  address: string;
+  email?: string | null;
+  due_date?: string | null;
+  items: QuotationItem[];
+  discount_type?: "fixed" | "percentage" | null;
+  discount_value?: string | number | null;
+  discount_amount?: string | number | null;
+  tax?: string | number | null;
+  subtotal?: string | number | null;
+  final_price?: string | number | null;
+  grand_total?: string | number | null;
+  created_at: string;
+  updated_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  converted_order_id?: number | null;
+  converted_proforma_id?: number | null;
+};
+
+export type QuotationPayload = ProformaPayload;
+
+export type Paginated<T> = { items: T[]; total: number };
+
+export type WaybillListItem = {
+  id: number;
+  waybill_number: string;
+  order_id: number;
+  customer_name: string;
+  delivery_status: string;
+  created_at: string;
+  created_by?: string | null;
+};
+
+export type WaybillDetail = {
+  id: number;
+  waybill_number: string;
+  order_id: number;
+  delivery_status: string;
+  customer_name: string;
+  phone: string;
+  address: string;
+  email?: string | null;
+  items: Array<{
+    id: number;
+    item_name: string;
+    description?: string | null;
+    quantity: number;
+    amount?: string | number | null;
+  }>;
+  created_at: string;
+  updated_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+};
+
+export type AuditLogItem = {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id?: number | null;
+  actor?: string | null;
+  created_at: string;
+  meta?: any;
+};
+
 export type OrderAdminUpdate = {
   status: OrderStatus;
   due_date?: string | null;
@@ -120,5 +262,7 @@ export type OrderAdminUpdate = {
   discount_type?: "fixed" | "percentage" | null;
   discount_value?: string | number | null;
   tax?: string | number | null;
+  /** When set, activity log records this update as part of invoice preparation. */
+  update_context?: "before_invoice";
 };
 

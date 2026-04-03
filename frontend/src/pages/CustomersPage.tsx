@@ -137,7 +137,12 @@ export function CustomersPage() {
                     return (
                     <tr key={c.id} className="border-b border-black/5">
                       <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
-                      <td className="py-3 pr-4">{c.name}</td>
+                      <td className="py-3 pr-4">
+                        <div>{c.name}</div>
+                        {canSeePrivate && c.created_by ? (
+                          <div className="mt-0.5 text-xs font-medium text-black/45">Added by {c.created_by}</div>
+                        ) : null}
+                      </td>
                       {canSeePrivate ? (
                         <>
                           <td className="py-3 pr-4 text-black/70">{c.phone ?? "—"}</td>

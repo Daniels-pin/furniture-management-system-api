@@ -1,30 +1,45 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { invoicesApi } from "../services/endpoints";
+import { quotationApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
-import { Modal } from "../components/ui/Modal";
-import type { InvoiceDetail } from "../types/api";
+import { ConvertToInvoiceModal } from "../components/ConvertToInvoiceModal";
+import type { QuotationDetail } from "../types/api";
 import { formatMoney, parseMoneyNumber } from "../utils/money";
 import { APP_NAME, COMPANY_CONTACT } from "../config/app";
 
-export function InvoiceDetailPage() {
-  const { invoiceId } = useParams();
-  const id = Number(invoiceId);
+function statusBadge(status: string) {
+  const s = status.toLowerCase();
+  if (s === "draft")
+    return <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/80">Draft</span>;
+  if (s === "finalized")
+    return <span className="rounded-full bg-black px-2 py-0.5 text-xs font-semibold text-white">Finalized</span>;
+  if (s === "converted")
+    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">Converted</span>;
+  return <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">{status}</span>;
+}
+
+export function QuotationDetailPage() {
+  const { quotationId } = useParams();
+  const id = Number(quotationId);
   const nav = useNavigate();
   const toast = useToast();
   const auth = useAuth();
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<InvoiceDetail | null>(null);
+  const [data, setData] = useState<QuotationDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [sending, setSending] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [convertInvoiceOpen, setConvertInvoiceOpen] = useState(false);
 
-  const canDeleteInvoice = auth.role === "admin";
+  async function refresh() {
+    if (!Number.isFinite(id)) return;
+    const res = await quotationApi.get(id);
+    setData(res);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +48,7 @@ export function InvoiceDetailPage() {
       setNotFound(false);
       try {
         if (!Number.isFinite(id)) throw new Error("bad id");
-        const res = await invoicesApi.get(id);
+        const res = await quotationApi.get(id);
         if (!alive) return;
         setData(res);
       } catch (e: any) {
@@ -49,38 +64,95 @@ export function InvoiceDetailPage() {
     };
   }, [id, toast]);
 
+  const canEdit = data && data.status !== "converted";
+  const canFinalize = data?.status === "draft";
+  const canConvert =
+    data &&
+    data.status !== "converted" &&
+    !data.converted_order_id &&
+    !data.converted_proforma_id;
+  const canDelete = auth.role === "admin" && data && data.status !== "converted";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end print:hidden">
         <div>
-          <div className="text-2xl font-bold tracking-tight">Invoice</div>
+          <div className="text-2xl font-bold tracking-tight">Quotation</div>
           <div className="mt-1 text-sm text-black/60">
-            {loading ? "Loading…" : data ? `#${data.invoice_number}` : notFound ? "Not found" : "—"}
+            {loading ? "Loading…" : data ? `#${data.quote_number}` : notFound ? "Not found" : "—"}
           </div>
           {data?.created_by ? (
-            <div className="mt-1 text-xs font-semibold text-black/50">Done by {data.created_by}</div>
+            <div className="mt-1 text-xs font-semibold text-black/50">Created by {data.created_by}</div>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => nav("/invoices")}>
+          <Button variant="secondary" onClick={() => nav("/quotations")}>
             Back
           </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            onClick={() => {
-              void (async () => {
+          {canEdit ? (
+            <Button variant="secondary" onClick={() => nav(`/quotations/${id}/edit`)}>
+              Edit
+            </Button>
+          ) : null}
+          {canFinalize ? (
+            <Button
+              variant="secondary"
+              isLoading={acting}
+              onClick={async () => {
                 try {
-                  if (Number.isFinite(id)) await invoicesApi.recordPrint(id);
-                } catch {
-                  /* still print; logging is best-effort */
+                  setActing(true);
+                  await quotationApi.finalize(id);
+                  toast.push("success", "Quotation finalized.");
+                  await refresh();
+                } catch (e) {
+                  toast.push("error", getErrorMessage(e));
+                } finally {
+                  setActing(false);
                 }
-                window.print();
-              })();
-            }}
-          >
-            Print invoice
-          </Button>
+              }}
+            >
+              Finalize
+            </Button>
+          ) : null}
+          {data ? (
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    if (Number.isFinite(id)) await quotationApi.recordPrint(id);
+                  } catch {
+                    /* best-effort */
+                  }
+                  window.print();
+                })();
+              }}
+            >
+              Print
+            </Button>
+          ) : null}
+          {data ? (
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    setActing(true);
+                    await quotationApi.download(id);
+                    toast.push("success", "Download started.");
+                  } catch (e) {
+                    toast.push("error", getErrorMessage(e));
+                  } finally {
+                    setActing(false);
+                  }
+                })();
+              }}
+            >
+              Download
+            </Button>
+          ) : null}
           {data ? (
             <Button
               variant="secondary"
@@ -88,8 +160,9 @@ export function InvoiceDetailPage() {
               onClick={async () => {
                 try {
                   setSending(true);
-                  const res = await invoicesApi.sendEmail(data.id);
-                  toast.push("success", res.message || "Invoice sent");
+                  const res = await quotationApi.sendEmail(data.id);
+                  toast.push("success", res.message || "Sent");
+                  await refresh();
                 } catch (e) {
                   toast.push("error", getErrorMessage(e));
                 } finally {
@@ -97,55 +170,88 @@ export function InvoiceDetailPage() {
                 }
               }}
             >
-              Send to Email
+              Send email
             </Button>
           ) : null}
-          {data ? (
-            <Button variant="secondary" onClick={() => nav(`/orders/${data.order_id}`)}>
-              View order
-            </Button>
-          ) : null}
-          {data && canDeleteInvoice ? (
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-              Delete invoice
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <Modal open={confirmDelete} title="Delete invoice?" onClose={() => setConfirmDelete(false)}>
-        <div className="space-y-4">
-          <div className="text-sm text-black/70">
-            This removes only this invoice record. The linked order and its items stay in the system. This cannot be
-            undone.
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </Button>
+          {data && canConvert ? (
             <Button
-              variant="danger"
-              isLoading={deleting}
+              variant="secondary"
+              isLoading={acting}
               onClick={async () => {
-                if (!data) return;
+                if (!window.confirm("Create a proforma invoice from this quotation?")) return;
                 try {
-                  setDeleting(true);
-                  await invoicesApi.delete(data.id);
-                  toast.push("success", "Invoice removed. Order was not deleted.");
-                  setConfirmDelete(false);
-                  nav(`/orders/${data.order_id}`);
+                  setActing(true);
+                  const res = await quotationApi.convertToProforma(id);
+                  toast.push("success", res.message || "Converted");
+                  nav(`/proforma/${res.proforma_id}`);
                 } catch (e) {
                   toast.push("error", getErrorMessage(e));
                 } finally {
-                  setDeleting(false);
+                  setActing(false);
+                }
+              }}
+            >
+              Convert to proforma
+            </Button>
+          ) : null}
+          {data && canConvert ? (
+            <Button onClick={() => setConvertInvoiceOpen(true)}>Convert to invoice</Button>
+          ) : null}
+          {data?.converted_proforma_id ? (
+            <Button variant="secondary" onClick={() => nav(`/proforma/${data.converted_proforma_id}`)}>
+              View proforma
+            </Button>
+          ) : null}
+          {data?.converted_order_id ? (
+            <Button variant="secondary" onClick={() => nav(`/orders/${data.converted_order_id}`)}>
+              View order
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              variant="secondary"
+              className="border-red-600 text-red-700 hover:bg-red-50"
+              isLoading={acting}
+              onClick={async () => {
+                if (!window.confirm("Delete this quotation permanently?")) return;
+                try {
+                  setActing(true);
+                  await quotationApi.delete(id);
+                  toast.push("success", "Quotation deleted.");
+                  nav("/quotations");
+                } catch (e) {
+                  toast.push("error", getErrorMessage(e));
+                } finally {
+                  setActing(false);
                 }
               }}
             >
               Delete
             </Button>
-          </div>
+          ) : null}
         </div>
-      </Modal>
+      </div>
+
+      <ConvertToInvoiceModal
+        open={convertInvoiceOpen}
+        onClose={() => setConvertInvoiceOpen(false)}
+        documentLabel="quotation"
+        grandTotal={data?.grand_total}
+        isSubmitting={acting}
+        onConfirm={async (amountPaid) => {
+          try {
+            setActing(true);
+            const res = await quotationApi.convertToInvoice(id, { amount_paid: amountPaid });
+            toast.push("success", res.message || "Converted");
+            setConvertInvoiceOpen(false);
+            nav(`/invoices/${res.invoice_id}`);
+          } catch (e) {
+            toast.push("error", getErrorMessage(e));
+          } finally {
+            setActing(false);
+          }
+        }}
+      />
 
       {loading ? (
         <Card className="print:hidden">
@@ -153,7 +259,7 @@ export function InvoiceDetailPage() {
         </Card>
       ) : notFound || !data ? (
         <Card className="print:hidden">
-          <div className="text-sm font-semibold">Invoice not found</div>
+          <div className="text-sm font-semibold">Quotation not found</div>
         </Card>
       ) : (
         <div className="invoice-print-area">
@@ -173,15 +279,15 @@ export function InvoiceDetailPage() {
 
                 <div className="min-w-[220px] text-right">
                   <div className="inline-flex items-center justify-end gap-2 rounded-none bg-black px-4 py-2 text-white">
-                    <span className="text-xs font-bold tracking-[0.28em]">INVOICE</span>
+                    <span className="text-xs font-bold tracking-[0.2em]">QUOTATION</span>
                   </div>
                   <div className="mt-3 text-sm text-black">
                     <div>
-                      <span className="text-black/60">Invoice Number:</span>{" "}
-                      <span className="font-semibold">#{data.invoice_number}</span>
+                      <span className="text-black/60">Quote number:</span>{" "}
+                      <span className="font-semibold">#{data.quote_number}</span>
                     </div>
                     <div className="mt-1">
-                      <span className="text-black/60">Date Issued:</span>{" "}
+                      <span className="text-black/60">Date issued:</span>{" "}
                       <span className="font-semibold">
                         {new Date(data.created_at).toLocaleDateString(undefined, { dateStyle: "long" })}
                       </span>
@@ -191,16 +297,19 @@ export function InvoiceDetailPage() {
               </div>
             </header>
 
-            {/* Screen-only: order link context (not part of formal print layout) */}
             <div className="mt-4 flex flex-wrap justify-between gap-4 border-b border-black/5 pb-4 text-sm print:hidden">
               <div>
-                <span className="font-semibold text-black/60">Linked order</span>
-                <div className="font-semibold">#{String(data.order_id).padStart(3, "0")}</div>
+                <span className="font-semibold text-black/60">Status</span>
+                <div className="mt-1">{statusBadge(data.status)}</div>
               </div>
-              <div className="text-right">
-                <span className="font-semibold text-black/60">Payment status</span>
-                <div className="capitalize font-semibold">{data.status}</div>
-              </div>
+              {data.due_date ? (
+                <div className="text-right">
+                  <span className="font-semibold text-black/60">Due date</span>
+                  <div className="mt-1 font-semibold">
+                    {new Date(data.due_date).toLocaleDateString(undefined, { dateStyle: "long" })}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <section className="mt-6 border-b border-black/10 pb-4 print:mt-5 print:border-black print:pb-3">
@@ -221,10 +330,10 @@ export function InvoiceDetailPage() {
                 <div>
                   <div className="font-bold text-black">Bill To:</div>
                   <div className="mt-2 space-y-1 text-black/80">
-                    <div className="font-semibold text-black">{auth.role !== "factory" ? data.customer?.name : "—"}</div>
-                    <div>{auth.role !== "factory" ? data.customer?.address ?? "—" : "—"}</div>
-                    <div>{auth.role !== "factory" ? data.customer?.phone ?? "—" : "—"}</div>
-                    <div>{auth.role !== "factory" ? data.customer?.email ?? "—" : "—"}</div>
+                    <div className="font-semibold text-black">{auth.role !== "factory" ? data.customer_name : "—"}</div>
+                    <div>{auth.role !== "factory" ? data.address ?? "—" : "—"}</div>
+                    <div>{auth.role !== "factory" ? data.phone ?? "—" : "—"}</div>
+                    <div>{auth.role !== "factory" ? data.email ?? "—" : "—"}</div>
                   </div>
                 </div>
               </div>
@@ -247,20 +356,14 @@ export function InvoiceDetailPage() {
                       const unitNum = parseMoneyNumber(it.amount);
                       const qtyNum = Number(it.quantity);
                       const line =
-                        unitNum !== null && Number.isFinite(qtyNum)
-                          ? unitNum * qtyNum
-                          : null;
+                        unitNum !== null && Number.isFinite(qtyNum) ? unitNum * qtyNum : null;
                       return (
                         <tr key={it.id} className="border-b border-black/15 print:border-black/40">
                           <td className="py-3 pl-3 pr-3 font-semibold text-black">{it.item_name}</td>
                           <td className="py-3 pr-3 text-black">{it.description ?? "—"}</td>
                           <td className="py-3 pr-3 text-right font-semibold text-black">{it.quantity}</td>
-                          <td className="py-3 pr-3 text-right font-semibold text-black">
-                            {formatMoney(unitNum)}
-                          </td>
-                          <td className="py-3 pr-3 text-right font-semibold text-black">
-                            {formatMoney(line)}
-                          </td>
+                          <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(unitNum)}</td>
+                          <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(line)}</td>
                         </tr>
                       );
                     })}
@@ -280,9 +383,8 @@ export function InvoiceDetailPage() {
                       return sum + u * q;
                     }, 0);
                     const allResolved =
-                      data.items.length > 0 &&
-                      data.items.every((x) => parseMoneyNumber(x.amount) !== null);
-                    const subtotalToShow = allResolved ? lineSum : (data as { total_price?: unknown }).total_price;
+                      data.items.length > 0 && data.items.every((x) => parseMoneyNumber(x.amount) !== null);
+                    const subtotalToShow = allResolved ? lineSum : data.subtotal;
                     return (
                       <div className="flex items-center justify-between">
                         <div className="text-black/70">Subtotal:</div>
@@ -292,33 +394,25 @@ export function InvoiceDetailPage() {
                   })()}
                   <div className="flex items-center justify-between">
                     <div className="text-black/70">Discount</div>
-                    <div className="font-semibold text-black">
-                      -{formatMoney((data as any).discount_amount)}
-                    </div>
+                    <div className="font-semibold text-black">-{formatMoney(data.discount_amount)}</div>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="text-black/70">Tax:</div>
-                    <div className="font-semibold text-black">{formatMoney((data as any).tax)}</div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="text-black/70">Paid:</div>
-                    <div className="font-semibold text-black">{formatMoney(data.deposit_paid)}</div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="text-black/70">Balance:</div>
-                    <div className="font-semibold text-black">{formatMoney(data.balance)}</div>
+                    <div className="font-semibold text-black">{formatMoney(data.tax)}</div>
                   </div>
 
                   <div className="mt-3 flex items-center justify-between bg-black px-4 py-2 text-white">
                     <div className="text-base font-bold">Total</div>
-                    <div className="text-base font-bold">{formatMoney((data as any).total)}</div>
+                    <div className="text-base font-bold">{formatMoney(data.grand_total)}</div>
                   </div>
                 </div>
               </div>
 
               <div className="mt-6 border-t border-black/10 pt-3 text-sm text-black/80 print:border-black">
                 <div className="font-bold text-black">Terms &amp; Conditions:</div>
-                <div className="mt-1">All properties belongs to the company until full payment is made.</div>
+                <div className="mt-1">
+                  This document is a quotation for pricing and negotiation only.
+                </div>
               </div>
             </section>
           </article>

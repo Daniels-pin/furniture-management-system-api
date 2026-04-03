@@ -8,6 +8,8 @@ from jose import JWTError, jwt
 
 from app.schemas import LoginRequest
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.utils.activity_log import log_activity, LOGIN
+
 router = APIRouter()
 
 ROLE_ALIASES = {
@@ -37,6 +39,15 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             "username": username,
         }
     )
+
+    log_activity(
+        db,
+        action=LOGIN,
+        entity_type="session",
+        entity_id=user.id,
+        actor_user=user,
+    )
+    db.commit()
 
     return {"access_token": token, "token_type": "bearer"}
 security = HTTPBearer()

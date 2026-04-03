@@ -2,13 +2,14 @@ from decimal import Decimal
 
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from enum import Enum
 
 class OrderItemCreate(BaseModel):
     item_name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
     quantity: int = Field(..., gt=0)
+    amount: Optional[Decimal] = Field(None, ge=0)
 
 class CustomerCreate(BaseModel):
     name: str = Field(..., min_length=1)
@@ -27,6 +28,7 @@ class CustomerPublicResponse(BaseModel):
     email: Optional[str] = None
     birth_day: Optional[int] = None
     birth_month: Optional[int] = None
+    created_by: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -34,6 +36,7 @@ class CustomerPublicResponse(BaseModel):
 
 class CustomerResponse(CustomerCreate):
     id: int
+    created_by: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -91,6 +94,7 @@ class OrderItemResponse(BaseModel):
     item_name: str
     description: Optional[str]
     quantity: int
+    amount: Optional[Decimal] = None
 
     class Config:
         orm_mode = True
@@ -139,10 +143,11 @@ class OrderDetailsResponse(BaseModel):
     payment_status: Optional[str] = None
     created_by: Optional[str] = None
     updated_by: Optional[str] = None
+    invoice_id: Optional[int] = None
 
 
 class OrderAdminPut(BaseModel):
-    """Admin-only full order update (items, pricing, status)."""
+    """Admin / showroom full order update (items, pricing, status)."""
 
     status: OrderStatus
     due_date: Optional[datetime] = None
@@ -152,6 +157,7 @@ class OrderAdminPut(BaseModel):
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
     tax: Optional[Decimal] = None
+    update_context: Optional[Literal["before_invoice"]] = None
 
 
 class InvoiceListItem(BaseModel):
@@ -201,6 +207,7 @@ class OrderUploadResponse(BaseModel):
 class OrderPricingUpdate(BaseModel):
     total_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
 
 
 class OrdersListResponse(BaseModel):
@@ -220,3 +227,180 @@ class OrderAlertItem(BaseModel):
 class OrdersAlertsResponse(BaseModel):
     due_soon_count: int
     orders: List[OrderAlertItem]
+
+
+class ProformaItemIn(BaseModel):
+    item_name: str = Field(..., min_length=1)
+    description: str = ""
+    quantity: int = Field(..., gt=0)
+    amount: Optional[Decimal] = Field(None, ge=0)
+
+
+class ProformaCreate(BaseModel):
+    customer_name: str = Field(..., min_length=1)
+    phone: str
+    address: str
+    email: Optional[EmailStr] = None
+    due_date: Optional[datetime] = None
+    items: List[ProformaItemIn] = Field(..., min_length=1)
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    save_as_draft: bool = True
+
+
+class ProformaUpdate(BaseModel):
+    customer_name: str = Field(..., min_length=1)
+    phone: str
+    address: str
+    email: Optional[EmailStr] = None
+    due_date: Optional[datetime] = None
+    items: List[ProformaItemIn] = Field(..., min_length=1)
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    save_as_draft: bool = True
+
+
+class ProformaItemOut(BaseModel):
+    id: int
+    item_name: str
+    description: Optional[str] = None
+    quantity: int
+    amount: Optional[Decimal] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ConvertPresalesToInvoiceRequest(BaseModel):
+    """Payment captured when converting a quotation or proforma into an order/invoice."""
+
+    amount_paid: Optional[Decimal] = Field(default=None, ge=0)
+
+
+class ProformaListItem(BaseModel):
+    id: int
+    proforma_number: str
+    status: str
+    customer_name: str
+    grand_total: Optional[Decimal] = None
+    created_at: datetime
+    created_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ProformaDetailResponse(BaseModel):
+    id: int
+    proforma_number: str
+    status: str
+    customer_name: str
+    phone: str
+    address: str
+    email: Optional[str] = None
+    due_date: Optional[datetime] = None
+    items: List[ProformaItemOut]
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    subtotal: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
+    grand_total: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    converted_order_id: Optional[int] = None
+
+
+class QuotationItemIn(BaseModel):
+    item_name: str = Field(..., min_length=1)
+    description: str = ""
+    quantity: int = Field(..., gt=0)
+    amount: Optional[Decimal] = Field(None, ge=0)
+
+
+class QuotationCreate(BaseModel):
+    customer_name: str = Field(..., min_length=1)
+    phone: str
+    address: str
+    email: Optional[EmailStr] = None
+    due_date: Optional[datetime] = None
+    items: List[QuotationItemIn] = Field(..., min_length=1)
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    save_as_draft: bool = True
+
+
+class QuotationUpdate(BaseModel):
+    customer_name: str = Field(..., min_length=1)
+    phone: str
+    address: str
+    email: Optional[EmailStr] = None
+    due_date: Optional[datetime] = None
+    items: List[QuotationItemIn] = Field(..., min_length=1)
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    save_as_draft: bool = True
+
+
+class QuotationItemOut(BaseModel):
+    id: int
+    item_name: str
+    description: Optional[str] = None
+    quantity: int
+    amount: Optional[Decimal] = None
+
+    class Config:
+        from_attributes = True
+
+
+class QuotationListItem(BaseModel):
+    id: int
+    quote_number: str
+    status: str
+    customer_name: str
+    grand_total: Optional[Decimal] = None
+    created_at: datetime
+    created_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class QuotationDetailResponse(BaseModel):
+    id: int
+    quote_number: str
+    status: str
+    customer_name: str
+    phone: str
+    address: str
+    email: Optional[str] = None
+    due_date: Optional[datetime] = None
+    items: List[QuotationItemOut]
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    subtotal: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
+    grand_total: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    converted_order_id: Optional[int] = None
+    converted_proforma_id: Optional[int] = None
+
+
+class WaybillCreate(BaseModel):
+    order_id: int = Field(..., gt=0)
+
+
+class WaybillStatusUpdate(BaseModel):
+    delivery_status: str = Field(..., min_length=1)

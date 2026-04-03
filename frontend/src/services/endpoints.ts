@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type {
+  AuditLogItem,
   Customer,
   CustomerCreate,
   InvoiceDetail,
@@ -8,8 +9,17 @@ import type {
   LoginResponse,
   Order,
   OrderAdminUpdate,
+  ProformaDetail,
+  ProformaListItem,
+  ProformaPayload,
+  QuotationDetail,
+  QuotationListItem,
+  QuotationPayload,
   User,
-  UserCreate
+  UserCreate,
+  Paginated,
+  WaybillDetail,
+  WaybillListItem
 } from "../types/api";
 
 export const authApi = {
@@ -72,9 +82,14 @@ export const ordersApi = {
       discount_value?: string | number | null;
       discount_amount?: string | number | null;
       final_price?: string | number | null;
+      tax?: string | number | null;
+      total?: string | number | null;
       amount_paid?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
+      created_by?: string | null;
+      updated_by?: string | null;
+      invoice_id?: number | null;
     }>(`/orders/${orderId}`);
     return data;
   },
@@ -92,6 +107,18 @@ export const ordersApi = {
       discount_amount?: string | number | null;
       final_price?: string | number | null;
       amount_paid?: string | number | null;
+      balance?: string | number | null;
+      payment_status?: string | null;
+      invoice_id?: number | null;
+    }>(`/orders/${orderId}`, payload);
+    return data;
+  },
+  async updatePricing(orderId: number, payload: { total_price?: number | null; amount_paid?: number | null; tax?: number | null }) {
+    const { data } = await api.patch<{
+      id: number;
+      total_price?: string | number | null;
+      amount_paid?: string | number | null;
+      tax?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
     }>(`/orders/${orderId}`, payload);
@@ -134,8 +161,11 @@ export const ordersApi = {
 };
 
 export const invoicesApi = {
-  async list() {
-    const { data } = await api.get<InvoiceListItem[]>("/invoices");
+  async list(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<InvoiceListItem>>("/invoices", { params: qp });
     return data;
   },
   async get(invoiceId: number) {
@@ -146,8 +176,32 @@ export const invoicesApi = {
     const { data } = await api.get<InvoiceDetail>(`/invoices/order/${orderId}`);
     return data;
   },
+  async issueForOrder(
+    orderId: number,
+    options?: { orderEditedBeforeInvoice?: boolean }
+  ) {
+    const params =
+      options?.orderEditedBeforeInvoice === true
+        ? { order_edited_before_invoice: true }
+        : undefined;
+    const { data } = await api.post<{
+      message: string;
+      invoice_id: number;
+      invoice_number: string;
+      order_id: number;
+    }>(`/invoices/order/${orderId}`, undefined, { params });
+    return data;
+  },
   async sendEmail(invoiceId: number) {
     const { data } = await api.post<{ message: string }>(`/invoices/${invoiceId}/send-email`);
+    return data;
+  },
+  async recordPrint(invoiceId: number) {
+    const { data } = await api.post<{ message: string }>(`/invoices/${invoiceId}/print`);
+    return data;
+  },
+  async delete(invoiceId: number) {
+    const { data } = await api.delete<{ message: string; order_id?: number }>(`/invoices/${invoiceId}`);
     return data;
   }
 };
@@ -191,6 +245,206 @@ export const dashboardApi = {
         customer: { name: string | null } | null;
       }>;
     }>("/dashboard");
+    return data;
+  }
+};
+
+export const proformaApi = {
+  async list(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<ProformaListItem>>("/proforma", { params: qp });
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await api.get<ProformaDetail>(`/proforma/${id}`);
+    return data;
+  },
+  async create(payload: ProformaPayload) {
+    const { data } = await api.post<ProformaDetail>("/proforma", payload);
+    return data;
+  },
+  async update(id: number, payload: ProformaPayload) {
+    const { data } = await api.put<ProformaDetail>(`/proforma/${id}`, payload);
+    return data;
+  },
+  async finalize(id: number) {
+    const { data } = await api.patch<ProformaDetail>(`/proforma/${id}/finalize`);
+    return data;
+  },
+  async sendEmail(id: number) {
+    const { data } = await api.post<{ message: string }>(`/proforma/${id}/send-email`);
+    return data;
+  },
+  async recordPrint(id: number) {
+    const { data } = await api.post<{ message: string }>(`/proforma/${id}/print`);
+    return data;
+  },
+  async download(id: number) {
+    const res = await api.post(`/proforma/${id}/download`, {}, { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = `proforma-${id}.html`;
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  async convertToInvoice(id: number, payload?: { amount_paid?: number | null }) {
+    const { data } = await api.post<{
+      message: string;
+      order_id: number;
+      invoice_id: number;
+      amount_paid?: string;
+      grand_total?: string;
+      balance?: string;
+      payment_status?: string;
+    }>(`/proforma/${id}/convert-to-invoice`, payload ?? {});
+    return data;
+  },
+  async delete(id: number) {
+    const { data } = await api.delete<{ message: string }>(`/proforma/${id}`);
+    return data;
+  }
+};
+
+export const quotationApi = {
+  async list(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<QuotationListItem>>("/quotations", { params: qp });
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await api.get<QuotationDetail>(`/quotations/${id}`);
+    return data;
+  },
+  async create(payload: QuotationPayload) {
+    const { data } = await api.post<QuotationDetail>("/quotations", payload);
+    return data;
+  },
+  async update(id: number, payload: QuotationPayload) {
+    const { data } = await api.put<QuotationDetail>(`/quotations/${id}`, payload);
+    return data;
+  },
+  async finalize(id: number) {
+    const { data } = await api.patch<QuotationDetail>(`/quotations/${id}/finalize`);
+    return data;
+  },
+  async sendEmail(id: number) {
+    const { data } = await api.post<{ message: string }>(`/quotations/${id}/send-email`);
+    return data;
+  },
+  async recordPrint(id: number) {
+    const { data } = await api.post<{ message: string }>(`/quotations/${id}/print`);
+    return data;
+  },
+  async download(id: number) {
+    const res = await api.post(`/quotations/${id}/download`, {}, { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = `quotation-${id}.html`;
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  async convertToProforma(id: number) {
+    const { data } = await api.post<{ message: string; proforma_id: number }>(`/quotations/${id}/convert-to-proforma`);
+    return data;
+  },
+  async convertToInvoice(id: number, payload?: { amount_paid?: number | null }) {
+    const { data } = await api.post<{
+      message: string;
+      order_id: number;
+      invoice_id: number;
+      amount_paid?: string;
+      grand_total?: string;
+      balance?: string;
+      payment_status?: string;
+    }>(`/quotations/${id}/convert-to-invoice`, payload ?? {});
+    return data;
+  },
+  async delete(id: number) {
+    const { data } = await api.delete<{ message: string }>(`/quotations/${id}`);
+    return data;
+  }
+};
+
+export const waybillApi = {
+  async list(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<WaybillListItem>>("/waybills", { params: qp });
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await api.get<WaybillDetail>(`/waybills/${id}`);
+    return data;
+  },
+  async create(orderId: number) {
+    const { data } = await api.post<WaybillDetail>("/waybills", { order_id: orderId });
+    return data;
+  },
+  async recordView(id: number) {
+    const { data } = await api.post<{ message: string }>(`/waybills/${id}/record-view`);
+    return data;
+  },
+  async updateStatus(id: number, delivery_status: "pending" | "shipped" | "delivered") {
+    const { data } = await api.patch<WaybillDetail>(`/waybills/${id}/status`, { delivery_status });
+    return data;
+  },
+  async sendEmail(id: number) {
+    const { data } = await api.post<{ message: string }>(`/waybills/${id}/send-email`);
+    return data;
+  },
+  async recordPrint(id: number) {
+    const { data } = await api.post<{ message: string }>(`/waybills/${id}/print`);
+    return data;
+  },
+  async download(id: number) {
+    const res = await api.post(`/waybills/${id}/download`, {}, { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = `waybill-${id}.html`;
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  async delete(id: number) {
+    const { data } = await api.delete<{ message: string }>(`/waybills/${id}`);
+    return data;
+  }
+};
+
+export const auditApi = {
+  async list(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<AuditLogItem>>("/audit/logs", { params: qp });
     return data;
   }
 };

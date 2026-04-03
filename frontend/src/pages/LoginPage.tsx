@@ -47,7 +47,9 @@ export function LoginPage() {
       <div className="mx-auto flex min-h-dvh w-full max-w-md items-center px-4 py-10">
         <div className="w-full">
           <div className="mb-6">
-            <div className="text-sm font-semibold text-black/60">Furniture</div>
+            <div className="text-sm font-medium italic tracking-tight text-black/70">
+              No Limits Furniture Nig Ltd
+            </div>
             <div className="text-3xl font-bold tracking-tight">Sign in</div>
             <div className="mt-1 text-sm text-black/60">Use your admin-created account.</div>
           </div>

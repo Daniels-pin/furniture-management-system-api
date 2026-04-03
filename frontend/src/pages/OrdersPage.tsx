@@ -332,12 +332,11 @@ function CreateOrderModal({
   const [customerAddress, setCustomerAddress] = useState<string>("");
   const [customerEmail, setCustomerEmail] = useState<string>("");
 
-  const [items, setItems] = useState<Array<{ item_name: string; description: string; quantity: string }>>([
-    { item_name: "", description: "", quantity: "1" }
-  ]);
+  const [items, setItems] = useState<
+    Array<{ item_name: string; description: string; quantity: string; amount: string }>
+  >([{ item_name: "", description: "", quantity: "1", amount: "" }]);
   const [dueDate, setDueDate] = useState<string>("");
   const [image, setImage] = useState<File | null>(null);
-  const [totalPrice, setTotalPrice] = useState<string>("");
   const [amountPaid, setAmountPaid] = useState<string>("");
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">("");
   const [discountValue, setDiscountValue] = useState<string>("");
@@ -352,10 +351,9 @@ function CreateOrderModal({
     setCustomerPhone("");
     setCustomerAddress("");
     setCustomerEmail("");
-    setItems([{ item_name: "", description: "", quantity: "1" }]);
+    setItems([{ item_name: "", description: "", quantity: "1", amount: "" }]);
     setDueDate("");
     setImage(null);
-    setTotalPrice("");
     setAmountPaid("");
     setDiscountType("");
     setDiscountValue("");
@@ -363,6 +361,19 @@ function CreateOrderModal({
     setFieldError({});
     setIsSubmitting(false);
   }, [open]);
+
+  const computedSubtotal = useMemo(() => {
+    if (!items.length) return 0;
+    let sum = 0;
+    for (const it of items) {
+      const qty = Number(it.quantity);
+      const amt = Number(it.amount);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+      if (!Number.isFinite(amt) || amt < 0) continue;
+      sum += qty * amt;
+    }
+    return sum;
+  }, [items]);
 
   function validate() {
     const e: Record<string, string> = {};
@@ -380,17 +391,19 @@ function CreateOrderModal({
       const name = it.item_name.trim();
       const desc = it.description.trim();
       const qty = Number(it.quantity);
+      const amt = it.amount.trim() === "" ? null : Number(it.amount);
       if (!name) e[`items.${idx}.item_name`] = "Item name is required";
       if (!desc) e[`items.${idx}.description`] = "Description is required";
       if (!Number.isFinite(qty) || qty <= 0) e[`items.${idx}.quantity`] = "Quantity must be > 0";
+      if (it.amount.trim() === "") e[`items.${idx}.amount`] = "Amount is required";
+      else if (!Number.isFinite(amt) || (amt as number) < 0) e[`items.${idx}.amount`] = "Amount must be >= 0";
       if (name && desc && Number.isFinite(qty) && qty > 0)
-        normalizedItems.push({ item_name: name, description: desc, quantity: qty } as any);
+        normalizedItems.push({ item_name: name, description: desc, quantity: qty, amount: amt } as any);
     });
 
     if (normalizedItems.length === 0) e.items = "Items required";
 
     if (canInputPricing) {
-      if (totalPrice && Number(totalPrice) < 0) e.totalPrice = "Total price cannot be negative";
       if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
       if (tax && Number(tax) < 0) e.tax = "Tax cannot be negative";
       if (discountType) {
@@ -425,7 +438,8 @@ function CreateOrderModal({
         .map((it) => ({
           item_name: it.item_name.trim(),
           description: it.description.trim(),
-          quantity: Number(it.quantity)
+          quantity: Number(it.quantity),
+          amount: it.amount.trim() === "" ? null : Number(it.amount)
         }))
         .filter(
           (it) =>
@@ -440,7 +454,8 @@ function CreateOrderModal({
       if (image) form.append("image", image);
 
       if (canInputPricing) {
-        if (totalPrice) form.append("total_price", totalPrice);
+        // Subtotal is always system-calculated from items.
+        form.append("total_price", String(computedSubtotal));
         if (amountPaid) form.append("amount_paid", amountPaid);
         if (discountType) form.append("discount_type", discountType);
         if (discountType && discountValue.trim()) form.append("discount_value", discountValue);
@@ -512,7 +527,7 @@ function CreateOrderModal({
             {items.map((it, idx) => (
               <div
                 key={idx}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_160px_90px] md:items-end"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_160px_90px] md:items-end"
               >
                 <Input
                   label={idx === 0 ? "Item name" : undefined}
@@ -554,6 +569,17 @@ function CreateOrderModal({
                   error={fieldError[`items.${idx}.quantity`]}
                   placeholder="1"
                 />
+                <Input
+                  label={idx === 0 ? "Amount (unit)" : undefined}
+                  value={it.amount}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, amount: v } : x)));
+                  }}
+                  inputMode="decimal"
+                  error={fieldError[`items.${idx}.amount`]}
+                  placeholder="e.g. 2500.00"
+                />
                 <Button
                   type="button"
                   variant="ghost"
@@ -570,7 +596,7 @@ function CreateOrderModal({
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1" }])}
+              onClick={() => setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1", amount: "" }])}
             >
               Add item
             </Button>
@@ -592,14 +618,11 @@ function CreateOrderModal({
 
         {canInputPricing ? (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Input
-              label="Total price (optional)"
-              value={totalPrice}
-              onChange={(e) => setTotalPrice(e.target.value)}
-              inputMode="decimal"
-              error={fieldError.totalPrice}
-              placeholder="e.g. 2500.00"
-            />
+            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 md:col-span-2">
+              <div className="text-xs font-semibold text-black/60">Subtotal (auto-calculated)</div>
+              <div className="mt-1 text-lg font-bold tracking-tight">{formatMoney(computedSubtotal)}</div>
+              <div className="mt-1 text-xs text-black/50">Calculated as Quantity × Amount per item.</div>
+            </div>
             <Input
               label="Deposit made (optional)"
               value={amountPaid}

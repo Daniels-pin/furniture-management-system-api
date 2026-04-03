@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoicesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
@@ -6,8 +6,11 @@ import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { PaginationFooter } from "../components/ui/Pagination";
 import type { InvoiceListItem } from "../types/api";
 import { formatMoney } from "../utils/money";
+
+const PAGE_SIZE = 20;
 
 function invoiceStatusBadge(status: string) {
   const s = status.toLowerCase();
@@ -22,22 +25,25 @@ export function InvoicesPage() {
   const nav = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<InvoiceListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await invoicesApi.list();
-      setRows(Array.isArray(data) ? data : []);
+      const data = await invoicesApi.list({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
+      setRows(Array.isArray(data.items) ? data.items : []);
+      setTotal(typeof data.total === "number" ? data.total : 0);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, toast]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <div className="space-y-6">
@@ -102,6 +108,7 @@ export function InvoicesPage() {
             </tbody>
           </table>
         </div>
+        <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </Card>
     </div>
   );

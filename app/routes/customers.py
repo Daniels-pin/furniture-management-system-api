@@ -8,7 +8,16 @@ from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
 from typing import List
 from datetime import datetime
 
+from app.utils.activity_log import log_activity, username_from_email, CUSTOMER_CREATED, CUSTOMER_DELETED
+
 router = APIRouter()
+
+
+def _creator_username(db: Session, customer: models.Customer) -> str | None:
+    if not getattr(customer, "creator_id", None):
+        return None
+    u = db.query(models.User).filter(models.User.id == customer.creator_id).first()
+    return username_from_email(getattr(u, "email", None)) if u else None
 
 
 @router.get("/customers", response_model=List[CustomerPublicResponse], response_model_exclude_none=True)
@@ -29,7 +38,7 @@ def get_customers(
             })
         else:
             # ✅ Full view
-            result.append({
+            row = {
                 "id": c.id,
                 "name": c.name,
                 "phone": c.phone,
@@ -37,7 +46,10 @@ def get_customers(
                 "email": c.email,
                 "birth_day": c.birth_day,
                 "birth_month": c.birth_month,
-            })
+            }
+            if user.role in ("admin", "showroom"):
+                row["created_by"] = _creator_username(db, c)
+            result.append(row)
 
     return result
 
@@ -56,13 +68,33 @@ def create_customer(
         email=str(customer.email) if customer.email is not None else None,
         birth_day=customer.birth_day,
         birth_month=customer.birth_month,
+        creator_id=user.id,
     )
 
     db.add(new_customer)
     db.commit()
     db.refresh(new_customer)
 
-    return new_customer
+    log_activity(
+        db,
+        action=CUSTOMER_CREATED,
+        entity_type="customer",
+        entity_id=new_customer.id,
+        actor_user=user,
+    )
+    db.commit()
+
+    label = username_from_email(getattr(user, "email", None))
+    return {
+        "id": new_customer.id,
+        "name": new_customer.name,
+        "phone": new_customer.phone,
+        "address": new_customer.address,
+        "email": new_customer.email,
+        "birth_day": new_customer.birth_day,
+        "birth_month": new_customer.birth_month,
+        "created_by": label,
+    }
 
 
 @router.get(
@@ -86,17 +118,18 @@ def birthdays_today(
         if user.role == "factory":
             result.append({"id": c.id, "name": c.name})
         else:
-            result.append(
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "phone": c.phone,
-                    "address": c.address,
-                    "email": c.email,
-                    "birth_day": c.birth_day,
-                    "birth_month": c.birth_month,
-                }
-            )
+            row = {
+                "id": c.id,
+                "name": c.name,
+                "phone": c.phone,
+                "address": c.address,
+                "email": c.email,
+                "birth_day": c.birth_day,
+                "birth_month": c.birth_month,
+            }
+            if user.role in ("admin", "showroom"):
+                row["created_by"] = _creator_username(db, c)
+            result.append(row)
     return result
 
 
@@ -117,6 +150,14 @@ def delete_customer(
             detail="Customer has existing orders and cannot be deleted",
         )
 
+    cid = customer.id
+    log_activity(
+        db,
+        action=CUSTOMER_DELETED,
+        entity_type="customer",
+        entity_id=cid,
+        actor_user=user,
+    )
     db.delete(customer)
     db.commit()
     return {"message": "Customer deleted"}

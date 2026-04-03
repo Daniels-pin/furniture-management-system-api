@@ -7,6 +7,7 @@ from app.auth.auth import require_role
 from app.schemas import UserRole, UserCreate, UserResponse
 from typing import List
 
+from app.utils.activity_log import log_activity, USER_CREATED, USER_DELETED
 
 
 router = APIRouter()
@@ -46,6 +47,16 @@ def create_user(
     db.commit()
     db.refresh(new_user)
 
+    log_activity(
+        db,
+        action=USER_CREATED,
+        entity_type="user",
+        entity_id=new_user.id,
+        actor_user=current_user,
+        meta={"role": new_user.role},
+    )
+    db.commit()
+
     return {"id": new_user.id, "username": new_user.email, "role": new_user.role}
 
 
@@ -58,6 +69,14 @@ def delete_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    uid = user.id
+    log_activity(
+        db,
+        action=USER_DELETED,
+        entity_type="user",
+        entity_id=uid,
+        actor_user=current_user,
+    )
     db.delete(user)
     db.commit()
     return {"message": "User deleted"}

@@ -8,8 +8,12 @@ from app.auth.auth import router as auth_router
 from app.routes.customers import router as customers_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.audit import router as audit_router
+from app.routes.proforma import router as proforma_router
+from app.routes.quotation import router as quotation_router
+from app.routes.waybill import router as waybill_router
 from app.routes.invoices import router as invoices_router
 from app.routes.orders import router as orders_router
+from app.routes.products import router as products_router
 from app.routes.users import router as users_router
 
 app = FastAPI() 
@@ -56,8 +60,12 @@ def protected(user = Depends(get_current_user)):
 
 app.include_router(customers_router, tags=["Customers"])
 app.include_router(users_router, tags=["Users"])
+app.include_router(products_router, tags=["Products"])
 app.include_router(orders_router, tags=["Orders"])
 app.include_router(invoices_router, tags=["Invoices"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(audit_router, tags=["Audit"])
+app.include_router(proforma_router, tags=["Proforma"])
+app.include_router(quotation_router, tags=["Quotations"])
+app.include_router(waybill_router, tags=["Waybills"])
 

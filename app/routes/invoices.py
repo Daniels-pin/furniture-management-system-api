@@ -1,10 +1,9 @@
-from typing import List
-
 from decimal import Decimal
 from html import escape
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 import logging
@@ -14,19 +13,24 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.database import get_db
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
-from app.constants import APP_NAME
+from app.constants import APP_NAME, COMPANY_ADDRESSES, COMPANY_EMAIL, COMPANY_PHONES
 from app.utils.emailer import EmailConfigError, send_email
+from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
+from app.utils.activity_log import (
+    log_activity,
+    username_from_email,
+    INVOICE_DELETED,
+    INVOICE_EMAIL_SENT,
+    INVOICE_GENERATED,
+    INVOICE_PRINTED,
+)
+from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
+from types import SimpleNamespace
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 TWOPLACES = Decimal("0.01")
-
-def _username_from_email(email: str | None) -> str | None:
-    s = (email or "").strip()
-    if not s:
-        return None
-    return s.split("@")[0] or None
 
 
 def _money(v: object) -> str:
@@ -54,24 +58,34 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     if base_price is not None:
         total = (base_price or Decimal("0")) + (Decimal(str(tax)) if tax is not None else Decimal("0"))
 
-    logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip()
+    # Canonical logo URL used in invoice emails.
+    # Prefer INVOICE_LOGO_URL, fallback to PUBLIC_LOGO_URL (keeps branding consistent across app surfaces).
+    logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
     logo_html = (
-        f"<img src='{escape(logo_url)}' alt='{escape(APP_NAME)} logo' style='width:56px;height:56px;object-fit:contain'/>"
+        f"<img src='{escape(logo_url)}' alt='{escape(APP_NAME)} logo' style='width:160px;height:160px;max-width:100%;object-fit:contain;object-position:left top'/>"
         if logo_url
         else ""
     )
 
-    # Build rows
+    # Build rows (supports optional unit amount + inferred amounts from order total)
+    units = display_unit_amounts(order, items)
     rows = []
-    for it in items:
+    for i, it in enumerate(items):
+        unit = units[i] if i < len(units) else None
+        line_total = None
+        if unit is not None and it.quantity is not None:
+            try:
+                line_total = (Decimal(str(unit)) * Decimal(int(it.quantity))).quantize(TWOPLACES)
+            except Exception:
+                line_total = None
         rows.append(
             f"""
             <tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#666">—</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#666">—</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(unit))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(line_total))}</td>
             </tr>
             """
         )
@@ -81,17 +95,23 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     discount_display = _money(discount_amount if discount_amount is not None else Decimal("0.00"))
     tax_display = _money(tax if tax is not None else Decimal("0.00"))
 
+    company_lines = "\n".join(
+        f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES
+    )
+    company_lines += "\n" + "\n".join(
+        f"<div>{escape(p)}</div>" for p in COMPANY_PHONES
+    )
+    company_lines += f"\n<div>{escape(COMPANY_EMAIL)}</div>"
+
     return f"""
     <div style="margin:0;padding:0;background:#f6f6f6">
       <div style="max-width:860px;margin:0 auto;padding:24px">
         <div style="background:#ffffff;border:1px solid #e5e5e5;overflow:hidden">
           <div style="padding:18px 22px;border-bottom:1px solid #e5e5e5">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;font-family:Inter,Arial,sans-serif">
-              <div style="display:flex;align-items:flex-start;gap:12px">
-                <div style="width:56px;height:56px">{logo_html}</div>
-                <div>
-                  <div style="font-size:16px;font-weight:800;color:#111">{escape(APP_NAME)}</div>
-                </div>
+              <div style="display:flex;flex-direction:column;align-items:flex-start;gap:10px">
+                <div style="width:160px;height:160px;max-width:100%">{logo_html}</div>
+                <div style="font-size:11px;font-style:italic;font-weight:500;color:#666;letter-spacing:0.02em;line-height:1.35;max-width:280px">Furniture Nig Ltd</div>
               </div>
               <div style="min-width:240px;text-align:right">
                 <div style="display:inline-block;background:#111;color:#fff;padding:10px 14px;font-weight:800;letter-spacing:0.28em">INVOICE</div>
@@ -109,9 +129,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
                 <div style="font-weight:800;color:#111">Bill From:</div>
                 <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
                   <div><strong>{escape(APP_NAME)}</strong></div>
-                  <div>Address</div>
-                  <div>Phone Number</div>
-                  <div>Email</div>
+                  {company_lines}
                 </div>
               </div>
               <div style="flex:1">
@@ -132,8 +150,8 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
-                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Rate</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -198,9 +216,9 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
         total = (base_price or Decimal("0")) + (tax or Decimal("0"))
 
     created_by_username = None
-    if getattr(order, "created_by", None) and getattr(user, "role", None) == "admin":
+    if getattr(order, "created_by", None) and getattr(user, "role", None) in ("admin", "showroom"):
         u = db.query(models.User).filter(models.User.id == order.created_by).first()
-        created_by_username = _username_from_email(getattr(u, "email", None)) if u else None
+        created_by_username = username_from_email(getattr(u, "email", None)) if u else None
     return {
         "id": inv.id,
         "invoice_number": inv.invoice_number,
@@ -230,18 +248,19 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
     }
 
 
-@router.get("/invoices", response_model=List[InvoiceListItem], response_model_exclude_none=True)
+@router.get("/invoices", response_model_exclude_none=True)
 def list_invoices(
+    limit: int = 20,
+    offset: int = 0,
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    rows = (
-        db.query(models.Invoice)
-        .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
-        .order_by(models.Invoice.id.desc())
-        .all()
-    )
-    return [_invoice_to_list_item(db, inv, user) for inv in rows]
+    lim = max(1, min(int(limit or 20), 100))
+    off = max(0, int(offset or 0))
+    total = db.query(func.count(models.Invoice.id)).scalar() or 0
+    q = db.query(models.Invoice).options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
+    rows = q.order_by(models.Invoice.id.desc()).offset(off).limit(lim).all()
+    return {"items": [_invoice_to_list_item(db, inv, user) for inv in rows], "total": total}
 
 
 @router.get("/invoices/order/{order_id}", response_model=InvoiceDetailResponse, response_model_exclude_none=True)
@@ -266,16 +285,69 @@ def get_invoice_by_order(
         .all()
     )
     base = _invoice_to_list_item(db, inv, user)
+    subtotal_from_items = compute_subtotal(items)
+    effective_total_price = (
+        getattr(order, "total_price", None)
+        if order is not None and getattr(order, "total_price", None) is not None
+        else (subtotal_from_items if subtotal_from_items is not None else base.get("total_price"))
+    )
+    units = display_unit_amounts(SimpleNamespace(total_price=effective_total_price), items)
     base["items"] = [
         {
             "id": it.id,
             "item_name": it.item_name,
             "description": it.description,
             "quantity": it.quantity,
+            "amount": units[i] if i < len(units) else getattr(it, "amount", None),
         }
-        for it in items
+        for i, it in enumerate(items)
     ]
+    if base.get("total_price") is None and subtotal_from_items is not None:
+        base["total_price"] = subtotal_from_items
     return base
+
+
+@router.post("/invoices/order/{order_id}")
+def issue_invoice_for_order(
+    order_id: int,
+    order_edited_before_invoice: bool = Query(False),
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    """Create an invoice for an order that does not already have one (e.g. after invoice-only delete)."""
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.customer_id is None:
+        raise HTTPException(status_code=400, detail="Order has no customer")
+
+    existing = db.query(models.Invoice).filter(models.Invoice.order_id == order_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="This order already has an invoice")
+
+    inv = create_invoice_for_order(db, order, order.customer_id)
+    sync_invoice_from_order(db, order)
+    log_activity(
+        db,
+        action=INVOICE_GENERATED,
+        entity_type="invoice",
+        entity_id=inv.id,
+        actor_user=user,
+        meta={
+            "order_id": order_id,
+            "invoice_number": inv.invoice_number,
+            "reissue": True,
+            "order_edited_before_invoice": bool(order_edited_before_invoice),
+        },
+    )
+    db.commit()
+    db.refresh(inv)
+    return {
+        "message": "Invoice created",
+        "invoice_id": inv.id,
+        "invoice_number": inv.invoice_number,
+        "order_id": order_id,
+    }
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceDetailResponse, response_model_exclude_none=True)
@@ -304,16 +376,53 @@ def get_invoice(
     )
 
     base = _invoice_to_list_item(db, inv, user)
+    subtotal_from_items = compute_subtotal(items)
+    effective_total_price = (
+        getattr(order, "total_price", None)
+        if order is not None and getattr(order, "total_price", None) is not None
+        else (subtotal_from_items if subtotal_from_items is not None else base.get("total_price"))
+    )
+    units = display_unit_amounts(SimpleNamespace(total_price=effective_total_price), items)
     base["items"] = [
         {
             "id": it.id,
             "item_name": it.item_name,
             "description": it.description,
             "quantity": it.quantity,
+            "amount": units[i] if i < len(units) else getattr(it, "amount", None),
         }
-        for it in items
+        for i, it in enumerate(items)
     ]
+    if base.get("total_price") is None and subtotal_from_items is not None:
+        base["total_price"] = subtotal_from_items
     return base
+
+
+@router.delete("/invoices/{invoice_id}")
+def delete_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    """Remove the invoice row only; the linked order and line items are kept. Admin only."""
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    iid = inv.id
+    inv_num = inv.invoice_number
+    oid = inv.order_id
+    log_activity(
+        db,
+        action=INVOICE_DELETED,
+        entity_type="invoice",
+        entity_id=iid,
+        actor_user=user,
+        meta={"invoice_number": inv_num, "order_id": oid},
+    )
+    db.delete(inv)
+    db.commit()
+    return {"message": "Invoice deleted", "order_id": oid}
 
 
 @router.post("/invoices/{invoice_id}/send-email")
@@ -364,15 +473,13 @@ def send_invoice_email(
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
     try:
-        db.add(
-            models.ActionLog(
-                action="send_invoice_email",
-                entity_type="invoice",
-                entity_id=inv.id,
-                actor_user_id=getattr(user, "id", None),
-                actor_username=_username_from_email(getattr(user, "email", None)),
-                meta={"to": to_email},
-            )
+        log_activity(
+            db,
+            action=INVOICE_EMAIL_SENT,
+            entity_type="invoice",
+            entity_id=inv.id,
+            actor_user=user,
+            meta={"to": to_email},
         )
         db.commit()
     except Exception:
@@ -380,3 +487,24 @@ def send_invoice_email(
         logger.exception("Failed to write action log for invoice email")
 
     return {"message": "Invoice sent"}
+
+
+@router.post("/invoices/{invoice_id}/print")
+def record_invoice_print(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    log_activity(
+        db,
+        action=INVOICE_PRINTED,
+        entity_type="invoice",
+        entity_id=inv.id,
+        actor_user=user,
+        meta={"invoice_number": inv.invoice_number},
+    )
+    db.commit()
+    return {"message": "Recorded"}

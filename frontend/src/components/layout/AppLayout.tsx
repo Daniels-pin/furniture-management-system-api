@@ -121,19 +121,15 @@ export function AppLayout() {
   return (
     <div className="min-h-dvh bg-white">
       <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-4 py-6 md:grid-cols-[240px_1fr]">
-        <aside className="rounded-3xl border border-black/10 bg-white p-4 shadow-soft">
+        <aside className="min-w-0 overflow-hidden rounded-3xl border border-black/10 bg-white p-4 shadow-soft">
           <div className="px-2 pb-4">
-            <div className="flex items-center gap-3">
-              <NavLink to="/dashboard" className="shrink-0">
-                <img
-                  src="/logo.png"
-                  alt={`${APP_NAME} logo`}
-                  className="h-10 w-10 rounded-xl object-contain"
-                />
+            <div className="min-w-0">
+              <NavLink
+                to="/dashboard"
+                className="block w-full min-w-0 break-words text-base font-bold leading-snug tracking-tight text-black hover:opacity-80"
+              >
+                {APP_NAME}
               </NavLink>
-              <div className="min-w-0">
-                <div className="truncate text-lg font-bold tracking-tight">{APP_NAME}</div>
-              </div>
             </div>
           </div>
 
@@ -141,10 +137,16 @@ export function AppLayout() {
             <NavItem to="/dashboard" label="Dashboard" />
             <NavItem to="/orders" label="Orders" />
             {auth.role === "admin" || auth.role === "showroom" ? (
-              <NavItem to="/invoices" label="Invoices" />
+              <>
+                <NavItem to="/invoices" label="Invoices" />
+                <NavItem to="/quotations" label="Quotation" />
+                <NavItem to="/waybills" label="Waybill" />
+                <NavItem to="/proforma" label="Proforma Invoice" />
+              </>
             ) : null}
             <NavItem to="/customers" label="Customers" />
             {auth.role === "admin" ? <NavItem to="/admin/users" label="Admin Users" /> : null}
+            {auth.role === "admin" ? <NavItem to="/admin/activity" label="Activity Log" /> : null}
           </nav>
 
           <div className="mt-6 rounded-2xl border border-black/10 bg-black/[0.02] p-3">

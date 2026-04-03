@@ -25,11 +25,12 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-40">
       <button
-        className="absolute inset-0 bg-black/40"
+        type="button"
+        className="absolute inset-0 z-0 bg-black/40"
         aria-label="Close modal"
         onClick={onClose}
       />
-      <div className="relative mx-auto mt-6 w-[min(720px,calc(100vw-2rem))] md:mt-16">
+      <div className="relative z-10 mx-auto mt-6 w-[min(720px,calc(100vw-2rem))] md:mt-16">
         <div className="flex max-h-[calc(100dvh-3rem)] flex-col overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft md:max-h-[calc(100dvh-8rem)]">
           <div className="flex shrink-0 items-center justify-between px-6 py-4">
             <div className="text-base font-semibold">{title}</div>
