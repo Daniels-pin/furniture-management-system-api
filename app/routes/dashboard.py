@@ -97,7 +97,13 @@ def get_dashboard(
     # Admin-only financials
     if user.role == "admin":
         total_revenue = db.query(
-            func.coalesce(func.sum(func.coalesce(models.Order.final_price, models.Order.total_price)), 0)
+            func.coalesce(
+                func.sum(
+                    func.coalesce(models.Order.final_price, models.Order.total_price)
+                    + func.coalesce(models.Order.tax, 0)
+                ),
+                0,
+            )
         ).scalar()
         amount_paid = db.query(func.coalesce(func.sum(models.Order.amount_paid), 0)).scalar()
         outstanding_balance = db.query(func.coalesce(func.sum(models.Order.balance), 0)).scalar()

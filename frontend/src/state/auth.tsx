@@ -8,6 +8,7 @@ type AuthState = {
   token: string | null;
   role: Role | null;
   userId: number | null;
+  username: string | null;
 };
 
 type AuthContextValue = AuthState & {
@@ -26,18 +27,19 @@ function isExpired(payload: JwtPayload | null): boolean {
 }
 
 function deriveState(token: string | null): AuthState {
-  if (!token) return { token: null, role: null, userId: null };
+  if (!token) return { token: null, role: null, userId: null, username: null };
   const payload = decodeJwt(token) as JwtPayload | null;
   if (isExpired(payload)) {
     authStore.clear();
-    return { token: null, role: null, userId: null };
+    return { token: null, role: null, userId: null, username: null };
   }
   const normalizedRole =
     payload?.role === "manager" ? ("factory" as Role) : ((payload?.role as Role | undefined) ?? null);
   return {
     token,
     role: normalizedRole,
-    userId: typeof payload?.user_id === "number" ? payload.user_id : null
+    userId: typeof payload?.user_id === "number" ? payload.user_id : null,
+    username: typeof payload?.username === "string" && payload.username.trim() ? payload.username.trim() : null
   };
 }
 

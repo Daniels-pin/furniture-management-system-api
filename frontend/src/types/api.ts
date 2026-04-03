@@ -50,9 +50,13 @@ export type Order = {
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
   final_price?: string | number | null;
+  tax?: string | number | null;
+  total?: string | number | null;
   amount_paid?: string | number | null;
   balance?: string | number | null;
   payment_status?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 export type OrderUploadResponse = {
@@ -98,6 +102,9 @@ export type InvoiceListItem = {
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
   final_price?: string | number | null;
+  tax?: string | number | null;
+  total?: string | number | null;
+  created_by?: string | null;
 };
 
 export type InvoiceDetail = InvoiceListItem & {
@@ -112,5 +119,6 @@ export type OrderAdminUpdate = {
   amount_paid?: string | number | null;
   discount_type?: "fixed" | "percentage" | null;
   discount_value?: string | number | null;
+  tax?: string | number | null;
 };
 

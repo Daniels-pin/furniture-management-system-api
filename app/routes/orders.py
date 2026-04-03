@@ -24,12 +24,42 @@ from app.schemas import (
 from fastapi import Query
 from typing import List, Optional
 from app.utils.cloudinary import upload_image
-from app.utils.pricing import compute_discount, compute_pricing, compute_pricing_with_discount
+from app.utils.pricing import compute_discount, compute_pricing, compute_totals
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def _username_from_email(email: Optional[str]) -> Optional[str]:
+    s = (email or "").strip()
+    if not s:
+        return None
+    return s.split("@")[0] or None
+
+
+def _log_action(
+    db: Session,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: Optional[int],
+    actor_user,
+    meta: Optional[dict] = None,
+) -> None:
+    try:
+        db.add(
+            models.ActionLog(
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                actor_user_id=getattr(actor_user, "id", None),
+                actor_username=_username_from_email(getattr(actor_user, "email", None)),
+                meta=meta,
+            )
+        )
+    except Exception:
+        logger.exception("Failed to write action log")
 
 
 def _parse_optional_email(raw: Optional[str]) -> Optional[str]:
@@ -42,7 +72,9 @@ def _parse_optional_email(raw: Optional[str]) -> Optional[str]:
         raise HTTPException(status_code=422, detail="Invalid email format") from e
 
 
-def _build_order_response(order: models.Order, customer: models.Customer, items: list[models.OrderItem], user) -> dict:
+def _build_order_response(
+    db: Session, order: models.Order, customer: models.Customer, items: list[models.OrderItem], user
+) -> dict:
     base: dict = {
         "id": order.id,
         "status": order.status,
@@ -68,6 +100,11 @@ def _build_order_response(order: models.Order, customer: models.Customer, items:
     }
 
     if user.role in ("admin", "showroom"):
+        total = None
+        if order.final_price is not None or order.total_price is not None:
+            base_price = order.final_price if order.final_price is not None else order.total_price
+            if base_price is not None:
+                total = (base_price or Decimal("0")) + (order.tax or Decimal("0"))
         base.update(
             {
                 "total_price": order.total_price,
@@ -75,11 +112,26 @@ def _build_order_response(order: models.Order, customer: models.Customer, items:
                 "discount_value": order.discount_value,
                 "discount_amount": order.discount_amount,
                 "final_price": order.final_price,
+                "tax": order.tax,
+                "total": total,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
                 "payment_status": order.payment_status,
             }
         )
+
+        # Admin-only: show who performed actions
+        if user.role == "admin":
+            created_by_username = None
+            updated_by_username = None
+            if order.created_by:
+                actor = db.query(models.User).filter(models.User.id == order.created_by).first()
+                created_by_username = (actor.email or "").split("@")[0] if actor and actor.email else None
+            if order.updated_by:
+                actor2 = db.query(models.User).filter(models.User.id == order.updated_by).first()
+                updated_by_username = (actor2.email or "").split("@")[0] if actor2 and actor2.email else None
+            base["created_by"] = created_by_username
+            base["updated_by"] = updated_by_username
 
     return base
 
@@ -100,6 +152,7 @@ def create_order(
     amount_paid: Decimal | None = Form(None),
     discount_type: Optional[str] = Form(None),
     discount_value: Decimal | None = Form(None),
+    tax: Decimal | None = Form(None),
     db: Session = Depends(get_db),
     user=Depends(require_role(["showroom", "admin"])),
 ):
@@ -137,9 +190,9 @@ def create_order(
     if image is not None:
         image_url = upload_image(image)
 
-    # 4) Pricing + discount
-    pricing, discount = compute_pricing_with_discount(total_price, amount_paid, discount_type, discount_value)
-    original_total = compute_pricing(total_price, None).total_price
+    # 4) Pricing + discount + tax
+    totals = compute_totals(total_price, amount_paid, discount_type, discount_value, tax)
+    original_total = totals.subtotal
 
     # 5) Transactional create (customer + order + items)
     try:
@@ -168,13 +221,14 @@ def create_order(
                 created_by=user.id,
                 image_url=image_url,
                 total_price=original_total,
-                discount_type=discount.discount_type,
-                discount_value=discount.discount_value,
-                discount_amount=discount.discount_amount,
-                final_price=discount.final_price if discount.final_price is not None else original_total,
-                amount_paid=pricing.amount_paid,
-                balance=pricing.balance,
-                payment_status=pricing.payment_status,
+                discount_type=totals.discount_type,
+                discount_value=totals.discount_value,
+                discount_amount=totals.discount_amount,
+                final_price=totals.after_discount if totals.after_discount is not None else original_total,
+                tax=totals.tax,
+                amount_paid=totals.paid,
+                balance=totals.balance,
+                payment_status=totals.payment_status,
             )
             db.add(new_order)
             db.flush()  # get new_order.id
@@ -191,6 +245,13 @@ def create_order(
                 created_items.append(oi)
             db.flush()
             create_invoice_for_order(db, new_order, customer.id)
+            _log_action(
+                db,
+                action="create_order",
+                entity_type="order",
+                entity_id=new_order.id,
+                actor_user=user,
+            )
             db.flush()
         # If we entered with an already-open transaction, begin_nested() only releases a SAVEPOINT.
         # We must commit the outer transaction, otherwise the session will roll back on close and
@@ -206,7 +267,7 @@ def create_order(
 
     # 6) Build full response (customer + items)
     # Avoid extra round-trips; ids are available after flush.
-    return _build_order_response(new_order, customer, created_items, user)
+    return _build_order_response(db, new_order, customer, created_items, user)
 
 
 # Legacy JSON endpoint (kept for backward compatibility)
@@ -264,7 +325,7 @@ def create_order_json(
         db.refresh(oi)
     db.refresh(new_order)
     new_order.items = items
-    return _build_order_response(new_order, new_customer, items, user)
+    return _build_order_response(db, new_order, new_customer, items, user)
     
 
 @router.get("/orders", response_model=OrdersListResponse, response_model_exclude_none=True)
@@ -497,21 +558,23 @@ def put_order_admin(
     ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
     dt = payload.discount_type if payload.discount_type is not None else order.discount_type
     dv = payload.discount_value if payload.discount_value is not None else order.discount_value
+    tax = payload.tax if payload.tax is not None else order.tax
 
-    original_total = compute_pricing(tp, None).total_price
-    discount = compute_discount(original_total, dt, dv)
-    pricing = compute_pricing(discount.final_price, ap)
+    totals = compute_totals(tp, ap, dt, dv, tax)
 
-    order.total_price = original_total
-    order.discount_type = discount.discount_type
-    order.discount_value = discount.discount_value
-    order.discount_amount = discount.discount_amount
-    order.final_price = discount.final_price
-    order.amount_paid = pricing.amount_paid
-    order.balance = pricing.balance
-    order.payment_status = pricing.payment_status
+    order.total_price = totals.subtotal
+    order.discount_type = totals.discount_type
+    order.discount_value = totals.discount_value
+    order.discount_amount = totals.discount_amount
+    order.final_price = totals.after_discount
+    order.tax = totals.tax
+    order.amount_paid = totals.paid
+    order.balance = totals.balance
+    order.payment_status = totals.payment_status
     order.status = payload.status.value
     order.due_date = payload.due_date
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
 
     db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete()
     for item in payload.items:
@@ -525,6 +588,13 @@ def put_order_admin(
         )
     db.flush()
     sync_invoice_from_order(db, order)
+    _log_action(
+        db,
+        action="update_order",
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+    )
     db.commit()
 
     items = (
@@ -559,6 +629,20 @@ def put_order_admin(
         ],
     }
     if user.role in ("admin", "showroom"):
+        total = None
+        if order.final_price is not None or order.total_price is not None:
+            base_price = order.final_price if order.final_price is not None else order.total_price
+            if base_price is not None:
+                total = (base_price or Decimal("0")) + (order.tax or Decimal("0"))
+        created_by_username = None
+        updated_by_username = None
+        if user.role == "admin":
+            if order.created_by:
+                u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
+                created_by_username = (u1.email or "").split("@")[0] if u1 and u1.email else None
+            if order.updated_by:
+                u2 = db.query(models.User).filter(models.User.id == order.updated_by).first()
+                updated_by_username = (u2.email or "").split("@")[0] if u2 and u2.email else None
         base.update(
             {
                 "total_price": order.total_price,
@@ -566,9 +650,13 @@ def put_order_admin(
                 "discount_value": order.discount_value,
                 "discount_amount": order.discount_amount,
                 "final_price": order.final_price,
+                "tax": order.tax,
+                "total": total,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
                 "payment_status": order.payment_status,
+                "created_by": created_by_username,
+                "updated_by": updated_by_username,
             }
         )
     return base
@@ -587,16 +675,23 @@ def update_order_pricing(
 
     tp = payload.total_price if payload.total_price is not None else order.total_price
     ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
-    original_total = compute_pricing(tp, None).total_price
-    discount = compute_discount(original_total, order.discount_type, order.discount_value)
-    pricing = compute_pricing(discount.final_price, ap)
-    order.total_price = original_total
-    order.final_price = discount.final_price
-    order.discount_amount = discount.discount_amount
-    order.amount_paid = pricing.amount_paid
-    order.balance = pricing.balance
-    order.payment_status = pricing.payment_status
+    totals = compute_totals(tp, ap, order.discount_type, order.discount_value, order.tax)
+    order.total_price = totals.subtotal
+    order.final_price = totals.after_discount
+    order.discount_amount = totals.discount_amount
+    order.amount_paid = totals.paid
+    order.balance = totals.balance
+    order.payment_status = totals.payment_status
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
     sync_invoice_from_order(db, order)
+    _log_action(
+        db,
+        action="update_order_pricing",
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+    )
     db.commit()
     db.refresh(order)
 
@@ -641,6 +736,16 @@ def update_order_status_patch(
         raise HTTPException(status_code=404, detail="Order not found")
 
     order.status = status
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
+    _log_action(
+        db,
+        action="update_order_status",
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+        meta={"status": status},
+    )
     db.commit()
     return {"message": "Order status updated"}
 
@@ -657,12 +762,21 @@ def mark_order_fully_paid(
     if order.total_price is None:
         raise HTTPException(status_code=400, detail="total_price is required to mark as paid")
 
-    tp = order.total_price
-    discount = compute_discount(tp, order.discount_type, order.discount_value)
-    pricing = compute_pricing(discount.final_price, discount.final_price)
+    totals = compute_totals(order.total_price, None, order.discount_type, order.discount_value, order.tax)
+    grand_total = totals.total
+    pricing = compute_pricing(grand_total, grand_total)
     order.amount_paid = pricing.amount_paid
     order.balance = pricing.balance
     order.payment_status = pricing.payment_status
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
     sync_invoice_from_order(db, order)
+    _log_action(
+        db,
+        action="mark_order_paid",
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+    )
     db.commit()
     return {"message": "Order marked as fully paid"}

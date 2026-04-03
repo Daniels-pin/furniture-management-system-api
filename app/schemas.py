@@ -106,9 +106,13 @@ class OrderResponse(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    total: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
     customer: Optional[CustomerResponse] = None
     items: List[OrderItemResponse]
 
@@ -128,9 +132,13 @@ class OrderDetailsResponse(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    total: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None
     payment_status: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
 
 
 class OrderAdminPut(BaseModel):
@@ -143,6 +151,7 @@ class OrderAdminPut(BaseModel):
     amount_paid: Optional[Decimal] = None
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
 
 
 class InvoiceListItem(BaseModel):
@@ -161,6 +170,9 @@ class InvoiceListItem(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    created_by: Optional[str] = None
 
     class Config:
         from_attributes = True

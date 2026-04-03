@@ -42,6 +42,57 @@ class DiscountResult:
     final_price: Optional[Decimal]
 
 
+@dataclass(frozen=True)
+class TotalsResult:
+    subtotal: Optional[Decimal]
+    discount_type: Optional[str]
+    discount_value: Optional[Decimal]
+    discount_amount: Optional[Decimal]
+    after_discount: Optional[Decimal]
+    tax: Optional[Decimal]
+    total: Optional[Decimal]
+    paid: Optional[Decimal]
+    balance: Optional[Decimal]
+    payment_status: str
+
+
+def compute_totals(
+    subtotal_in: object,
+    paid_in: object,
+    discount_type_in: object,
+    discount_value_in: object,
+    tax_in: object,
+) -> TotalsResult:
+    subtotal = compute_pricing(subtotal_in, None).total_price
+    discount = compute_discount(subtotal, discount_type_in, discount_value_in)
+    after_discount = discount.final_price
+
+    tax = _to_decimal(tax_in, "tax")
+    if tax is not None:
+        tax = _q2(tax)
+        if tax < 0:
+            raise HTTPException(status_code=400, detail="tax must be >= 0")
+
+    total = None
+    if after_discount is not None:
+        total = _q2(after_discount + (tax or Decimal("0")))
+
+    pricing = compute_pricing(total, paid_in)
+
+    return TotalsResult(
+        subtotal=subtotal,
+        discount_type=discount.discount_type,
+        discount_value=discount.discount_value,
+        discount_amount=discount.discount_amount,
+        after_discount=after_discount,
+        tax=tax,
+        total=total,
+        paid=pricing.amount_paid,
+        balance=pricing.balance,
+        payment_status=pricing.payment_status,
+    )
+
+
 def compute_discount(total_price_in: object, discount_type_in: object, discount_value_in: object) -> DiscountResult:
     validated_total = compute_pricing(total_price_in, None).total_price
     if validated_total is None:

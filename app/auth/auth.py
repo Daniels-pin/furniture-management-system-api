@@ -29,10 +29,14 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    token = create_access_token({
-        "user_id": user.id,
-        "role": normalize_role(user.role)
-    })
+    username = (user.email or "").split("@")[0] if user.email else None
+    token = create_access_token(
+        {
+            "user_id": user.id,
+            "role": normalize_role(user.role),
+            "username": username,
+        }
+    )
 
     return {"access_token": token, "token_type": "bearer"}
 security = HTTPBearer()

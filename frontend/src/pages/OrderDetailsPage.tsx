@@ -221,58 +221,56 @@ export function OrderDetailsPage() {
 
                 {auth.role === "admin" || auth.role === "showroom" ? (
                   <div className="mt-4 space-y-3">
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                      <div className="text-xs font-semibold text-black/60">Total price</div>
-                      <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).total_price)}</div>
+                    <div className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="text-xs font-semibold text-black/60">Pricing</div>
+                      <div className="mt-3 space-y-2 text-sm">
+                        <div className="flex items-center justify-between">
+                          <div className="text-black/60">Subtotal</div>
+                          <div className="font-semibold">{formatMoney((data as any).total_price)}</div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-black/60">Discount</div>
+                          <div className="font-semibold">-{formatMoney((data as any).discount_amount)}</div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-black/60">Tax</div>
+                          <div className="font-semibold">{formatMoney((data as any).tax)}</div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-black/60">Paid</div>
+                          <div className="font-semibold">{formatMoney((data as any).amount_paid)}</div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-black/60">Balance</div>
+                          <div className="font-semibold">{formatMoney((data as any).balance)}</div>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between rounded-xl bg-black px-4 py-2 text-white">
+                          <div className="font-bold">Total</div>
+                          <div className="font-bold">{formatMoney((data as any).total)}</div>
+                        </div>
+
+                        {discountLabel((data as any).discount_type) ? (
+                          <div className="pt-2 text-xs font-semibold text-black/60">
+                            Discount: {discountLabel((data as any).discount_type)} •{" "}
+                            {discountValueText((data as any).discount_type, (data as any).discount_value) ?? "—"}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
 
-                    {discountLabel((data as any).discount_type) ? (
-                      <div className="rounded-2xl border border-black/10 bg-white p-4">
-                        <div className="text-xs font-semibold text-black/60">Discount</div>
-                        <div className="mt-2 grid grid-cols-1 gap-2 text-sm md:grid-cols-3">
-                          <div>
-                            <div className="text-xs font-semibold text-black/50">Type</div>
-                            <div className="mt-0.5 font-semibold">{discountLabel((data as any).discount_type)}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold text-black/50">Value</div>
-                            <div className="mt-0.5 font-semibold">
-                              {discountValueText((data as any).discount_type, (data as any).discount_value) ?? "—"}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold text-black/50">Amount deducted</div>
-                            <div className="mt-0.5 font-semibold">
-                              -{formatMoney((data as any).discount_amount)}
-                            </div>
-                          </div>
+                    {auth.role === "admin" && ((data as any).created_by || (data as any).updated_by) ? (
+                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                        <div className="text-xs font-semibold text-black/60">Admin metadata</div>
+                        <div className="mt-2 text-sm text-black/70">
+                          Created by: <span className="font-semibold text-black">{(data as any).created_by ?? "—"}</span>
+                        </div>
+                        <div className="mt-1 text-sm text-black/70">
+                          Last updated by:{" "}
+                          <span className="font-semibold text-black">{(data as any).updated_by ?? "—"}</span>
                         </div>
                       </div>
-                    ) : (
-                      <></>
-                    )}
-
-                    <div className="rounded-2xl border border-black/10 bg-white p-4">
-                      <div className="text-xs font-semibold text-black/60">Final price</div>
-                      <div className="mt-1 text-sm font-bold">
-                        {formatMoney(
-                          discountLabel((data as any).discount_type)
-                            ? (data as any).final_price ?? (data as any).total_price
-                            : (data as any).total_price
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Deposit made</div>
-                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).amount_paid)}</div>
-                      </div>
-                      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                        <div className="text-xs font-semibold text-black/60">Balance remaining</div>
-                        <div className="mt-1 text-sm font-semibold">{formatMoney((data as any).balance)}</div>
-                      </div>
-                    </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="mt-3 text-sm text-black/60">Pricing is hidden for your role.</div>
@@ -420,6 +418,7 @@ function EditOrderModal({
   const [deposit, setDeposit] = useState(
     initial.amount_paid != null ? String(initial.amount_paid) : ""
   );
+  const [tax, setTax] = useState((initial as any).tax != null ? String((initial as any).tax) : "");
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">(
     (initial as any).discount_type ?? ""
   );
@@ -444,6 +443,7 @@ function EditOrderModal({
     setDueDate(isoToDateInput(initial.due_date));
     setTotalPrice(initial.total_price != null ? String(initial.total_price) : "");
     setDeposit(initial.amount_paid != null ? String(initial.amount_paid) : "");
+    setTax((initial as any).tax != null ? String((initial as any).tax) : "");
     setDiscountType(((initial as any).discount_type ?? "") as any);
     setDiscountValue((initial as any).discount_value != null ? String((initial as any).discount_value) : "");
     setItems(
@@ -488,7 +488,8 @@ function EditOrderModal({
         total_price: totalPrice.trim() === "" ? null : Number(totalPrice),
         amount_paid: deposit.trim() === "" ? null : Number(deposit),
         discount_type: discountType || null,
-        discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(discountValue)) : null
+        discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(discountValue)) : null,
+        tax: tax.trim() === "" ? null : Number(tax)
       });
       await onSaved();
     } catch (er) {
@@ -593,6 +594,13 @@ function EditOrderModal({
             value={deposit}
             onChange={(e) => setDeposit(e.target.value)}
             inputMode="decimal"
+          />
+          <Input
+            label="Tax (optional)"
+            value={tax}
+            onChange={(e) => setTax(e.target.value)}
+            inputMode="decimal"
+            placeholder="e.g. 0.00"
           />
           <label className="block">
             <div className="mb-1 text-sm font-medium">Discount type (optional)</div>

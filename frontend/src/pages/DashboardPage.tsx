@@ -49,6 +49,9 @@ export function DashboardPage() {
       <div>
         <div className="text-2xl font-bold tracking-tight">Dashboard</div>
         <div className="mt-1 text-sm text-black/60">Business insights for {APP_NAME}.</div>
+        {auth.username ? (
+          <div className="mt-1 text-sm font-semibold text-black/70">Signed in as {auth.username}</div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-5">

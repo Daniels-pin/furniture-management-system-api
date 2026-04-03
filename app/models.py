@@ -3,6 +3,7 @@ from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from sqlalchemy import JSON
 
 # USERS TABLE
 class User(Base):
@@ -51,11 +52,14 @@ class Order(Base):
     discount_value = Column(Numeric(11, 2), nullable=True)
     discount_amount = Column(Numeric(11, 2), nullable=True)
     final_price = Column(Numeric(11, 2), nullable=True)
+    tax = Column(Numeric(11, 2), nullable=True)
     amount_paid = Column(Numeric(11, 2), nullable=True)
     balance = Column(Numeric(11, 2), nullable=True)
     payment_status = Column(String, default="unpaid")
 
     created_by = Column(Integer, ForeignKey("users.id"))
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
     customer = relationship("Customer", back_populates="orders")
     items = relationship(
     "OrderItem",
@@ -81,6 +85,19 @@ class Invoice(Base):
 
     order = relationship("Order", back_populates="invoice")
     customer = relationship("Customer")
+
+
+class ActionLog(Base):
+    __tablename__ = "action_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String, nullable=False)  # e.g. create_order, update_order, send_invoice_email
+    entity_type = Column(String, nullable=False)  # e.g. order, invoice
+    entity_id = Column(Integer, nullable=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    meta = Column(JSON, nullable=True)
 
 
 class OrderItem(Base):

@@ -2,6 +2,7 @@ from typing import List
 
 from decimal import Decimal
 from html import escape
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
@@ -20,6 +21,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 TWOPLACES = Decimal("0.01")
+
+def _username_from_email(email: str | None) -> str | None:
+    s = (email or "").strip()
+    if not s:
+        return None
+    return s.split("@")[0] or None
 
 
 def _money(v: object) -> str:
@@ -41,6 +48,18 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     discount_amount = getattr(order, "discount_amount", None) if order else None
     original_total = getattr(order, "total_price", None) if order else inv.total_price
     final_price = getattr(order, "final_price", None) if order else None
+    tax = getattr(order, "tax", None) if order else None
+    base_price = final_price if final_price is not None else original_total
+    total = None
+    if base_price is not None:
+        total = (base_price or Decimal("0")) + (Decimal(str(tax)) if tax is not None else Decimal("0"))
+
+    logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip()
+    logo_html = (
+        f"<img src='{escape(logo_url)}' alt='{escape(APP_NAME)} logo' style='width:56px;height:56px;object-fit:contain'/>"
+        if logo_url
+        else ""
+    )
 
     # Build rows
     rows = []
@@ -51,98 +70,115 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#666">—</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#666">—</td>
             </tr>
             """
         )
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='3' style='padding:10px 12px;color:#666'>No items</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='5' style='padding:10px 12px;color:#666'>No items</td></tr>"
 
-    discount_block = ""
-    if discount_type:
-        dtype = "Percentage" if str(discount_type) == "percentage" else "Fixed"
-        if str(discount_type) == "percentage":
-            dval = f"{escape(str(discount_value))}%"
-        else:
-            dval = _money(discount_value)
-        discount_block = f"""
-                <tr>
-                  <td style="padding:6px 0;color:#666;font-size:13px">Discount</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">
-                    {escape(dtype)} ({dval}) • -{_money(discount_amount)}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#666;font-size:13px">Final price</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:900">{_money(final_price or original_total)}</td>
-                </tr>
-        """
+    # Always show the standardized pricing structure
+    discount_display = _money(discount_amount if discount_amount is not None else Decimal("0.00"))
+    tax_display = _money(tax if tax is not None else Decimal("0.00"))
 
     return f"""
     <div style="margin:0;padding:0;background:#f6f6f6">
-      <div style="max-width:820px;margin:0 auto;padding:24px">
-        <div style="background:#ffffff;border:1px solid #eaeaea;border-radius:18px;overflow:hidden">
-          <div style="padding:22px 22px 16px 22px;border-bottom:1px solid #efefef">
-            <div style="font-family:Inter,Arial,sans-serif;color:#111">
-              <div style="font-size:18px;font-weight:800;letter-spacing:-0.2px">{escape(APP_NAME)}</div>
-              <div style="margin-top:8px;font-size:14px;color:#333">
-                <span style="font-weight:700">Invoice</span> #{escape(inv.invoice_number)}
+      <div style="max-width:860px;margin:0 auto;padding:24px">
+        <div style="background:#ffffff;border:1px solid #e5e5e5;overflow:hidden">
+          <div style="padding:18px 22px;border-bottom:1px solid #e5e5e5">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;font-family:Inter,Arial,sans-serif">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <div style="width:56px;height:56px">{logo_html}</div>
+                <div>
+                  <div style="font-size:16px;font-weight:800;color:#111">{escape(APP_NAME)}</div>
+                </div>
               </div>
-              <div style="margin-top:4px;font-size:13px;color:#666">Date issued: {escape(issued)}</div>
+              <div style="min-width:240px;text-align:right">
+                <div style="display:inline-block;background:#111;color:#fff;padding:10px 14px;font-weight:800;letter-spacing:0.28em">INVOICE</div>
+                <div style="margin-top:10px;font-size:13px;color:#111">
+                  <div><span style="color:#666">Invoice Number:</span> <strong>#{escape(inv.invoice_number)}</strong></div>
+                  <div style="margin-top:4px"><span style="color:#666">Date Issued:</span> <strong>{escape(issued)}</strong></div>
+                </div>
+              </div>
             </div>
           </div>
 
           <div style="padding:18px 22px;font-family:Inter,Arial,sans-serif">
-            <div style="display:block;margin-bottom:14px">
-              <div style="font-size:12px;font-weight:800;color:#111;letter-spacing:0.06em;text-transform:uppercase">Customer</div>
-              <div style="margin-top:8px;font-size:14px;color:#111;line-height:1.5">
-                <div><span style="color:#666">Name:</span> <strong>{escape(c.name or '')}</strong></div>
-                <div><span style="color:#666">Phone:</span> <strong>{escape(c.phone or '—')}</strong></div>
-                <div><span style="color:#666">Email:</span> <strong>{escape(c.email or '—')}</strong></div>
-                <div><span style="color:#666">Address:</span> <strong>{escape(c.address or '—')}</strong></div>
+            <div style="display:flex;gap:22px;justify-content:space-between;border-bottom:1px solid #e5e5e5;padding-bottom:14px">
+              <div style="flex:1">
+                <div style="font-weight:800;color:#111">Bill From:</div>
+                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                  <div><strong>{escape(APP_NAME)}</strong></div>
+                  <div>Address</div>
+                  <div>Phone Number</div>
+                  <div>Email</div>
+                </div>
+              </div>
+              <div style="flex:1">
+                <div style="font-weight:800;color:#111">Bill To:</div>
+                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                  <div><strong>{escape(c.name or '')}</strong></div>
+                  <div>{escape(c.address or '—')}</div>
+                  <div>{escape(c.phone or '—')}</div>
+                  <div>{escape(c.email or '—')}</div>
+                </div>
               </div>
             </div>
 
-            <div style="margin-top:10px">
-              <div style="font-size:12px;font-weight:800;color:#111;letter-spacing:0.06em;text-transform:uppercase">Items</div>
-              <div style="margin-top:10px;border:1px solid #eeeeee;border-radius:14px;overflow:hidden">
-                <table style="width:100%;border-collapse:collapse;font-size:13px">
-                  <thead>
-                    <tr style="background:#fafafa;color:#444">
-                      <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:700">Item</th>
-                      <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:700">Description</th>
-                      <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:700">Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows_html}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div style="margin-top:16px;border-top:1px solid #efefef;padding-top:14px">
-              <table style="width:100%;border-collapse:collapse;font-family:Inter,Arial,sans-serif">
-                <tr>
-                  <td style="padding:6px 0;color:#666;font-size:13px">Total price</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(original_total)}</td>
-                </tr>
-                {discount_block}
-                <tr>
-                  <td style="padding:6px 0;color:#666;font-size:13px">Deposit made</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:800">{_money(inv.deposit_paid)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 0;color:#666;font-size:13px">Balance</td>
-                  <td style="padding:6px 0;color:#111;font-size:13px;text-align:right;font-weight:900">{_money(inv.balance)}</td>
-                </tr>
+            <div style="margin-top:14px;border:1px solid #d9d9d9">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                  <tr style="background:#f3f3f3;color:#111">
+                    <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
+                    <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Rate</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows_html}
+                </tbody>
               </table>
-              <div style="margin-top:10px;font-size:13px;color:#111">
-                <span style="color:#666">Due date:</span> <strong>{escape(due)}</strong>
+            </div>
+
+            <div style="margin-top:14px;display:flex;justify-content:flex-end">
+              <div style="width:320px;font-size:13px">
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Subtotal:</div>
+                  <div style="font-weight:800;color:#111">{_money(original_total)}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Discount</div>
+                  <div style="font-weight:800;color:#111">-{discount_display}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Tax:</div>
+                  <div style="font-weight:800;color:#111">{tax_display}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Paid:</div>
+                  <div style="font-weight:800;color:#111">{_money(inv.deposit_paid)}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Balance:</div>
+                  <div style="font-weight:800;color:#111">{_money(inv.balance)}</div>
+                </div>
+                <div style="margin-top:10px;background:#111;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+                  <div style="font-size:16px;font-weight:900">Total</div>
+                  <div style="font-size:16px;font-weight:900">{_money(total)}</div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div style="padding:14px 22px;border-top:1px solid #efefef;background:#fafafa;font-family:Inter,Arial,sans-serif">
-            <div style="font-size:12px;color:#666">This invoice was sent from {escape(APP_NAME)}.</div>
+            <div style="margin-top:14px;font-size:13px;color:#111">
+              <span style="color:#666">Due date:</span> <strong>{escape(due)}</strong>
+            </div>
+
+            <div style="margin-top:16px;border-top:1px solid #e5e5e5;padding-top:10px">
+              <div style="font-weight:800;color:#111">Terms &amp; Conditions:</div>
+              <div style="margin-top:6px;color:#333">All properties belongs to the company until full payment is made.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -150,16 +186,28 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     """
 
 
-def _invoice_to_list_item(inv: models.Invoice, user) -> dict:
+def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
     c = inv.customer
     order = inv.order
+    subtotal = getattr(order, "total_price", None) if order else inv.total_price
+    after_discount = getattr(order, "final_price", None) if order else None
+    tax = getattr(order, "tax", None) if order else None
+    base_price = after_discount if after_discount is not None else subtotal
+    total = None
+    if base_price is not None:
+        total = (base_price or Decimal("0")) + (tax or Decimal("0"))
+
+    created_by_username = None
+    if getattr(order, "created_by", None) and getattr(user, "role", None) == "admin":
+        u = db.query(models.User).filter(models.User.id == order.created_by).first()
+        created_by_username = _username_from_email(getattr(u, "email", None)) if u else None
     return {
         "id": inv.id,
         "invoice_number": inv.invoice_number,
         "order_id": inv.order_id,
         "customer_id": inv.customer_id,
         # Expose original total from the order for UI clarity
-        "total_price": getattr(order, "total_price", None) if order else inv.total_price,
+        "total_price": subtotal,
         "deposit_paid": inv.deposit_paid,
         "balance": inv.balance,
         "status": inv.status or "unpaid",
@@ -175,7 +223,10 @@ def _invoice_to_list_item(inv: models.Invoice, user) -> dict:
         "discount_type": getattr(order, "discount_type", None) if order else None,
         "discount_value": getattr(order, "discount_value", None) if order else None,
         "discount_amount": getattr(order, "discount_amount", None) if order else None,
-        "final_price": getattr(order, "final_price", None) if order else None,
+        "final_price": after_discount,
+        "tax": tax,
+        "total": total,
+        "created_by": created_by_username,
     }
 
 
@@ -190,7 +241,7 @@ def list_invoices(
         .order_by(models.Invoice.id.desc())
         .all()
     )
-    return [_invoice_to_list_item(inv, user) for inv in rows]
+    return [_invoice_to_list_item(db, inv, user) for inv in rows]
 
 
 @router.get("/invoices/order/{order_id}", response_model=InvoiceDetailResponse, response_model_exclude_none=True)
@@ -214,7 +265,7 @@ def get_invoice_by_order(
         .filter(models.OrderItem.order_id == order.id)
         .all()
     )
-    base = _invoice_to_list_item(inv, user)
+    base = _invoice_to_list_item(db, inv, user)
     base["items"] = [
         {
             "id": it.id,
@@ -252,7 +303,7 @@ def get_invoice(
         .all()
     )
 
-    base = _invoice_to_list_item(inv, user)
+    base = _invoice_to_list_item(db, inv, user)
     base["items"] = [
         {
             "id": it.id,
@@ -311,5 +362,21 @@ def send_invoice_email(
     except Exception as e:
         logger.exception("Failed to send invoice email")
         raise HTTPException(status_code=502, detail="Failed to send email") from e
+
+    try:
+        db.add(
+            models.ActionLog(
+                action="send_invoice_email",
+                entity_type="invoice",
+                entity_id=inv.id,
+                actor_user_id=getattr(user, "id", None),
+                actor_username=_username_from_email(getattr(user, "email", None)),
+                meta={"to": to_email},
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to write action log for invoice email")
 
     return {"message": "Invoice sent"}

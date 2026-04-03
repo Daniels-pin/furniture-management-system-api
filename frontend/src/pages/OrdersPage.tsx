@@ -222,8 +222,8 @@ export function OrdersPage() {
                       <td className="py-3 pr-4">{d === null ? "—" : d}</td>
                       {canSeePricing ? (
                         <td className="py-3 pr-4 text-black/70">
-                          {o.final_price != null || o.total_price != null
-                            ? `Total: ${formatMoney(o.final_price ?? o.total_price)}`
+                {o.total != null || o.final_price != null || o.total_price != null
+                  ? `Total: ${formatMoney((o as any).total ?? o.final_price ?? o.total_price)}`
                             : "—"}
                         </td>
                       ) : null}
@@ -341,6 +341,7 @@ function CreateOrderModal({
   const [amountPaid, setAmountPaid] = useState<string>("");
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">("");
   const [discountValue, setDiscountValue] = useState<string>("");
+  const [tax, setTax] = useState<string>("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<Record<string, string>>({});
@@ -358,6 +359,7 @@ function CreateOrderModal({
     setAmountPaid("");
     setDiscountType("");
     setDiscountValue("");
+    setTax("");
     setFieldError({});
     setIsSubmitting(false);
   }, [open]);
@@ -390,6 +392,7 @@ function CreateOrderModal({
     if (canInputPricing) {
       if (totalPrice && Number(totalPrice) < 0) e.totalPrice = "Total price cannot be negative";
       if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
+      if (tax && Number(tax) < 0) e.tax = "Tax cannot be negative";
       if (discountType) {
         const dv = Number(discountValue);
         if (!discountValue.trim() || !Number.isFinite(dv) || dv < 0) {
@@ -441,6 +444,7 @@ function CreateOrderModal({
         if (amountPaid) form.append("amount_paid", amountPaid);
         if (discountType) form.append("discount_type", discountType);
         if (discountType && discountValue.trim()) form.append("discount_value", discountValue);
+        if (tax.trim()) form.append("tax", tax.trim());
       }
 
       await ordersApi.createMultipart(form);
@@ -621,6 +625,14 @@ function CreateOrderModal({
               inputMode="decimal"
               error={fieldError.discountType || fieldError.discountValue}
               placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
+            />
+            <Input
+              label="Tax (optional)"
+              value={tax}
+              onChange={(e) => setTax(e.target.value)}
+              inputMode="decimal"
+              error={fieldError.tax}
+              placeholder="e.g. 0.00"
             />
           </div>
         ) : null}

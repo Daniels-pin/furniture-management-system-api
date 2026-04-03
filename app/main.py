@@ -7,6 +7,7 @@ from app.auth.auth import get_current_user
 from app.auth.auth import router as auth_router
 from app.routes.customers import router as customers_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.audit import router as audit_router
 from app.routes.invoices import router as invoices_router
 from app.routes.orders import router as orders_router
 from app.routes.users import router as users_router
@@ -16,20 +17,29 @@ app = FastAPI()
 frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
 
-# CORS: comma-separated FRONTEND_ORIGINS (https://app.example.com,...).
-# Temporary testing only: set FRONTEND_ORIGINS=* (wildcard; cannot use credentials with *).
+# CORS configuration:
+# - Set FRONTEND_ORIGINS to a comma-separated list of allowed production origins
+#   (e.g. "https://app.example.com,https://www.app.example.com").
+# - Local development (localhost / 127.0.0.1) is allowed by default to enable running
+#   the frontend locally against a deployed backend.
+# - Avoid using "*" when credentials are required.
+_allow_localhost = (os.getenv("ALLOW_LOCALHOST_CORS", "true") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+}
+
 _use_cors_wildcard = frontend_origins == ["*"]
 if _use_cors_wildcard:
+    # Wildcard cannot be combined with credentials (cookies / auth) in browsers.
     _cors_origins = ["*"]
     _cors_regex = None
     _cors_credentials = False
-elif frontend_origins:
-    _cors_origins = [o for o in frontend_origins if o != "*"]
-    _cors_regex = None
-    _cors_credentials = True
 else:
-    _cors_origins = []
-    _cors_regex = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
+    _cors_origins = [o for o in frontend_origins if o != "*"]
+    _cors_regex = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$" if _allow_localhost else None
     _cors_credentials = True
 
 app.add_middleware(
@@ -57,4 +67,5 @@ app.include_router(users_router, tags=["Users"])
 app.include_router(orders_router, tags=["Orders"])
 app.include_router(invoices_router, tags=["Invoices"])
 app.include_router(dashboard_router, tags=["Dashboard"])
+app.include_router(audit_router, tags=["Audit"])
 
