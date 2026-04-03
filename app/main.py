@@ -17,6 +17,13 @@ app = FastAPI()
 frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
 
+# Optional: comma-separated regex patterns for allowed origins (advanced).
+# Example: FRONTEND_ORIGIN_REGEXES=^https://.+\\.vercel\\.app$,^https://app\\.example\\.com$
+frontend_origin_regexes_env = os.getenv("FRONTEND_ORIGIN_REGEXES", "")
+frontend_origin_regexes = [
+    r.strip() for r in frontend_origin_regexes_env.split(",") if r.strip()
+]
+
 # CORS configuration:
 # - Set FRONTEND_ORIGINS to a comma-separated list of allowed production origins
 #   (e.g. "https://app.example.com,https://www.app.example.com").
@@ -39,7 +46,11 @@ if _use_cors_wildcard:
     _cors_credentials = False
 else:
     _cors_origins = [o for o in frontend_origins if o != "*"]
-    _cors_regex = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$" if _allow_localhost else None
+    _cors_regex_parts: list[str] = []
+    if _allow_localhost:
+        _cors_regex_parts.append(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$")
+    _cors_regex_parts.extend(frontend_origin_regexes)
+    _cors_regex = "|".join(f"(?:{p})" for p in _cors_regex_parts) if _cors_regex_parts else None
     _cors_credentials = True
 
 app.add_middleware(
