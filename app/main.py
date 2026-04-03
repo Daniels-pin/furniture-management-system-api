@@ -17,46 +17,27 @@ app = FastAPI()
 frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
 
-# Optional: comma-separated regex patterns for allowed origins (advanced).
-# Example: FRONTEND_ORIGIN_REGEXES=^https://.+\\.vercel\\.app$,^https://app\\.example\\.com$
-frontend_origin_regexes_env = os.getenv("FRONTEND_ORIGIN_REGEXES", "")
-frontend_origin_regexes = [
-    r.strip() for r in frontend_origin_regexes_env.split(",") if r.strip()
+# Stable CORS allowlist:
+# - Works with credentials (Authorization header / cookies)
+# - No wildcard origin ("*") so browsers can send credentials safely
+# - Supports both local dev and deployed frontend(s)
+_default_dev_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
-# CORS configuration:
-# - Set FRONTEND_ORIGINS to a comma-separated list of allowed production origins
-#   (e.g. "https://app.example.com,https://www.app.example.com").
-# - Local development (localhost / 127.0.0.1) is allowed by default to enable running
-#   the frontend locally against a deployed backend.
-# - Avoid using "*" when credentials are required.
-_allow_localhost = (os.getenv("ALLOW_LOCALHOST_CORS", "true") or "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "y",
-    "on",
-}
+_cors_origins = []
+_cors_origins.extend(_default_dev_origins)
+_cors_origins.extend([o for o in frontend_origins if o and o != "*"])
+_cors_origins = list(dict.fromkeys(_cors_origins))  # de-dupe, keep order
 
-_use_cors_wildcard = frontend_origins == ["*"]
-if _use_cors_wildcard:
-    # Wildcard cannot be combined with credentials (cookies / auth) in browsers.
-    _cors_origins = ["*"]
-    _cors_regex = None
-    _cors_credentials = False
-else:
-    _cors_origins = [o for o in frontend_origins if o != "*"]
-    _cors_regex_parts: list[str] = []
-    if _allow_localhost:
-        _cors_regex_parts.append(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$")
-    _cors_regex_parts.extend(frontend_origin_regexes)
-    _cors_regex = "|".join(f"(?:{p})" for p in _cors_regex_parts) if _cors_regex_parts else None
-    _cors_credentials = True
+_cors_credentials = True
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_origin_regex=_cors_regex,
     allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
