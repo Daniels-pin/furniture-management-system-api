@@ -3,9 +3,28 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _ensure_playwright_browsers_path() -> None:
+    """
+    On Render, browsers installed during build often live under the repo, while Playwright’s
+    default cache path differs at runtime. Use a stable directory inside the project unless set.
+    """
+    if (os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "").strip():
+        return
+    render = (os.getenv("RENDER") or "").strip().lower() in ("true", "1", "yes")
+    if not render:
+        return
+    target = _repo_root() / ".playwright-browsers"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(target)
 
 
 def _url_for_logs(url: str) -> str:
@@ -14,6 +33,7 @@ def _url_for_logs(url: str) -> str:
 
 
 def render_url_to_pdf_bytes(url: str) -> bytes:
+    _ensure_playwright_browsers_path()
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -60,8 +80,11 @@ def render_url_to_pdf_bytes(url: str) -> bytes:
         msg = str(e)
         if "Executable doesn't exist" in msg or "BrowserType.launch" in msg:
             raise RuntimeError(
-                "Chromium is not installed on the server. In the Render build command, after pip install, add: "
-                "playwright install chromium && playwright install-deps chromium"
+                "Chromium is missing or not where Playwright expects it. On Render: (1) Build command must run "
+                "`pip install -r requirements.txt && bash scripts/playwright_render_install.sh` "
+                "(installs Chromium under .playwright-browsers in the repo). "
+                "(2) Clear build cache & redeploy. "
+                "(3) Optional: set env PLAYWRIGHT_BROWSERS_PATH to an absolute path used in both build and runtime."
             ) from e
         raise RuntimeError(
             msg if len(msg) <= 400 else "PDF render failed (see server logs)."

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run on Render after `pip install -r requirements.txt` so headless Chromium and OS libs exist.
+# Run on Render after `pip install -r requirements.txt`.
+# Keeps browsers inside the repo so runtime finds them (same PLAYWRIGHT_BROWSERS_PATH as browser_pdf.py on RENDER).
 set -euo pipefail
-python -m playwright install chromium
-if command -v apt-get >/dev/null 2>&1; then
-  python -m playwright install-deps chromium || true
-fi
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$ROOT/.playwright-browsers}"
+mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+python -m playwright install --with-deps chromium
