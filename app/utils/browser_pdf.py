@@ -73,7 +73,7 @@ def render_url_to_pdf_bytes(url: str) -> bytes:
             "Timed out generating PDF. Check: (1) FRONTEND_PDF_BASE_URL is your live SPA origin, "
             "(2) the SPA build sets VITE_API_URL (or VITE_API_BASE_URL) to this API’s public URL so the "
             "pdf-export page can load invoice data, (3) FRONTEND_ORIGINS includes that SPA origin (CORS), "
-            "(4) on Render, run `playwright install chromium` and usually `playwright install-deps chromium` in the build."
+            "(4) on Render, run `python -m playwright install chromium` in the build (not install-deps; it needs root)."
         ) from e
     except PlaywrightError as e:
         logger.exception("PDF render Playwright error for %s", _url_for_logs(url))

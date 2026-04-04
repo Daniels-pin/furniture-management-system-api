@@ -5,4 +5,5 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$ROOT/.playwright-browsers}"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
-python -m playwright install --with-deps chromium
+# Do not use `install --with-deps` here: it runs apt/su and fails on Render (“su: Authentication failure”).
+python -m playwright install chromium
