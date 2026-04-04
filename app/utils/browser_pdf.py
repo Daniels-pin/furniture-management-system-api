@@ -3,41 +3,72 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
 
+def _url_for_logs(url: str) -> str:
+    p = urlparse(url)
+    return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+
+
 def render_url_to_pdf_bytes(url: str) -> bytes:
     try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import sync_playwright
     except ImportError as e:
         raise RuntimeError("playwright is not installed") from e
 
     timeout_ms = int((os.getenv("PDF_RENDER_TIMEOUT_MS", "") or "120000").strip() or "120000")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-        )
-        try:
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                device_scale_factor=2,
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
             )
-            page = context.new_page()
-            # "networkidle" often never fires on production SPAs (fonts, analytics, long-lived connections).
-            # We still wait for the app-driven ready marker below.
-            page.goto(url, wait_until="load", timeout=timeout_ms)
-            page.wait_for_selector('[data-pdf-ready="true"]', timeout=timeout_ms)
-            pdf = page.pdf(
-                format="A4",
-                print_background=True,
-                margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"},
-            )
-            context.close()
-        finally:
-            browser.close()
+            try:
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    device_scale_factor=2,
+                )
+                page = context.new_page()
+                # "networkidle" often never fires on production SPAs (fonts, analytics, long-lived connections).
+                # We still wait for the app-driven ready marker below.
+                page.goto(url, wait_until="load", timeout=timeout_ms)
+                page.wait_for_selector('[data-pdf-ready="true"]', timeout=timeout_ms)
+                pdf = page.pdf(
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"},
+                )
+                context.close()
+            finally:
+                browser.close()
+    except PlaywrightTimeoutError as e:
+        logger.exception("PDF render timeout for %s", _url_for_logs(url))
+        raise RuntimeError(
+            "Timed out generating PDF. Check: (1) FRONTEND_PDF_BASE_URL is your live SPA origin, "
+            "(2) the SPA build sets VITE_API_URL (or VITE_API_BASE_URL) to this API’s public URL so the "
+            "pdf-export page can load invoice data, (3) FRONTEND_ORIGINS includes that SPA origin (CORS), "
+            "(4) on Render, run `playwright install chromium` and usually `playwright install-deps chromium` in the build."
+        ) from e
+    except PlaywrightError as e:
+        logger.exception("PDF render Playwright error for %s", _url_for_logs(url))
+        msg = str(e)
+        if "Executable doesn't exist" in msg or "BrowserType.launch" in msg:
+            raise RuntimeError(
+                "Chromium is not installed on the server. In the Render build command, after pip install, add: "
+                "playwright install chromium && playwright install-deps chromium"
+            ) from e
+        raise RuntimeError(
+            msg if len(msg) <= 400 else "PDF render failed (see server logs)."
+        ) from e
+    except Exception as e:
+        logger.exception("PDF render failed for %s", _url_for_logs(url))
+        raise RuntimeError("Could not generate PDF (see server logs).") from e
 
     if not pdf:
         raise RuntimeError("PDF generation produced empty output")
