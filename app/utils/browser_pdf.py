@@ -26,7 +26,9 @@ def render_url_to_pdf_bytes(url: str) -> bytes:
                 device_scale_factor=2,
             )
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            # "networkidle" often never fires on production SPAs (fonts, analytics, long-lived connections).
+            # We still wait for the app-driven ready marker below.
+            page.goto(url, wait_until="load", timeout=timeout_ms)
             page.wait_for_selector('[data-pdf-ready="true"]', timeout=timeout_ms)
             pdf = page.pdf(
                 format="A4",

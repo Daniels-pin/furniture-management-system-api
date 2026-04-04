@@ -22,8 +22,9 @@ def verify_pdf_render_token(token: str, doc: str, doc_id: int) -> bool:
         p = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return False
-    return (
-        p.get("purpose") == PDF_PURPOSE
-        and p.get("doc") == doc
-        and p.get("doc_id") == doc_id
-    )
+    raw_id = p.get("doc_id")
+    try:
+        id_ok = int(raw_id) == int(doc_id)
+    except (TypeError, ValueError):
+        id_ok = False
+    return p.get("purpose") == PDF_PURPOSE and p.get("doc") == doc and id_ok

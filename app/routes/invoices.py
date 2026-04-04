@@ -467,7 +467,15 @@ def send_invoice_email(
     html = _render_invoice_email(inv, items)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv.id)
-        safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+    except RuntimeError as e:
+        logger.exception("Invoice PDF generation failed for email")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Invoice PDF generation failed for email")
+        raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
+
+    safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+    try:
         send_email_html_with_pdf_attachment(
             to_email,
             subject,
