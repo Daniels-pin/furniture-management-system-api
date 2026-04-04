@@ -6,9 +6,18 @@ import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
-import type { WaybillDetail } from "../types/api";
-import { formatMoney, parseMoneyNumber } from "../utils/money";
+import { Input } from "../components/ui/Input";
 import { APP_NAME, COMPANY_CONTACT } from "../config/app";
+import type { WaybillDetail } from "../types/api";
+
+function waybillDriverComplete(d: WaybillDetail | null): boolean {
+  if (!d) return false;
+  return !!(
+    String(d.driver_name || "").trim() &&
+    String(d.driver_phone || "").trim() &&
+    String(d.vehicle_plate || "").trim()
+  );
+}
 
 function deliveryBadge(status: string) {
   const s = status.toLowerCase();
@@ -31,7 +40,18 @@ export function WaybillDetailPage() {
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [statusDraft, setStatusDraft] = useState<"pending" | "shipped" | "delivered">("pending");
+  const [logisticsBusy, setLogisticsBusy] = useState(false);
+  const [driverName, setDriverName] = useState("");
+  const [driverPhone, setDriverPhone] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
   const viewLogged = useRef(false);
+
+  useEffect(() => {
+    if (!data) return;
+    setDriverName(data.driver_name ?? "");
+    setDriverPhone(data.driver_phone ?? "");
+    setVehiclePlate(data.vehicle_plate ?? "");
+  }, [data?.id, data?.driver_name, data?.driver_phone, data?.vehicle_plate]);
 
   useEffect(() => {
     let alive = true;
@@ -63,6 +83,31 @@ export function WaybillDetailPage() {
   }, [id, toast]);
 
   const canDelete = auth.role === "admin";
+
+  async function saveLogistics() {
+    if (!Number.isFinite(id)) return;
+    const dn = driverName.trim();
+    const dp = driverPhone.trim();
+    const vp = vehiclePlate.trim();
+    if (!dn || !dp || !vp) {
+      toast.push("error", "Driver name, driver phone, and vehicle plate are all required.");
+      return;
+    }
+    setLogisticsBusy(true);
+    try {
+      const updated = await waybillApi.updateLogistics(id, {
+        driver_name: dn,
+        driver_phone: dp,
+        vehicle_plate: vp
+      });
+      setData(updated);
+      toast.push("success", "Logistics saved.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setLogisticsBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -120,10 +165,18 @@ export function WaybillDetailPage() {
                 type="button"
                 onClick={() => {
                   void (async () => {
+                    if (!data || !waybillDriverComplete(data)) {
+                      toast.push(
+                        "error",
+                        "Save driver name, phone, and vehicle plate on this waybill before printing."
+                      );
+                      return;
+                    }
                     try {
                       if (Number.isFinite(id)) await waybillApi.recordPrint(id);
-                    } catch {
-                      /* best-effort */
+                    } catch (e) {
+                      toast.push("error", getErrorMessage(e));
+                      return;
                     }
                     window.print();
                   })();
@@ -137,6 +190,13 @@ export function WaybillDetailPage() {
                 isLoading={acting}
                 onClick={() => {
                   void (async () => {
+                    if (!data || !waybillDriverComplete(data)) {
+                      toast.push(
+                        "error",
+                        "Save driver name, phone, and vehicle plate on this waybill before downloading."
+                      );
+                      return;
+                    }
                     try {
                       setActing(true);
                       await waybillApi.download(id);
@@ -155,6 +215,13 @@ export function WaybillDetailPage() {
                 variant="secondary"
                 isLoading={sending}
                 onClick={async () => {
+                  if (!waybillDriverComplete(data)) {
+                    toast.push(
+                      "error",
+                      "Save driver name, phone, and vehicle plate on this waybill before sending email."
+                    );
+                    return;
+                  }
                   try {
                     setSending(true);
                     const res = await waybillApi.sendEmail(data.id);
@@ -207,6 +274,24 @@ export function WaybillDetailPage() {
           <div className="text-sm font-semibold">Waybill not found</div>
         </Card>
       ) : (
+        <>
+          <Card className="print:hidden">
+            <div className="text-sm font-semibold">Driver &amp; vehicle</div>
+            <div className="mt-1 text-xs text-black/60">
+              Required before print, download, or email. You can update these any time.
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Input label="Driver name" value={driverName} onChange={(e) => setDriverName(e.target.value)} />
+              <Input label="Driver phone" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
+              <Input label="Vehicle plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button variant="secondary" isLoading={logisticsBusy} onClick={() => void saveLogistics()}>
+                Save logistics
+              </Button>
+            </div>
+          </Card>
+
         <div className="invoice-print-area">
           <article className="rounded-3xl border border-black/10 bg-white p-6 shadow-soft print:rounded-none print:border-0 print:p-0 print:shadow-none">
             <header className="border-b border-black/10 pb-4 print:border-black print:pb-3">
@@ -263,10 +348,15 @@ export function WaybillDetailPage() {
                     {COMPANY_CONTACT.addresses.map((line) => (
                       <div key={line}>{line}</div>
                     ))}
-                    {COMPANY_CONTACT.phones.map((line) => (
-                      <div key={line}>{line}</div>
-                    ))}
-                    <div>{COMPANY_CONTACT.email}</div>
+                    <div className="break-words">
+                      {COMPANY_CONTACT.phones.join(", ")},{" "}
+                      <a
+                        href={`mailto:${COMPANY_CONTACT.email}`}
+                        className="text-inherit underline decoration-black/40 underline-offset-2 print:text-black"
+                      >
+                        {COMPANY_CONTACT.email}
+                      </a>
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -281,34 +371,49 @@ export function WaybillDetailPage() {
               </div>
             </section>
 
+            <section className="mt-5 rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-sm print:mt-4 print:border-black print:bg-transparent">
+              <div className="font-bold text-black">Driver &amp; vehicle</div>
+              <div className="mt-2 space-y-1 text-black/80">
+                <div>
+                  <span className="text-black/60">Driver name:</span>{" "}
+                  <span className="font-semibold text-black">{data.driver_name?.trim() || "—"}</span>
+                </div>
+                <div>
+                  <span className="text-black/60">Driver phone:</span>{" "}
+                  <span className="font-semibold text-black">{data.driver_phone?.trim() || "—"}</span>
+                </div>
+                <div>
+                  <span className="text-black/60">Vehicle plate:</span>{" "}
+                  <span className="font-semibold text-black">{data.vehicle_plate?.trim() || "—"}</span>
+                </div>
+              </div>
+            </section>
+
             <section className="mt-6 print:mt-5">
               <div className="mt-3 overflow-x-auto print:overflow-visible">
-                <table className="w-full min-w-[720px] border-collapse text-left text-sm print:min-w-0">
+                <table className="w-full min-w-[420px] table-fixed border-collapse text-left text-sm print:min-w-0">
+                  <colgroup>
+                    <col className="w-[26%]" />
+                    <col />
+                    <col className="w-[5rem]" />
+                  </colgroup>
                   <thead>
                     <tr className="bg-black/[0.03] text-black">
                       <th className="py-2 pl-3 pr-3 font-semibold">Item</th>
                       <th className="py-2 pr-3 font-semibold">Description</th>
                       <th className="py-2 pr-3 text-right font-semibold">Qty</th>
-                      <th className="py-2 pr-3 text-right font-semibold">Unit</th>
-                      <th className="py-2 pr-3 text-right font-semibold">Line</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.items.map((it) => {
-                      const unitNum = parseMoneyNumber(it.amount);
-                      const qtyNum = Number(it.quantity);
-                      const line =
-                        unitNum !== null && Number.isFinite(qtyNum) ? unitNum * qtyNum : null;
-                      return (
-                        <tr key={it.id} className="border-b border-black/15 print:border-black/40">
-                          <td className="py-3 pl-3 pr-3 font-semibold text-black">{it.item_name}</td>
-                          <td className="py-3 pr-3 text-black">{it.description ?? "—"}</td>
-                          <td className="py-3 pr-3 text-right font-semibold text-black">{it.quantity}</td>
-                          <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(unitNum)}</td>
-                          <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(line)}</td>
-                        </tr>
-                      );
-                    })}
+                    {data.items.map((it) => (
+                      <tr key={it.id} className="border-b border-black/15 print:border-black/40">
+                        <td className="align-top py-3 pl-3 pr-3 font-semibold text-black">{it.item_name}</td>
+                        <td className="align-top py-3 pr-3 text-black break-words">{it.description ?? "—"}</td>
+                        <td className="align-top whitespace-nowrap py-3 pr-3 text-right font-semibold text-black">
+                          {it.quantity}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -320,6 +425,7 @@ export function WaybillDetailPage() {
             </section>
           </article>
         </div>
+        </>
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -23,7 +23,7 @@ export function LoginPage() {
 
   if (auth.isAuthed) return <Navigate to="/dashboard" replace />;
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
@@ -55,33 +55,35 @@ export function LoginPage() {
           </div>
 
           <Card>
-            <form className="space-y-4" onSubmit={onSubmit}>
-              <Input
-                label="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                inputMode="email"
-                placeholder="you@company.com"
-                required
-              />
-              <Input
-                label="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                type="password"
-                autoComplete="current-password"
-                required
-              />
-              {error ? (
-                <div className="rounded-xl border border-black/15 bg-black/[0.02] px-3 py-2 text-sm text-black/70">
-                  {error}
-                </div>
-              ) : null}
-              <Button type="submit" className="w-full" isLoading={isLoading}>
-                Sign in
-              </Button>
-            </form>
+            <>
+              <form className="space-y-4" onSubmit={onSubmit}>
+                <Input
+                  label="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@company.com"
+                  required
+                />
+                <Input
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
+                {error ? (
+                  <div className="rounded-xl border border-black/15 bg-black/[0.02] px-3 py-2 text-sm text-black/70">
+                    {error}
+                  </div>
+                ) : null}
+                <Button type="submit" className="w-full" isLoading={isLoading}>
+                  Sign in
+                </Button>
+              </form>
+            </>
           </Card>
         </div>
       </div>

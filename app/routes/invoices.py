@@ -1,6 +1,7 @@
 from decimal import Decimal
 from html import escape
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -13,8 +14,9 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.database import get_db
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
-from app.constants import APP_NAME, COMPANY_ADDRESSES, COMPANY_EMAIL, COMPANY_PHONES
-from app.utils.emailer import EmailConfigError, send_email
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
+from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
+from app.utils.html_pdf import html_to_pdf_bytes
 from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
 from app.utils.activity_log import (
     log_activity,
@@ -53,6 +55,8 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     original_total = getattr(order, "total_price", None) if order else inv.total_price
     final_price = getattr(order, "final_price", None) if order else None
     tax = getattr(order, "tax", None) if order else None
+    tax_percent = getattr(order, "tax_percent", None) if order else None
+    tax_row_label = f"Tax ({escape(str(tax_percent))}%):" if tax_percent is not None else "Tax:"
     base_price = final_price if final_price is not None else original_total
     total = None
     if base_price is not None:
@@ -98,10 +102,10 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     company_lines = "\n".join(
         f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES
     )
-    company_lines += "\n" + "\n".join(
-        f"<div>{escape(p)}</div>" for p in COMPANY_PHONES
+    company_lines += (
+        f'\n<div style="margin-top:2px;word-break:break-word">'
+        f"{company_contact_line_html(escape)}</div>"
     )
-    company_lines += f"\n<div>{escape(COMPANY_EMAIL)}</div>"
 
     return f"""
     <div style="margin:0;padding:0;background:#f6f6f6">
@@ -124,17 +128,17 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
           </div>
 
           <div style="padding:18px 22px;font-family:Inter,Arial,sans-serif">
-            <div style="display:flex;gap:22px;justify-content:space-between;border-bottom:1px solid #e5e5e5;padding-bottom:14px">
-              <div style="flex:1">
+            <div style="display:flex;gap:24px;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5e5e5;padding-bottom:12px">
+              <div style="flex:1;min-width:0">
                 <div style="font-weight:800;color:#111">Bill From:</div>
-                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
                   <div><strong>{escape(APP_NAME)}</strong></div>
                   {company_lines}
                 </div>
               </div>
-              <div style="flex:1">
+              <div style="flex:1;min-width:0;padding-left:20px;box-sizing:border-box">
                 <div style="font-weight:800;color:#111">Bill To:</div>
-                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
                   <div><strong>{escape(c.name or '')}</strong></div>
                   <div>{escape(c.address or '—')}</div>
                   <div>{escape(c.phone or '—')}</div>
@@ -171,7 +175,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
                   <div style="font-weight:800;color:#111">-{discount_display}</div>
                 </div>
                 <div style="display:flex;justify-content:space-between;padding:6px 0">
-                  <div style="color:#444">Tax:</div>
+                  <div style="color:#444">{tax_row_label}</div>
                   <div style="font-weight:800;color:#111">{tax_display}</div>
                 </div>
                 <div style="display:flex;justify-content:space-between;padding:6px 0">
@@ -197,6 +201,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
               <div style="font-weight:800;color:#111">Terms &amp; Conditions:</div>
               <div style="margin-top:6px;color:#333">All properties belongs to the company until full payment is made.</div>
             </div>
+            {company_payment_details_html(escape)}
           </div>
         </div>
       </div>
@@ -210,6 +215,7 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
     subtotal = getattr(order, "total_price", None) if order else inv.total_price
     after_discount = getattr(order, "final_price", None) if order else None
     tax = getattr(order, "tax", None) if order else None
+    tax_percent = getattr(order, "tax_percent", None) if order else None
     base_price = after_discount if after_discount is not None else subtotal
     total = None
     if base_price is not None:
@@ -242,6 +248,7 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
         "discount_value": getattr(order, "discount_value", None) if order else None,
         "discount_amount": getattr(order, "discount_amount", None) if order else None,
         "final_price": after_discount,
+        "tax_percent": tax_percent,
         "tax": tax,
         "total": total,
         "created_by": created_by_username,
@@ -456,7 +463,15 @@ def send_invoice_email(
     subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
     html = _render_invoice_email(inv, items)
     try:
-        send_email(to_email, subject, html)
+        pdf_bytes = html_to_pdf_bytes(html)
+        safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+        send_email_html_with_pdf_attachment(
+            to_email,
+            subject,
+            html,
+            pdf_bytes,
+            f"invoice-{safe_inv}.pdf",
+        )
     except EmailConfigError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except smtplib.SMTPAuthenticationError as e:

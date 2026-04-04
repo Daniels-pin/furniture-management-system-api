@@ -1,6 +1,10 @@
 from decimal import Decimal
 import json
 import logging
+import os
+import re
+import smtplib
+from html import escape
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
@@ -23,7 +27,10 @@ from app.schemas import (
 )
 from fastapi import Query
 from typing import List, Optional
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.utils.cloudinary import upload_image
+from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
+from app.utils.html_pdf import html_to_pdf_bytes
 from app.utils.pricing import compute_discount, compute_pricing, compute_totals
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
@@ -38,6 +45,7 @@ from app.utils.activity_log import (
     ORDER_DELETED,
     ORDER_STATUS_UPDATED,
     ORDER_MARKED_PAID,
+    ORDER_EMAIL_SENT,
     INVOICE_GENERATED,
 )
 from types import SimpleNamespace
@@ -112,6 +120,7 @@ def _build_order_response(
                 "discount_value": order.discount_value,
                 "discount_amount": order.discount_amount,
                 "final_price": order.final_price,
+                "tax_percent": order.tax_percent,
                 "tax": order.tax,
                 "total": total,
                 "amount_paid": order.amount_paid,
@@ -150,6 +159,174 @@ def _items_subtotal(items: list[OrderItemCreate]) -> Decimal | None:
     for it in items:
         subtotal += (Decimal(str(it.amount)) * Decimal(int(it.quantity)))
     return subtotal.quantize(TWOPLACES)
+
+
+def _doc_money(v: object) -> str:
+    if v is None or v == "":
+        return "—"
+    try:
+        return f"{Decimal(str(v)).quantize(TWOPLACES):,}"
+    except Exception:
+        return escape(str(v))
+
+
+def _render_order_document_html(
+    order: models.Order,
+    customer: models.Customer,
+    items: list[models.OrderItem],
+) -> str:
+    due = order.due_date.strftime("%B %d, %Y") if order.due_date else "—"
+    issued = order.created_at.strftime("%B %d, %Y") if order.created_at else "—"
+    discount_amount = order.discount_amount
+    original_total = order.total_price
+    final_price = order.final_price
+    tax = order.tax
+    tax_percent = order.tax_percent
+    tax_row_label = f"Tax ({escape(str(tax_percent))}%):" if tax_percent is not None else "Tax:"
+    base_price = final_price if final_price is not None else original_total
+    total = None
+    if base_price is not None:
+        total = (base_price or Decimal("0")) + (tax or Decimal("0"))
+
+    logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
+    logo_html = (
+        f"<img src='{escape(logo_url)}' alt='{escape(APP_NAME)} logo' style='width:160px;height:160px;max-width:100%;object-fit:contain;object-position:left top'/>"
+        if logo_url
+        else ""
+    )
+
+    units = display_unit_amounts(order, items)
+    rows = []
+    for i, it in enumerate(items):
+        unit = units[i] if i < len(units) else None
+        line_total = None
+        if unit is not None and it.quantity is not None:
+            try:
+                line_total = (Decimal(str(unit)) * Decimal(int(it.quantity))).quantize(TWOPLACES)
+            except Exception:
+                line_total = None
+        rows.append(
+            f"""
+            <tr>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_doc_money(unit))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_doc_money(line_total))}</td>
+            </tr>
+            """
+        )
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='5' style='padding:10px 12px;color:#666'>No items</td></tr>"
+
+    discount_display = _doc_money(discount_amount if discount_amount is not None else Decimal("0.00"))
+    tax_display = _doc_money(tax if tax is not None else Decimal("0.00"))
+
+    company_lines = "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
+    company_lines += (
+        f'\n<div style="margin-top:2px;word-break:break-word">'
+        f"{company_contact_line_html(escape)}</div>"
+    )
+
+    return f"""
+    <div style="margin:0;padding:0;background:#f6f6f6">
+      <div style="max-width:860px;margin:0 auto;padding:24px">
+        <div style="background:#ffffff;border:1px solid #e5e5e5;overflow:hidden">
+          <div style="padding:18px 22px;border-bottom:1px solid #e5e5e5">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;font-family:Inter,Arial,sans-serif">
+              <div style="display:flex;flex-direction:column;align-items:flex-start;gap:10px">
+                <div style="width:160px;height:160px;max-width:100%">{logo_html}</div>
+                <div style="font-size:11px;font-style:italic;font-weight:500;color:#666;letter-spacing:0.02em;line-height:1.35;max-width:280px">Furniture Nig Ltd</div>
+              </div>
+              <div style="min-width:240px;text-align:right">
+                <div style="display:inline-block;background:#111;color:#fff;padding:10px 14px;font-weight:800;letter-spacing:0.28em">ORDER</div>
+                <div style="margin-top:10px;font-size:13px;color:#111">
+                  <div><span style="color:#666">Order ID:</span> <strong>#{escape(str(order.id))}</strong></div>
+                  <div style="margin-top:4px"><span style="color:#666">Date:</span> <strong>{escape(issued)}</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="padding:18px 22px;font-family:Inter,Arial,sans-serif">
+            <div style="display:flex;gap:24px;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5e5e5;padding-bottom:12px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:800;color:#111">From:</div>
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
+                  <div><strong>{escape(APP_NAME)}</strong></div>
+                  {company_lines}
+                </div>
+              </div>
+              <div style="flex:1;min-width:0;padding-left:20px;box-sizing:border-box">
+                <div style="font-weight:800;color:#111">Customer:</div>
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
+                  <div><strong>{escape(customer.name or '')}</strong></div>
+                  <div>{escape(customer.address or '—')}</div>
+                  <div>{escape(customer.phone or '—')}</div>
+                  <div>{escape(customer.email or '—')}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;border:1px solid #d9d9d9">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                  <tr style="background:#f3f3f3;color:#111">
+                    <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
+                    <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows_html}
+                </tbody>
+              </table>
+            </div>
+
+            <div style="margin-top:14px;display:flex;justify-content:flex-end">
+              <div style="width:320px;font-size:13px">
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Subtotal:</div>
+                  <div style="font-weight:800;color:#111">{_doc_money(original_total)}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Discount</div>
+                  <div style="font-weight:800;color:#111">-{discount_display}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">{tax_row_label}</div>
+                  <div style="font-weight:800;color:#111">{tax_display}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Paid:</div>
+                  <div style="font-weight:800;color:#111">{_doc_money(order.amount_paid)}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0">
+                  <div style="color:#444">Balance:</div>
+                  <div style="font-weight:800;color:#111">{_doc_money(order.balance)}</div>
+                </div>
+                <div style="margin-top:10px;background:#111;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+                  <div style="font-size:16px;font-weight:900">Total</div>
+                  <div style="font-size:16px;font-weight:900">{_doc_money(total)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;font-size:13px;color:#111">
+              <span style="color:#666">Due date:</span> <strong>{escape(due)}</strong>
+            </div>
+
+            <div style="margin-top:16px;border-top:1px solid #e5e5e5;padding-top:10px">
+              <div style="font-weight:800;color:#111">Note:</div>
+              <div style="margin-top:6px;color:#333">This document summarizes your order. For tax invoice, refer to your invoice from {escape(APP_NAME)}.</div>
+            </div>
+            {company_payment_details_html(escape)}
+          </div>
+        </div>
+      </div>
+    </div>
+    """
 
 
 @router.post("/orders", response_model=OrderResponse, response_model_exclude_none=True)
@@ -247,6 +424,7 @@ def create_order(
                 discount_value=totals.discount_value,
                 discount_amount=totals.discount_amount,
                 final_price=totals.after_discount if totals.after_discount is not None else original_total,
+                tax_percent=totals.tax_percent,
                 tax=totals.tax,
                 amount_paid=totals.paid,
                 balance=totals.balance,
@@ -344,6 +522,7 @@ def create_order_json(
         total_price=totals.subtotal,
         discount_amount=totals.discount_amount,
         final_price=totals.after_discount,
+        tax_percent=totals.tax_percent,
         tax=totals.tax,
         amount_paid=totals.paid,
         balance=totals.balance,
@@ -573,6 +752,7 @@ def get_order(
         "status": order.status,
         "due_date": order.due_date,
         "image_url": order.image_url,
+        "tax_percent": order.tax_percent,
         "tax": order.tax,
         "customer": None
         if user.role == "factory"
@@ -647,15 +827,16 @@ def put_order_admin(
     ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
     dt = payload.discount_type if payload.discount_type is not None else order.discount_type
     dv = payload.discount_value if payload.discount_value is not None else order.discount_value
-    tax = payload.tax if payload.tax is not None else order.tax
+    tax_pct = payload.tax if payload.tax is not None else order.tax_percent
 
-    totals = compute_totals(tp, ap, dt, dv, tax)
+    totals = compute_totals(tp, ap, dt, dv, tax_pct)
 
     order.total_price = totals.subtotal
     order.discount_type = totals.discount_type
     order.discount_value = totals.discount_value
     order.discount_amount = totals.discount_amount
     order.final_price = totals.after_discount
+    order.tax_percent = totals.tax_percent
     order.tax = totals.tax
     order.amount_paid = totals.paid
     order.balance = totals.balance
@@ -763,6 +944,7 @@ def put_order_admin(
                 "discount_value": order.discount_value,
                 "discount_amount": order.discount_amount,
                 "final_price": order.final_price,
+                "tax_percent": order.tax_percent,
                 "tax": order.tax,
                 "total": total,
                 "amount_paid": order.amount_paid,
@@ -791,11 +973,12 @@ def update_order_pricing(
 
     tp = payload.total_price if payload.total_price is not None else order.total_price
     ap = payload.amount_paid if payload.amount_paid is not None else order.amount_paid
-    tax = payload.tax if payload.tax is not None else order.tax
-    totals = compute_totals(tp, ap, order.discount_type, order.discount_value, tax)
+    tax_pct = payload.tax if payload.tax is not None else order.tax_percent
+    totals = compute_totals(tp, ap, order.discount_type, order.discount_value, tax_pct)
     order.total_price = totals.subtotal
     order.final_price = totals.after_discount
     order.discount_amount = totals.discount_amount
+    order.tax_percent = totals.tax_percent
     order.tax = totals.tax
     order.amount_paid = totals.paid
     order.balance = totals.balance
@@ -817,6 +1000,7 @@ def update_order_pricing(
         "id": order.id,
         "total_price": order.total_price,
         "amount_paid": order.amount_paid,
+        "tax_percent": order.tax_percent,
         "tax": order.tax,
         "balance": order.balance,
         "payment_status": order.payment_status,
@@ -877,6 +1061,71 @@ def update_order_status_patch(
     return {"message": "Order status updated"}
 
 
+@router.post("/orders/{order_id}/send-email")
+def send_order_email(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    order = (
+        db.query(models.Order)
+        .options(joinedload(models.Order.customer))
+        .filter(models.Order.id == order_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    cust = order.customer
+    if not cust or not (cust.email or "").strip():
+        raise HTTPException(status_code=400, detail="Customer has no email on file")
+
+    items = (
+        db.query(models.OrderItem)
+        .filter(models.OrderItem.order_id == order.id)
+        .order_by(models.OrderItem.id.asc())
+        .all()
+    )
+
+    to_email = cust.email.strip()
+    subject = f"{APP_NAME} - Order #{order.id}"
+    html = _render_order_document_html(order, cust, items)
+    try:
+        pdf_bytes = html_to_pdf_bytes(html)
+    except Exception as e:
+        logger.exception("PDF generation failed for order email")
+        raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
+    try:
+        send_email_html_with_pdf_attachment(
+            to_email,
+            subject,
+            html,
+            pdf_bytes,
+            f"order-{order.id}.pdf",
+        )
+    except EmailConfigError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except smtplib.SMTPAuthenticationError as e:
+        logger.exception("SMTP auth failed for order email")
+        raise HTTPException(status_code=502, detail="SMTP authentication failed") from e
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError) as e:
+        logger.exception("SMTP connection failed for order email")
+        raise HTTPException(status_code=502, detail="SMTP connection failed") from e
+    except smtplib.SMTPException as e:
+        logger.exception("SMTP error for order email")
+        raise HTTPException(status_code=502, detail="SMTP error") from e
+
+    log_activity(
+        db,
+        action=ORDER_EMAIL_SENT,
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+        meta={"order_id": order.id, "to": to_email},
+    )
+    db.commit()
+    return {"message": "Order sent"}
+
+
 @router.post("/orders/{order_id}/mark_paid")
 def mark_order_fully_paid(
     order_id: int,
@@ -889,7 +1138,7 @@ def mark_order_fully_paid(
     if order.total_price is None:
         raise HTTPException(status_code=400, detail="total_price is required to mark as paid")
 
-    totals = compute_totals(order.total_price, None, order.discount_type, order.discount_value, order.tax)
+    totals = compute_totals(order.total_price, None, order.discount_type, order.discount_value, order.tax_percent)
     grand_total = totals.total
     pricing = compute_pricing(grand_total, grand_total)
     order.amount_paid = pricing.amount_paid

@@ -8,8 +8,13 @@ export const authStore = {
       return null;
     }
   },
-  setToken(token: string) {
-    localStorage.setItem(TOKEN_KEY, token);
+  setToken(token: string): boolean {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+      return true;
+    } catch {
+      return false;
+    }
   },
   clear() {
     try {

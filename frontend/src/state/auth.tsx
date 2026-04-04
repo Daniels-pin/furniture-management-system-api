@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authStore } from "./authStore";
-import { decodeJwt, JwtPayload } from "../utils/jwt";
+import { decodeJwt, isJwtExpiredForClient, JwtPayload } from "../utils/jwt";
 
 export type Role = "showroom" | "factory" | "admin";
 
@@ -20,10 +20,7 @@ type AuthContextValue = AuthState & {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function isExpired(payload: JwtPayload | null): boolean {
-  const exp = payload?.exp;
-  if (typeof exp !== "number") return false;
-  // exp is seconds since epoch
-  return exp * 1000 <= Date.now();
+  return isJwtExpiredForClient(payload);
 }
 
 function deriveState(token: string | null): AuthState {
@@ -61,7 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ...state,
       isAuthed: Boolean(state.token),
       login: (token: string) => {
-        authStore.setToken(token);
+        if (!authStore.setToken(token)) {
+          throw new Error(
+            "Could not save your session (storage blocked). Try turning off private browsing or freeing space."
+          );
+        }
         setState(deriveState(token));
       },
       logout: () => {

@@ -10,6 +10,7 @@ import { Modal } from "../components/ui/Modal";
 import type { InvoiceDetail } from "../types/api";
 import { formatMoney, parseMoneyNumber } from "../utils/money";
 import { APP_NAME, COMPANY_CONTACT } from "../config/app";
+import { DocumentPaymentFooter } from "../components/DocumentPaymentFooter";
 
 export function InvoiceDetailPage() {
   const { invoiceId } = useParams();
@@ -203,24 +204,29 @@ export function InvoiceDetailPage() {
               </div>
             </div>
 
-            <section className="mt-6 border-b border-black/10 pb-4 print:mt-5 print:border-black print:pb-3">
-              <div className="grid grid-cols-1 gap-6 text-sm md:grid-cols-2">
-                <div>
+            <section className="mt-5 border-b border-black/10 pb-3 print:mt-4 print:border-black print:pb-2">
+              <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2 md:items-start md:gap-x-10">
+                <div className="min-w-0">
                   <div className="font-bold text-black">Bill From:</div>
-                  <div className="mt-2 space-y-1 text-black/80">
+                  <div className="mt-1.5 space-y-0.5 leading-snug text-black/80">
                     <div className="font-semibold text-black">{APP_NAME}</div>
                     {COMPANY_CONTACT.addresses.map((line) => (
                       <div key={line}>{line}</div>
                     ))}
-                    {COMPANY_CONTACT.phones.map((line) => (
-                      <div key={line}>{line}</div>
-                    ))}
-                    <div>{COMPANY_CONTACT.email}</div>
+                    <div className="break-words">
+                      {COMPANY_CONTACT.phones.join(", ")},{" "}
+                      <a
+                        href={`mailto:${COMPANY_CONTACT.email}`}
+                        className="text-inherit underline decoration-black/40 underline-offset-2 print:text-black"
+                      >
+                        {COMPANY_CONTACT.email}
+                      </a>
+                    </div>
                   </div>
                 </div>
-                <div>
+                <div className="min-w-0 md:pl-6">
                   <div className="font-bold text-black">Bill To:</div>
-                  <div className="mt-2 space-y-1 text-black/80">
+                  <div className="mt-1.5 space-y-0.5 leading-snug text-black/80">
                     <div className="font-semibold text-black">{auth.role !== "factory" ? data.customer?.name : "—"}</div>
                     <div>{auth.role !== "factory" ? data.customer?.address ?? "—" : "—"}</div>
                     <div>{auth.role !== "factory" ? data.customer?.phone ?? "—" : "—"}</div>
@@ -297,7 +303,11 @@ export function InvoiceDetailPage() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
-                    <div className="text-black/70">Tax:</div>
+                    <div className="text-black/70">
+                      {(data as any).tax_percent != null && (data as any).tax_percent !== ""
+                        ? `Tax (${(data as any).tax_percent}%)`
+                        : "Tax"}
+                    </div>
                     <div className="font-semibold text-black">{formatMoney((data as any).tax)}</div>
                   </div>
                   <div className="flex items-center justify-between">
@@ -320,6 +330,7 @@ export function InvoiceDetailPage() {
                 <div className="font-bold text-black">Terms &amp; Conditions:</div>
                 <div className="mt-1">All properties belongs to the company until full payment is made.</div>
               </div>
+              <DocumentPaymentFooter />
             </section>
           </article>
         </div>

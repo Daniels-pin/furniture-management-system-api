@@ -45,6 +45,22 @@ export const customersApi = {
   async delete(customerId: number) {
     const { data } = await api.delete<{ message: string }>(`/customers/${customerId}`);
     return data;
+  },
+  async exportContacts(kind: "phones" | "emails") {
+    const res = await api.get("/customers/export", { params: { kind }, responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = kind === "phones" ? "customer-phones.csv" : "customer-emails.csv";
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 };
 
@@ -82,6 +98,7 @@ export const ordersApi = {
       discount_value?: string | number | null;
       discount_amount?: string | number | null;
       final_price?: string | number | null;
+      tax_percent?: string | number | null;
       tax?: string | number | null;
       total?: string | number | null;
       amount_paid?: string | number | null;
@@ -106,6 +123,8 @@ export const ordersApi = {
       discount_value?: string | number | null;
       discount_amount?: string | number | null;
       final_price?: string | number | null;
+      tax_percent?: string | number | null;
+      tax?: string | number | null;
       amount_paid?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
@@ -118,10 +137,15 @@ export const ordersApi = {
       id: number;
       total_price?: string | number | null;
       amount_paid?: string | number | null;
+      tax_percent?: string | number | null;
       tax?: string | number | null;
       balance?: string | number | null;
       payment_status?: string | null;
     }>(`/orders/${orderId}`, payload);
+    return data;
+  },
+  async sendEmail(orderId: number) {
+    const { data } = await api.post<{ message: string }>(`/orders/${orderId}/send-email`);
     return data;
   },
   async createMultipart(form: FormData) {
@@ -397,8 +421,20 @@ export const waybillApi = {
     const { data } = await api.get<WaybillDetail>(`/waybills/${id}`);
     return data;
   },
-  async create(orderId: number) {
-    const { data } = await api.post<WaybillDetail>("/waybills", { order_id: orderId });
+  async create(payload: {
+    order_id: number;
+    driver_name: string;
+    driver_phone: string;
+    vehicle_plate: string;
+  }) {
+    const { data } = await api.post<WaybillDetail>("/waybills", payload);
+    return data;
+  },
+  async updateLogistics(
+    id: number,
+    body: { driver_name: string; driver_phone: string; vehicle_plate: string }
+  ) {
+    const { data } = await api.patch<WaybillDetail>(`/waybills/${id}/logistics`, body);
     return data;
   },
   async recordView(id: number) {

@@ -5,7 +5,6 @@ import os
 import re
 import smtplib
 from datetime import datetime
-from decimal import Decimal
 from html import escape
 from types import SimpleNamespace
 
@@ -16,9 +15,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import require_role
-from app.constants import APP_NAME, COMPANY_ADDRESSES, COMPANY_EMAIL, COMPANY_PHONES
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.database import get_db
-from app.schemas import WaybillCreate, WaybillStatusUpdate
+from app.schemas import WaybillCreate, WaybillLogisticsUpdate, WaybillStatusUpdate
 from app.utils.activity_log import (
     WAYBILL_CREATED,
     WAYBILL_DELETED,
@@ -30,23 +29,27 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
-from app.utils.emailer import EmailConfigError, send_email
+from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
+from app.utils.html_pdf import html_to_pdf_bytes
 from app.utils.order_item_amounts import display_unit_amounts
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-TWOPLACES = Decimal("0.01")
 ALLOWED_STATUS = frozenset({"pending", "shipped", "delivered"})
 
+WAYBILL_LOGISTICS_REQUIRED = (
+    "Driver name, driver phone, and vehicle plate are required before sending, "
+    "downloading, or printing. Save logistics on this waybill first."
+)
 
-def _money(v: object) -> str:
-    if v is None or v == "":
-        return "—"
-    try:
-        return f"{Decimal(str(v)).quantize(TWOPLACES):,}"
-    except Exception:
-        return escape(str(v))
+
+def _waybill_driver_ready(wb: models.Waybill) -> bool:
+    return bool(
+        (wb.driver_name or "").strip()
+        and (wb.driver_phone or "").strip()
+        and (wb.vehicle_plate or "").strip()
+    )
 
 
 def _user_label(db: Session, user_id: int | None) -> str | None:
@@ -96,6 +99,9 @@ def _waybill_to_detail(db: Session, wb: models.Waybill) -> dict:
         "waybill_number": wb.waybill_number,
         "order_id": wb.order_id,
         "delivery_status": (wb.delivery_status or "pending").lower(),
+        "driver_name": (wb.driver_name or "").strip() or None,
+        "driver_phone": (wb.driver_phone or "").strip() or None,
+        "vehicle_plate": (wb.vehicle_plate or "").strip() or None,
         "customer_name": cust.name if cust else "—",
         "phone": cust.phone if cust else "—",
         "address": cust.address if cust else "—",
@@ -119,31 +125,18 @@ def _render_waybill_html(db: Session, wb: models.Waybill) -> str:
         .order_by(models.OrderItem.id.asc())
         .all()
     )
-    effective_total = getattr(order, "total_price", None)
-    units = display_unit_amounts(SimpleNamespace(total_price=effective_total), items)
     rows = []
-    for i, it in enumerate(items):
-        unit = units[i] if i < len(units) else getattr(it, "amount", None)
-        try:
-            line_total = (
-                (Decimal(str(unit)) * Decimal(int(it.quantity))).quantize(TWOPLACES)
-                if unit is not None and it.quantity is not None
-                else None
-            )
-        except Exception:
-            line_total = None
+    for it in items:
         rows.append(
             f"""
             <tr>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right">{escape(_money(unit))}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right">{escape(_money(line_total))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111;vertical-align:top;width:26%">{escape(it.item_name or '')}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111;vertical-align:top">{escape((it.description or '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;white-space:nowrap;vertical-align:top;width:1%">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
             </tr>
             """
         )
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='5' style='padding:10px 12px;color:#666'>No items</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='3' style='padding:10px 12px;color:#666'>No items</td></tr>"
 
     logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
     logo_html = (
@@ -158,9 +151,15 @@ def _render_waybill_html(db: Session, wb: models.Waybill) -> str:
     caddr = escape(cust.address if cust else "—")
     cemail = escape(cust.email if cust and (cust.email or "").strip() else "—")
 
+    dn = escape((wb.driver_name or "").strip() or "—")
+    dp = escape((wb.driver_phone or "").strip() or "—")
+    vp = escape((wb.vehicle_plate or "").strip() or "—")
+
     company_lines = "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
-    company_lines += "\n" + "\n".join(f"<div>{escape(p)}</div>" for p in COMPANY_PHONES)
-    company_lines += f"\n<div>{escape(COMPANY_EMAIL)}</div>"
+    company_lines += (
+        f'\n<div style="margin-top:2px;word-break:break-word">'
+        f"{company_contact_line_html(escape)}</div>"
+    )
 
     return f"""
     <div style="margin:0;padding:0;background:#f6f6f6">
@@ -179,14 +178,14 @@ def _render_waybill_html(db: Session, wb: models.Waybill) -> str:
             </div>
           </div>
 
-          <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:14px">
-            <div>
-              <div style="font-weight:800;margin-bottom:8px">Ship from</div>
-              <div style="color:#333;line-height:1.5">{company_lines}</div>
+          <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:14px;align-items:start">
+            <div style="min-width:0">
+              <div style="font-weight:800;margin-bottom:6px">Ship from</div>
+              <div style="color:#333;line-height:1.4">{company_lines}</div>
             </div>
-            <div>
-              <div style="font-weight:800;margin-bottom:8px">Ship to</div>
-              <div style="color:#333;line-height:1.6">
+            <div style="min-width:0;padding-left:12px;box-sizing:border-box">
+              <div style="font-weight:800;margin-bottom:6px">Ship to</div>
+              <div style="color:#333;line-height:1.4">
                 <div style="font-weight:700">{cname}</div>
                 <div>{caddr}</div>
                 <div>{cphone}</div>
@@ -195,16 +194,23 @@ def _render_waybill_html(db: Session, wb: models.Waybill) -> str:
             </div>
           </div>
 
+          <div style="margin-top:16px;padding:12px;background:#fafafa;border:1px solid #e5e5e5;border-radius:8px;font-size:14px">
+            <div style="font-weight:800;margin-bottom:8px;color:#111">Driver &amp; vehicle</div>
+            <div style="color:#333;line-height:1.5">
+              <div><span style="color:#666">Driver name:</span> <strong>{dn}</strong></div>
+              <div><span style="color:#666">Driver phone:</span> <strong>{dp}</strong></div>
+              <div><span style="color:#666">Vehicle plate:</span> <strong>{vp}</strong></div>
+            </div>
+          </div>
+
           <div style="margin-top:20px">
             <div style="font-weight:800;margin-bottom:8px">Items</div>
-            <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed">
               <thead>
                 <tr style="background:#f3f3f3">
-                  <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e5e5">Item</th>
+                  <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e5e5;width:26%">Item</th>
                   <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #e5e5e5">Description</th>
-                  <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e5e5">Qty</th>
-                  <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e5e5">Unit</th>
-                  <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e5e5">Line</th>
+                  <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #e5e5e5;width:10%;white-space:nowrap">Qty</th>
                 </tr>
               </thead>
               <tbody>{rows_html}</tbody>
@@ -276,6 +282,9 @@ def create_waybill(
         waybill_number=next_waybill_number(db),
         order_id=order.id,
         delivery_status="pending",
+        driver_name=payload.driver_name,
+        driver_phone=payload.driver_phone,
+        vehicle_plate=payload.vehicle_plate,
         created_by=user.id,
         updated_by=user.id,
         updated_at=datetime.utcnow(),
@@ -295,6 +304,31 @@ def create_waybill(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == wb.id)
+        .first()
+    )
+    return _waybill_to_detail(db, wb)
+
+
+@router.patch("/waybills/{waybill_id}/logistics")
+def update_waybill_logistics(
+    waybill_id: int,
+    payload: WaybillLogisticsUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    if not wb:
+        raise HTTPException(status_code=404, detail="Waybill not found")
+    wb.driver_name = payload.driver_name
+    wb.driver_phone = payload.driver_phone
+    wb.vehicle_plate = payload.vehicle_plate
+    wb.updated_by = user.id
+    wb.updated_at = datetime.utcnow()
+    db.commit()
+    wb = (
+        db.query(models.Waybill)
+        .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
+        .filter(models.Waybill.id == waybill_id)
         .first()
     )
     return _waybill_to_detail(db, wb)
@@ -387,6 +421,8 @@ def send_waybill_email(
     )
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
+    if not _waybill_driver_ready(wb):
+        raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
     cust = wb.order.customer if wb.order else None
     if not cust or not (cust.email or "").strip():
         raise HTTPException(status_code=400, detail="Customer has no email on file")
@@ -395,7 +431,15 @@ def send_waybill_email(
     subject = f"{APP_NAME} - Waybill {wb.waybill_number}"
     html = _render_waybill_html(db, wb)
     try:
-        send_email(to_email, subject, html)
+        pdf_bytes = html_to_pdf_bytes(html)
+        safe_n = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
+        send_email_html_with_pdf_attachment(
+            to_email,
+            subject,
+            html,
+            pdf_bytes,
+            f"waybill-{safe_n}.pdf",
+        )
     except EmailConfigError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except smtplib.SMTPAuthenticationError as e:
@@ -432,6 +476,8 @@ def record_waybill_print(
     wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
+    if not _waybill_driver_ready(wb):
+        raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
     log_activity(
         db,
         action=WAYBILL_PRINTED,
@@ -458,6 +504,8 @@ def download_waybill(
     )
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
+    if not _waybill_driver_ready(wb):
+        raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
 
     html = _render_waybill_html(db, wb)
     log_activity(

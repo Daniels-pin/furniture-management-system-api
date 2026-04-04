@@ -10,3 +10,10 @@ export const COMPANY_CONTACT = {
   ]
 } as const;
 
+/** Payment instructions on invoices, quotations, proforma, orders — keep in sync with `app/constants.py` */
+export const COMPANY_BANK = {
+  accountNumber: "0077929221",
+  accountName: "No Limits Furniture Nig Ltd",
+  bankName: "Access Bank"
+} as const;
+

@@ -33,7 +33,7 @@ def store_computed_totals(
     discount_value,
     tax_in,
 ) -> None:
-    """Populate subtotal, discount_*, final_price, tax, grand_total on proforma or quotation rows."""
+    """Populate subtotal, discount_*, final_price, tax_percent, tax (amount), grand_total on proforma or quotation rows."""
     sub_in = subtotal_from_line_items(items)
     totals = compute_totals(sub_in, Decimal("0"), discount_type, discount_value, tax_in)
     entity.subtotal = totals.subtotal
@@ -41,6 +41,7 @@ def store_computed_totals(
     entity.discount_value = totals.discount_value
     entity.discount_amount = totals.discount_amount
     entity.final_price = totals.after_discount
+    entity.tax_percent = totals.tax_percent
     entity.tax = totals.tax
     entity.grand_total = totals.total
 
@@ -122,11 +123,11 @@ def create_order_and_invoice_from_presales_items(
     items: list,
     discount_type,
     discount_value,
-    tax,
+    tax_percent,
     amount_paid_in: object | None = None,
 ) -> tuple[models.Order, models.Invoice, TotalsResult]:
     sub_in = subtotal_from_line_items(items)
-    totals = compute_totals(sub_in, amount_paid_in, discount_type, discount_value, tax)
+    totals = compute_totals(sub_in, amount_paid_in, discount_type, discount_value, tax_percent)
     new_order = models.Order(
         customer_id=customer.id,
         due_date=due_date,
@@ -136,6 +137,7 @@ def create_order_and_invoice_from_presales_items(
         discount_value=totals.discount_value,
         discount_amount=totals.discount_amount,
         final_price=totals.after_discount,
+        tax_percent=totals.tax_percent,
         tax=totals.tax,
         amount_paid=totals.paid,
         balance=totals.balance,

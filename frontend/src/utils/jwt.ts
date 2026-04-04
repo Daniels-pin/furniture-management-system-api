@@ -12,6 +12,15 @@ export type JwtPayload = {
   exp?: number;
 };
 
+/** Treat JWT as expired only after this leeway past `exp` (handles slightly fast device clocks). */
+export const JWT_CLIENT_EXPIRY_LEEWAY_MS = 120_000;
+
+export function isJwtExpiredForClient(payload: JwtPayload | null): boolean {
+  const exp = payload?.exp;
+  if (typeof exp !== "number") return false;
+  return Date.now() >= exp * 1000 + JWT_CLIENT_EXPIRY_LEEWAY_MS;
+}
+
 export function decodeJwt(token: string): JwtPayload | null {
   try {
     const parts = token.split(".");

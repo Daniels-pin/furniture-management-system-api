@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 MAX_TOTAL_PRICE = Decimal("500000000.00")
 TWOPLACES = Decimal("0.01")
+FOURDP = Decimal("0.0001")
 
 
 def _to_decimal(value: object, field_name: str) -> Optional[Decimal]:
@@ -24,6 +25,10 @@ def _to_decimal(value: object, field_name: str) -> Optional[Decimal]:
 
 def _q2(value: Decimal) -> Decimal:
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+
+def _q_tax_percent(value: Decimal) -> Decimal:
+    return value.quantize(FOURDP, rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True)
@@ -49,7 +54,8 @@ class TotalsResult:
     discount_value: Optional[Decimal]
     discount_amount: Optional[Decimal]
     after_discount: Optional[Decimal]
-    tax: Optional[Decimal]
+    tax: Optional[Decimal]  # monetary amount; None if no tax rate set
+    tax_percent: Optional[Decimal]  # e.g. 7.5 for 7.5%; None if no tax
     total: Optional[Decimal]
     paid: Optional[Decimal]
     balance: Optional[Decimal]
@@ -61,21 +67,32 @@ def compute_totals(
     paid_in: object,
     discount_type_in: object,
     discount_value_in: object,
-    tax_in: object,
+    tax_percent_in: object,
 ) -> TotalsResult:
+    """
+    tax_percent_in: optional percentage (e.g. 7.5 = 7.5%), applied to the amount after discount
+    (i.e. after_discount, which equals subtotal when there is no discount).
+    """
     subtotal = compute_pricing(subtotal_in, None).total_price
     discount = compute_discount(subtotal, discount_type_in, discount_value_in)
     after_discount = discount.final_price
 
-    tax = _to_decimal(tax_in, "tax")
-    if tax is not None:
-        tax = _q2(tax)
-        if tax < 0:
+    tax_pct = _to_decimal(tax_percent_in, "tax")
+    if tax_pct is not None:
+        tax_pct = _q_tax_percent(tax_pct)
+        if tax_pct < 0:
             raise HTTPException(status_code=400, detail="tax must be >= 0")
+        if tax_pct > Decimal("100"):
+            raise HTTPException(status_code=400, detail="tax must be <= 100")
 
-    total = None
+    tax_amount: Optional[Decimal] = None
+    total: Optional[Decimal] = None
     if after_discount is not None:
-        total = _q2(after_discount + (tax or Decimal("0")))
+        if tax_pct is None:
+            total = _q2(after_discount)
+        else:
+            tax_amount = _q2(after_discount * (tax_pct / Decimal("100")))
+            total = _q2(after_discount + tax_amount)
 
     pricing = compute_pricing(total, paid_in)
 
@@ -85,7 +102,8 @@ def compute_totals(
         discount_value=discount.discount_value,
         discount_amount=discount.discount_amount,
         after_discount=after_discount,
-        tax=tax,
+        tax=tax_amount,
+        tax_percent=tax_pct,
         total=total,
         paid=pricing.amount_paid,
         balance=pricing.balance,

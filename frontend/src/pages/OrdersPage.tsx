@@ -405,7 +405,8 @@ function CreateOrderModal({
 
     if (canInputPricing) {
       if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
-      if (tax && Number(tax) < 0) e.tax = "Tax cannot be negative";
+      if (tax && Number(tax) < 0) e.tax = "Tax % cannot be negative";
+      if (tax && Number(tax) > 100) e.tax = "Tax % cannot exceed 100";
       if (discountType) {
         const dv = Number(discountValue);
         if (!discountValue.trim() || !Number.isFinite(dv) || dv < 0) {
@@ -650,12 +651,12 @@ function CreateOrderModal({
               placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
             />
             <Input
-              label="Tax (optional)"
+              label="Tax % (optional)"
               value={tax}
               onChange={(e) => setTax(e.target.value)}
               inputMode="decimal"
               error={fieldError.tax}
-              placeholder="e.g. 0.00"
+              placeholder="e.g. 7.5 for 7.5% VAT"
             />
           </div>
         ) : null}

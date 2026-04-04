@@ -59,7 +59,7 @@ export function QuotationFormPage() {
         const dt = d.discount_type;
         setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
         setDiscountValue(d.discount_value != null ? String(d.discount_value) : "");
-        setTax(d.tax != null ? String(d.tax) : "");
+        setTax(d.tax_percent != null ? String(d.tax_percent) : "");
         if (d.items?.length) {
           setLines(
             d.items.map((it) => ({
@@ -257,7 +257,12 @@ export function QuotationFormPage() {
             onChange={(e) => setDiscountValue(e.target.value)}
             placeholder={discountType === "percentage" ? "e.g. 10" : "Amount"}
           />
-          <Input label="Tax" value={tax} onChange={(e) => setTax(e.target.value)} placeholder="0" />
+          <Input
+            label="Tax %"
+            value={tax}
+            onChange={(e) => setTax(e.target.value)}
+            placeholder="e.g. 7.5"
+          />
         </div>
 
         <div className="mt-8 flex flex-wrap gap-2">

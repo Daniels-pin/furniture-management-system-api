@@ -54,6 +54,7 @@ export type Order = {
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
   final_price?: string | number | null;
+  tax_percent?: string | number | null;
   tax?: string | number | null;
   total?: string | number | null;
   amount_paid?: string | number | null;
@@ -106,6 +107,7 @@ export type InvoiceListItem = {
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
   final_price?: string | number | null;
+  tax_percent?: string | number | null;
   tax?: string | number | null;
   total?: string | number | null;
   created_by?: string | null;
@@ -146,6 +148,7 @@ export type ProformaDetail = {
   discount_type?: "fixed" | "percentage" | null;
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
+  tax_percent?: string | number | null;
   tax?: string | number | null;
   subtotal?: string | number | null;
   final_price?: string | number | null;
@@ -195,6 +198,7 @@ export type QuotationDetail = {
   discount_type?: "fixed" | "percentage" | null;
   discount_value?: string | number | null;
   discount_amount?: string | number | null;
+  tax_percent?: string | number | null;
   tax?: string | number | null;
   subtotal?: string | number | null;
   final_price?: string | number | null;
@@ -226,6 +230,9 @@ export type WaybillDetail = {
   waybill_number: string;
   order_id: number;
   delivery_status: string;
+  driver_name?: string | null;
+  driver_phone?: string | null;
+  vehicle_plate?: string | null;
   customer_name: string;
   phone: string;
   address: string;

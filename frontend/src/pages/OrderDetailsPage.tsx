@@ -66,6 +66,11 @@ export function OrderDetailsPage() {
   const [issuingInvoice, setIssuingInvoice] = useState(false);
   const [preInvoicePromptOpen, setPreInvoicePromptOpen] = useState(false);
   const [invoicePrepEditFlow, setInvoicePrepEditFlow] = useState(false);
+  const [sendingOrderEmail, setSendingOrderEmail] = useState(false);
+  const [waybillModalOpen, setWaybillModalOpen] = useState(false);
+  const [wbDriverName, setWbDriverName] = useState("");
+  const [wbDriverPhone, setWbDriverPhone] = useState("");
+  const [wbVehiclePlate, setWbVehiclePlate] = useState("");
 
   const canEditOrder = auth.role === "admin" || auth.role === "showroom";
   const canIssueInvoice = auth.role === "admin" || auth.role === "showroom";
@@ -255,6 +260,37 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
+            {canIssueInvoice && data.customer?.email?.trim() ? (
+              <Card>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">Order document</div>
+                    <div className="mt-1 text-sm text-black/60">
+                      Email a PDF copy of this order to the customer ({data.customer.email}).
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    isLoading={sendingOrderEmail}
+                    onClick={async () => {
+                      if (!data) return;
+                      try {
+                        setSendingOrderEmail(true);
+                        await ordersApi.sendEmail(data.order_id);
+                        toast.push("success", "Order PDF emailed to customer.");
+                      } catch (err) {
+                        toast.push("error", getErrorMessage(err));
+                      } finally {
+                        setSendingOrderEmail(false);
+                      }
+                    }}
+                  >
+                    Email order (PDF)
+                  </Button>
+                </div>
+              </Card>
+            ) : null}
+
             {auth.role === "admin" || auth.role === "showroom" ? (
               <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -265,18 +301,11 @@ export function OrderDetailsPage() {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       isLoading={creatingWaybill}
-                      onClick={async () => {
-                        if (!data) return;
-                        try {
-                          setCreatingWaybill(true);
-                          const wb = await waybillApi.create(data.order_id);
-                          toast.push("success", "Waybill created.");
-                          nav(`/waybills/${wb.id}`);
-                        } catch (err) {
-                          toast.push("error", getErrorMessage(err));
-                        } finally {
-                          setCreatingWaybill(false);
-                        }
+                      onClick={() => {
+                        setWbDriverName("");
+                        setWbDriverPhone("");
+                        setWbVehiclePlate("");
+                        setWaybillModalOpen(true);
                       }}
                     >
                       Create waybill
@@ -329,7 +358,7 @@ export function OrderDetailsPage() {
                       <TaxInlineEditor
                         orderId={data.order_id}
                         canEdit={auth.role === "admin" || auth.role === "showroom"}
-                        value={(data as any).tax}
+                        value={(data as any).tax_percent}
                         onSaved={async () => {
                           const refreshed = await ordersApi.get(data.order_id);
                           setData(refreshed);
@@ -346,7 +375,11 @@ export function OrderDetailsPage() {
                         <div className="font-semibold">-{formatMoney((data as any).discount_amount)}</div>
                       </div>
                       <div className="flex items-center justify-between">
-                        <div className="text-black/60">Tax</div>
+                        <div className="text-black/60">
+                          {(data as any).tax_percent != null && (data as any).tax_percent !== ""
+                            ? `Tax (${(data as any).tax_percent}%)`
+                            : "Tax amount"}
+                        </div>
                         <div className="font-semibold">{formatMoney((data as any).tax)}</div>
                       </div>
                       <div className="flex items-center justify-between">
@@ -387,7 +420,16 @@ export function OrderDetailsPage() {
                 </div>
               ) : (
                 <div className="mt-4 text-sm text-black/70">
-                  Tax: <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
+                  {(data as any).tax_percent != null && (data as any).tax_percent !== "" ? (
+                    <>
+                      Tax ({(data as any).tax_percent}%):{" "}
+                      <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
+                    </>
+                  ) : (
+                    <>
+                      Tax: <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
+                    </>
+                  )}
                 </div>
               )}
             </Card>
@@ -558,6 +600,61 @@ export function OrderDetailsPage() {
         />
       ) : null}
 
+      <Modal open={waybillModalOpen} title="Waybill — driver & vehicle" onClose={() => setWaybillModalOpen(false)}>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void (async () => {
+              if (!data) return;
+              const dn = wbDriverName.trim();
+              const dp = wbDriverPhone.trim();
+              const vp = wbVehiclePlate.trim();
+              if (!dn || !dp || !vp) {
+                toast.push("error", "Driver name, driver phone, and vehicle plate are required.");
+                return;
+              }
+              try {
+                setCreatingWaybill(true);
+                const wb = await waybillApi.create({
+                  order_id: data.order_id,
+                  driver_name: dn,
+                  driver_phone: dp,
+                  vehicle_plate: vp
+                });
+                toast.push("success", "Waybill created.");
+                setWaybillModalOpen(false);
+                nav(`/waybills/${wb.id}`);
+              } catch (err) {
+                toast.push("error", getErrorMessage(err));
+              } finally {
+                setCreatingWaybill(false);
+              }
+            })();
+          }}
+        >
+          <p className="text-sm text-black/70">
+            These details are saved on the waybill and are required before print, download, or email.
+          </p>
+          <Input label="Driver name" value={wbDriverName} onChange={(e) => setWbDriverName(e.target.value)} required />
+          <Input label="Driver phone" value={wbDriverPhone} onChange={(e) => setWbDriverPhone(e.target.value)} required />
+          <Input
+            label="Vehicle plate number"
+            value={wbVehiclePlate}
+            onChange={(e) => setWbVehiclePlate(e.target.value)}
+            required
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setWaybillModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={creatingWaybill}>
+              Create waybill
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {zoomOpen && data?.image_url ? (
         <div className="fixed inset-0 z-50">
           <button className="absolute inset-0 bg-black/60" onClick={() => setZoomOpen(false)} />
@@ -605,7 +702,9 @@ function EditOrderModal({
   const [deposit, setDeposit] = useState(
     initial.amount_paid != null ? String(initial.amount_paid) : ""
   );
-  const [tax, setTax] = useState((initial as any).tax != null ? String((initial as any).tax) : "");
+  const [tax, setTax] = useState(
+    (initial as any).tax_percent != null ? String((initial as any).tax_percent) : ""
+  );
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">(
     (initial as any).discount_type ?? ""
   );
@@ -631,7 +730,7 @@ function EditOrderModal({
     setDueDate(isoToDateInput(initial.due_date));
     setTotalPrice(initial.total_price != null ? String(initial.total_price) : "");
     setDeposit(initial.amount_paid != null ? String(initial.amount_paid) : "");
-    setTax((initial as any).tax != null ? String((initial as any).tax) : "");
+    setTax((initial as any).tax_percent != null ? String((initial as any).tax_percent) : "");
     setDiscountType(((initial as any).discount_type ?? "") as any);
     setDiscountValue((initial as any).discount_value != null ? String((initial as any).discount_value) : "");
     setItems(
@@ -808,11 +907,11 @@ function EditOrderModal({
             inputMode="decimal"
           />
           <Input
-            label="Tax (optional)"
+            label="Tax % (optional)"
             value={tax}
             onChange={(e) => setTax(e.target.value)}
             inputMode="decimal"
-            placeholder="e.g. 0.00"
+            placeholder="e.g. 7.5 for 7.5% VAT"
           />
           <label className="block">
             <div className="mb-1 text-sm font-medium">Discount type (optional)</div>
@@ -877,7 +976,7 @@ function TaxInlineEditor({
         value={tax}
         onChange={(e) => setTax(e.target.value)}
         inputMode="decimal"
-        placeholder="Tax"
+        placeholder="e.g. 7.5"
       />
       <button
         className="rounded-xl border border-black/15 bg-white px-3 py-1.5 text-sm font-semibold hover:bg-black/5 disabled:opacity-60"
@@ -918,7 +1017,7 @@ function TaxInlineEditor({
       type="button"
       onClick={() => setOpen(true)}
     >
-      Edit tax
+      Edit tax %
     </button>
   );
 }

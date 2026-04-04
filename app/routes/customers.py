@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app import models
-from app.auth.auth import get_current_user
-from app.auth.auth import require_role
-from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
-from typing import List
+import csv
 from datetime import datetime
+from io import StringIO
+from typing import List, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from app import models
+from app.auth.auth import get_current_user, require_role
+from app.database import get_db
+from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
 
 from app.utils.activity_log import log_activity, username_from_email, CUSTOMER_CREATED, CUSTOMER_DELETED
 
@@ -53,7 +57,41 @@ def get_customers(
 
     return result
 
- #CREATE CUSTOMER
+
+@router.get("/customers/export")
+def export_customer_contacts(
+    kind: Literal["phones", "emails"] = Query(..., description="Export phone numbers or email addresses"),
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    rows = db.query(models.Customer).order_by(models.Customer.id.asc()).all()
+    buf = StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    if kind == "phones":
+        writer.writerow(["phone"])
+        seen: set[str] = set()
+        for c in rows:
+            p = (c.phone or "").strip()
+            if p and p not in seen:
+                seen.add(p)
+                writer.writerow([p])
+        filename = "customer-phones.csv"
+    else:
+        writer.writerow(["email"])
+        seen = set()
+        for c in rows:
+            em = (c.email or "").strip()
+            if em and em not in seen:
+                seen.add(em)
+                writer.writerow([em])
+        filename = "customer-emails.csv"
+    body = "\ufeff" + buf.getvalue()
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 @router.post("/customers", response_model=CustomerResponse)
 def create_customer(

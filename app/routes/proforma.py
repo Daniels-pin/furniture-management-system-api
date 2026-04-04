@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import smtplib
 from datetime import datetime
 from decimal import Decimal
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import require_role
-from app.constants import APP_NAME, COMPANY_ADDRESSES, COMPANY_EMAIL, COMPANY_PHONES
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
 from app.schemas import ConvertPresalesToInvoiceRequest, ProformaCreate, ProformaDetailResponse, ProformaItemIn, ProformaUpdate
 from app.utils.activity_log import (
@@ -31,7 +32,8 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
-from app.utils.emailer import EmailConfigError, send_email
+from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
+from app.utils.html_pdf import html_to_pdf_bytes
 from app.utils.presales_order import (
     create_order_and_invoice_from_presales_items,
     get_or_create_customer_for_presales,
@@ -86,6 +88,7 @@ def _proforma_to_detail(db: Session, p: models.ProformaInvoice) -> dict:
         "discount_type": p.discount_type,
         "discount_value": p.discount_value,
         "discount_amount": p.discount_amount,
+        "tax_percent": p.tax_percent,
         "tax": p.tax,
         "subtotal": p.subtotal,
         "final_price": p.final_price,
@@ -118,8 +121,10 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
         else ""
     )
     company_lines = "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
-    company_lines += "\n" + "\n".join(f"<div>{escape(x)}</div>" for x in COMPANY_PHONES)
-    company_lines += f"\n<div>{escape(COMPANY_EMAIL)}</div>"
+    company_lines += (
+        f'\n<div style="margin-top:2px;word-break:break-word">'
+        f"{company_contact_line_html(escape)}</div>"
+    )
 
     rows = []
     for it in sorted(p.items or [], key=lambda x: x.id):
@@ -145,6 +150,7 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
 
     discount_display = _money(p.discount_amount if p.discount_amount is not None else Decimal("0.00"))
     tax_display = _money(p.tax if p.tax is not None else Decimal("0.00"))
+    tax_row_label = f"Tax ({escape(str(p.tax_percent))}%):" if p.tax_percent is not None else "Tax:"
     grand = _money(p.grand_total)
 
     return f"""
@@ -168,17 +174,17 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
           </div>
 
           <div style="padding:18px 22px;font-family:Inter,Arial,sans-serif">
-            <div style="display:flex;gap:22px;justify-content:space-between;border-bottom:1px solid #e5e5e5;padding-bottom:14px">
-              <div style="flex:1">
+            <div style="display:flex;gap:24px;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5e5e5;padding-bottom:12px">
+              <div style="flex:1;min-width:0">
                 <div style="font-weight:800;color:#111">Bill From:</div>
-                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
                   <div><strong>{escape(APP_NAME)}</strong></div>
                   {company_lines}
                 </div>
               </div>
-              <div style="flex:1">
+              <div style="flex:1;min-width:0;padding-left:20px;box-sizing:border-box">
                 <div style="font-weight:800;color:#111">Bill To:</div>
-                <div style="margin-top:8px;color:#333;font-size:13px;line-height:1.55">
+                <div style="margin-top:6px;color:#333;font-size:13px;line-height:1.4">
                   <div><strong>{escape(p.customer_name or '')}</strong></div>
                   <div>{escape(p.address or '—')}</div>
                   <div>{escape(p.phone or '—')}</div>
@@ -215,7 +221,7 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
                   <div style="font-weight:800;color:#111">-{discount_display}</div>
                 </div>
                 <div style="display:flex;justify-content:space-between;padding:6px 0">
-                  <div style="color:#444">Tax:</div>
+                  <div style="color:#444">{tax_row_label}</div>
                   <div style="font-weight:800;color:#111">{tax_display}</div>
                 </div>
                 <div style="margin-top:10px;background:#111;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
@@ -233,6 +239,7 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
               <div style="font-weight:800;color:#111">Terms &amp; Conditions:</div>
               <div style="margin-top:6px;color:#333">This is a proforma invoice for quotation / pre-payment purposes only.</div>
             </div>
+            {company_payment_details_html(escape)}
           </div>
         </div>
       </div>
@@ -475,7 +482,15 @@ def send_proforma_email(
     subject = f"{APP_NAME} - Proforma {p.proforma_number}"
     html = _render_proforma_email_html(p)
     try:
-        send_email(to_email, subject, html)
+        pdf_bytes = html_to_pdf_bytes(html)
+        safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
+        send_email_html_with_pdf_attachment(
+            to_email,
+            subject,
+            html,
+            pdf_bytes,
+            f"proforma-{safe_n}.pdf",
+        )
     except EmailConfigError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     except smtplib.SMTPAuthenticationError as e:
@@ -595,7 +610,7 @@ def convert_proforma_to_invoice(
         items=items,
         discount_type=p.discount_type,
         discount_value=p.discount_value,
-        tax=p.tax,
+        tax_percent=p.tax_percent,
         amount_paid_in=payload.amount_paid,
     )
     p.converted_order_id = new_order.id

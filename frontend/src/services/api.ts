@@ -1,7 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { env } from "../env";
 import { authStore } from "../state/authStore";
-import { decodeJwt } from "../utils/jwt";
+import { decodeJwt, isJwtExpiredForClient } from "../utils/jwt";
 
 export type ApiErrorShape =
   | { detail?: string }
@@ -41,10 +41,7 @@ function sleep(ms: number) {
 }
 
 function isTokenExpired(token: string): boolean {
-  const payload = decodeJwt(token);
-  const exp = payload?.exp;
-  if (typeof exp !== "number") return false;
-  return exp * 1000 <= Date.now();
+  return isJwtExpiredForClient(decodeJwt(token));
 }
 
 function shouldRetry(config: any, status?: number): boolean {

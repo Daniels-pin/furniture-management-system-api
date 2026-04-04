@@ -53,6 +53,7 @@ class Order(Base):
     discount_value = Column(Numeric(11, 2), nullable=True)
     discount_amount = Column(Numeric(11, 2), nullable=True)
     final_price = Column(Numeric(11, 2), nullable=True)
+    tax_percent = Column(Numeric(8, 4), nullable=True)
     tax = Column(Numeric(11, 2), nullable=True)
     amount_paid = Column(Numeric(11, 2), nullable=True)
     balance = Column(Numeric(11, 2), nullable=True)
@@ -131,6 +132,7 @@ class ProformaInvoice(Base):
     discount_type = Column(String, nullable=True)
     discount_value = Column(Numeric(11, 2), nullable=True)
     discount_amount = Column(Numeric(11, 2), nullable=True)
+    tax_percent = Column(Numeric(8, 4), nullable=True)
     tax = Column(Numeric(11, 2), nullable=True)
     subtotal = Column(Numeric(11, 2), nullable=True)
     final_price = Column(Numeric(11, 2), nullable=True)
@@ -180,6 +182,7 @@ class Quotation(Base):
     discount_type = Column(String, nullable=True)
     discount_value = Column(Numeric(11, 2), nullable=True)
     discount_amount = Column(Numeric(11, 2), nullable=True)
+    tax_percent = Column(Numeric(8, 4), nullable=True)
     tax = Column(Numeric(11, 2), nullable=True)
     subtotal = Column(Numeric(11, 2), nullable=True)
     final_price = Column(Numeric(11, 2), nullable=True)
@@ -221,6 +224,9 @@ class Waybill(Base):
     waybill_number = Column(String, unique=True, index=True, nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
     delivery_status = Column(String, nullable=False, default="pending")  # pending | shipped | delivered
+    driver_name = Column(String, nullable=True)
+    driver_phone = Column(String, nullable=True)
+    vehicle_plate = Column(String, nullable=True)
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)

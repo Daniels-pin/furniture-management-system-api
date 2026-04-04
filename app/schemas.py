@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 from typing import List, Literal, Optional
 from enum import Enum
@@ -110,6 +110,7 @@ class OrderResponse(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax_percent: Optional[Decimal] = None
     tax: Optional[Decimal] = None
     total: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
@@ -136,6 +137,7 @@ class OrderDetailsResponse(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax_percent: Optional[Decimal] = None
     tax: Optional[Decimal] = None
     total: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
@@ -156,7 +158,10 @@ class OrderAdminPut(BaseModel):
     amount_paid: Optional[Decimal] = None
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
     update_context: Optional[Literal["before_invoice"]] = None
 
 
@@ -176,6 +181,7 @@ class InvoiceListItem(BaseModel):
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
+    tax_percent: Optional[Decimal] = None
     tax: Optional[Decimal] = None
     total: Optional[Decimal] = None
     created_by: Optional[str] = None
@@ -207,7 +213,10 @@ class OrderUploadResponse(BaseModel):
 class OrderPricingUpdate(BaseModel):
     total_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
 
 
 class OrdersListResponse(BaseModel):
@@ -245,7 +254,10 @@ class ProformaCreate(BaseModel):
     items: List[ProformaItemIn] = Field(..., min_length=1)
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
     save_as_draft: bool = True
 
 
@@ -258,7 +270,10 @@ class ProformaUpdate(BaseModel):
     items: List[ProformaItemIn] = Field(..., min_length=1)
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
     save_as_draft: bool = True
 
 
@@ -305,6 +320,7 @@ class ProformaDetailResponse(BaseModel):
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
+    tax_percent: Optional[Decimal] = None
     tax: Optional[Decimal] = None
     subtotal: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
@@ -332,7 +348,10 @@ class QuotationCreate(BaseModel):
     items: List[QuotationItemIn] = Field(..., min_length=1)
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
     save_as_draft: bool = True
 
 
@@ -345,7 +364,10 @@ class QuotationUpdate(BaseModel):
     items: List[QuotationItemIn] = Field(..., min_length=1)
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
-    tax: Optional[Decimal] = None
+    tax: Optional[Decimal] = Field(
+        default=None,
+        description="Tax percentage applied after discount (e.g. 7.5 means 7.5%).",
+    )
     save_as_draft: bool = True
 
 
@@ -386,6 +408,7 @@ class QuotationDetailResponse(BaseModel):
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
+    tax_percent: Optional[Decimal] = None
     tax: Optional[Decimal] = None
     subtotal: Optional[Decimal] = None
     final_price: Optional[Decimal] = None
@@ -400,6 +423,29 @@ class QuotationDetailResponse(BaseModel):
 
 class WaybillCreate(BaseModel):
     order_id: int = Field(..., gt=0)
+    driver_name: str = Field(..., min_length=1)
+    driver_phone: str = Field(..., min_length=1)
+    vehicle_plate: str = Field(..., min_length=1)
+
+    @field_validator("driver_name", "driver_phone", "vehicle_plate", mode="before")
+    @classmethod
+    def strip_driver_fields(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class WaybillLogisticsUpdate(BaseModel):
+    driver_name: str = Field(..., min_length=1)
+    driver_phone: str = Field(..., min_length=1)
+    vehicle_plate: str = Field(..., min_length=1)
+
+    @field_validator("driver_name", "driver_phone", "vehicle_plate", mode="before")
+    @classmethod
+    def strip_driver_fields(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
 
 
 class WaybillStatusUpdate(BaseModel):

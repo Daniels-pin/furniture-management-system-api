@@ -39,12 +39,29 @@ _cors_origins = list(dict.fromkeys(_cors_origins))  # de-dupe, keep order
 
 _cors_credentials = True
 
+# Phones and other devices hitting the Vite dev server use http://<LAN-IP>:5173, which is
+# not in the localhost list above; without this, browsers block API calls after preflight.
+_cors_allow_lan = os.getenv("CORS_ALLOW_LAN_ORIGINS", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_private_net_origin_regex = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=_private_net_origin_regex if _cors_allow_lan else None,
 )
 
 

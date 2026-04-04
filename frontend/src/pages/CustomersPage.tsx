@@ -20,9 +20,13 @@ export function CustomersPage() {
   const limit = 10;
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportKind, setExportKind] = useState<"phones" | "emails">("phones");
+  const [exporting, setExporting] = useState(false);
 
   const canSeePrivate = auth.role !== "factory";
   const canDelete = auth.role === "admin";
+  const canExport = auth.role === "admin";
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -89,9 +93,16 @@ export function CustomersPage() {
           <div className="text-2xl font-bold tracking-tight">Customers</div>
           <div className="mt-1 text-sm text-black/60">Manage customer records.</div>
         </div>
-        <Button variant="secondary" onClick={() => void refresh()} isLoading={isLoading}>
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {canExport ? (
+            <Button variant="secondary" onClick={() => setExportOpen(true)}>
+              Export contacts
+            </Button>
+          ) : null}
+          <Button variant="secondary" onClick={() => void refresh()} isLoading={isLoading}>
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_420px]">
@@ -226,6 +237,59 @@ export function CustomersPage() {
               }}
             >
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={exportOpen} title="Export customer contacts" onClose={() => setExportOpen(false)}>
+        <div className="space-y-4">
+          <p className="text-sm text-black/70">
+            Choose which field to export. The file is CSV (one column) with duplicates removed, ready for bulk SMS or
+            email tools.
+          </p>
+          <div className="space-y-2 text-sm font-semibold">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="radio"
+                name="export-kind"
+                checked={exportKind === "phones"}
+                onChange={() => setExportKind("phones")}
+              />
+              Export phone numbers
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="radio"
+                name="export-kind"
+                checked={exportKind === "emails"}
+                onChange={() => setExportKind("emails")}
+              />
+              Export email addresses
+            </label>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setExportOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={exporting}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    setExporting(true);
+                    await customersApi.exportContacts(exportKind);
+                    toast.push("success", "Download started.");
+                    setExportOpen(false);
+                  } catch (err) {
+                    toast.push("error", getErrorMessage(err));
+                  } finally {
+                    setExporting(false);
+                  }
+                })();
+              }}
+            >
+              Download CSV
             </Button>
           </div>
         </div>
