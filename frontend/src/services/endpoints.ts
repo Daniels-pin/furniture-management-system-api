@@ -224,6 +224,22 @@ export const invoicesApi = {
     const { data } = await api.post<{ message: string }>(`/invoices/${invoiceId}/print`);
     return data;
   },
+  async download(invoiceId: number) {
+    const res = await api.post(`/invoices/${invoiceId}/download`, {}, { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = `invoice-${invoiceId}.pdf`;
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   async delete(invoiceId: number) {
     const { data } = await api.delete<{ message: string; order_id?: number }>(`/invoices/${invoiceId}`);
     return data;

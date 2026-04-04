@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import require_role
+from app.auth.pdf_access import require_proforma_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
 from app.schemas import ConvertPresalesToInvoiceRequest, ProformaCreate, ProformaDetailResponse, ProformaItemIn, ProformaUpdate
@@ -33,7 +34,7 @@ from app.utils.activity_log import (
     username_from_email,
 )
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
-from app.utils.html_pdf import html_to_pdf_bytes
+from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.presales_order import (
     create_order_and_invoice_from_presales_items,
     get_or_create_customer_for_presales,
@@ -339,7 +340,7 @@ def create_proforma(
 def get_proforma(
     proforma_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_proforma_reader),
 ):
     p = (
         db.query(models.ProformaInvoice)
@@ -482,7 +483,7 @@ def send_proforma_email(
     subject = f"{APP_NAME} - Proforma {p.proforma_number}"
     html = _render_proforma_email_html(p)
     try:
-        pdf_bytes = html_to_pdf_bytes(html)
+        pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", p.id)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
         send_email_html_with_pdf_attachment(
             to_email,

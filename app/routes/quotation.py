@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import require_role
+from app.auth.pdf_access import require_quotation_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
 from app.schemas import (
@@ -40,7 +41,7 @@ from app.utils.activity_log import (
     username_from_email,
 )
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
-from app.utils.html_pdf import html_to_pdf_bytes
+from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.presales_order import (
     create_order_and_invoice_from_presales_items,
     get_or_create_customer_for_presales,
@@ -348,7 +349,7 @@ def create_quotation(
 def get_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_quotation_reader),
 ):
     p = (
         db.query(models.Quotation)
@@ -491,7 +492,7 @@ def send_quotation_email(
     subject = f"{APP_NAME} - Quotation {p.quote_number}"
     html = _render_quotation_email_html(p)
     try:
-        pdf_bytes = html_to_pdf_bytes(html)
+        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", p.id)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
         send_email_html_with_pdf_attachment(
             to_email,

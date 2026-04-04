@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import require_role
+from app.auth.pdf_access import require_waybill_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.database import get_db
 from app.schemas import WaybillCreate, WaybillLogisticsUpdate, WaybillStatusUpdate
@@ -30,7 +31,7 @@ from app.utils.activity_log import (
     username_from_email,
 )
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
-from app.utils.html_pdf import html_to_pdf_bytes
+from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.order_item_amounts import display_unit_amounts
 
 router = APIRouter()
@@ -338,7 +339,7 @@ def update_waybill_logistics(
 def get_waybill(
     waybill_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_waybill_reader),
 ):
     wb = (
         db.query(models.Waybill)
@@ -431,7 +432,7 @@ def send_waybill_email(
     subject = f"{APP_NAME} - Waybill {wb.waybill_number}"
     html = _render_waybill_html(db, wb)
     try:
-        pdf_bytes = html_to_pdf_bytes(html)
+        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb.id)
         safe_n = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
         send_email_html_with_pdf_attachment(
             to_email,

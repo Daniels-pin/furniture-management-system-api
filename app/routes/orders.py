@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
 from app.auth.auth import require_role, get_current_user
+from app.auth.pdf_access import require_order_reader
 from datetime import datetime, timedelta
 from app.schemas import (
     OrderAdminPut,
@@ -30,7 +31,7 @@ from typing import List, Optional
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.utils.cloudinary import upload_image
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
-from app.utils.html_pdf import html_to_pdf_bytes
+from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.pricing import compute_discount, compute_pricing, compute_totals
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
@@ -728,7 +729,7 @@ def get_reminders(
 def get_order(
     order_id: int,
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user=Depends(require_order_reader),
 ):
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
 
@@ -1090,7 +1091,7 @@ def send_order_email(
     subject = f"{APP_NAME} - Order #{order.id}"
     html = _render_order_document_html(order, cust, items)
     try:
-        pdf_bytes = html_to_pdf_bytes(html)
+        pdf_bytes = document_pdf_bytes_via_ui("order", "order", order.id)
     except Exception as e:
         logger.exception("PDF generation failed for order email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e

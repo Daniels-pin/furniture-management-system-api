@@ -4,6 +4,7 @@ import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -12,16 +13,18 @@ import smtplib
 
 from app import models
 from app.auth.auth import get_current_user, require_role
+from app.auth.pdf_access import require_invoice_reader
 from app.database import get_db
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
-from app.utils.html_pdf import html_to_pdf_bytes
+from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
 from app.utils.activity_log import (
     log_activity,
     username_from_email,
     INVOICE_DELETED,
+    INVOICE_DOWNLOADED,
     INVOICE_EMAIL_SENT,
     INVOICE_GENERATED,
     INVOICE_PRINTED,
@@ -361,7 +364,7 @@ def issue_invoice_for_order(
 def get_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_invoice_reader),
 ):
     inv = (
         db.query(models.Invoice)
@@ -463,7 +466,7 @@ def send_invoice_email(
     subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
     html = _render_invoice_email(inv, items)
     try:
-        pdf_bytes = html_to_pdf_bytes(html)
+        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv.id)
         safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
         send_email_html_with_pdf_attachment(
             to_email,
@@ -523,3 +526,39 @@ def record_invoice_print(
     )
     db.commit()
     return {"message": "Recorded"}
+
+
+@router.post("/invoices/{invoice_id}/download")
+def download_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    try:
+        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv.id)
+    except RuntimeError as e:
+        logger.exception("Invoice PDF download failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Invoice PDF download failed")
+        raise HTTPException(status_code=500, detail="Could not generate PDF") from e
+
+    log_activity(
+        db,
+        action=INVOICE_DOWNLOADED,
+        entity_type="invoice",
+        entity_id=inv.id,
+        actor_user=user,
+        meta={"invoice_number": inv.invoice_number},
+    )
+    db.commit()
+
+    safe = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{safe}.pdf"'},
+    )

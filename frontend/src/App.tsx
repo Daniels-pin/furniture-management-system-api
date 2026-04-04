@@ -18,11 +18,22 @@ import { QuotationFormPage } from "./pages/QuotationFormPage";
 import { QuotationDetailPage } from "./pages/QuotationDetailPage";
 import { WaybillListPage } from "./pages/WaybillListPage";
 import { WaybillDetailPage } from "./pages/WaybillDetailPage";
+import { InvoicePdfExportPage } from "./pages/pdf-export/InvoicePdfExportPage";
+import { QuotationPdfExportPage } from "./pages/pdf-export/QuotationPdfExportPage";
+import { ProformaPdfExportPage } from "./pages/pdf-export/ProformaPdfExportPage";
+import { WaybillPdfExportPage } from "./pages/pdf-export/WaybillPdfExportPage";
+import { OrderPdfExportPage } from "./pages/pdf-export/OrderPdfExportPage";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+
+      <Route path="/pdf-export/invoice/:invoiceId" element={<InvoicePdfExportPage />} />
+      <Route path="/pdf-export/quotation/:quotationId" element={<QuotationPdfExportPage />} />
+      <Route path="/pdf-export/proforma/:proformaId" element={<ProformaPdfExportPage />} />
+      <Route path="/pdf-export/waybill/:waybillId" element={<WaybillPdfExportPage />} />
+      <Route path="/pdf-export/order/:orderId" element={<OrderPdfExportPage />} />
 
       <Route
         path="/"
