@@ -1,5 +1,6 @@
 import type { InvoiceDetail } from "../../types/api";
 import { APP_NAME, COMPANY_CONTACT } from "../../config/app";
+import { env } from "../../env";
 import { DocumentPaymentFooter } from "../DocumentPaymentFooter";
 import { formatMoney, parseMoneyNumber } from "../../utils/money";
 
@@ -16,7 +17,7 @@ export function InvoiceDocumentBody({ data, maskCustomer }: Props) {
           <div className="flex items-center justify-between gap-6">
             <div className="flex flex-col items-center gap-1">
               <img
-                src="/logo.png"
+                src={env.logoUrl || "/logo.png"}
                 alt={`${APP_NAME} logo`}
                 className="block h-40 w-auto max-w-[min(100%,280px)] object-contain sm:h-44 md:h-48 print:h-44 print:max-w-[240px]"
               />

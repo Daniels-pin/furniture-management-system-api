@@ -7,6 +7,7 @@ import { StatusBadge } from "../components/ui/StatusBadge";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
 import { APP_NAME } from "../config/app";
+import { env } from "../env";
 
 export function DashboardPage() {
   const toast = useToast();
@@ -49,7 +50,7 @@ export function DashboardPage() {
       <div>
         <div className="flex items-center gap-4">
           <img
-            src="/logo.png"
+            src={env.logoUrl || "/logo.png"}
             alt={`${APP_NAME} logo`}
             className="h-[84px] w-auto shrink-0 object-contain md:h-[92px]"
           />

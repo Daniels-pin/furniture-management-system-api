@@ -59,6 +59,11 @@ def render_url_to_pdf_bytes(url: str) -> bytes:
                 # We still wait for the app-driven ready marker below.
                 page.goto(url, wait_until="load", timeout=timeout_ms)
                 page.wait_for_selector('[data-pdf-ready="true"]', timeout=timeout_ms)
+                # Logos often load after React paint; PDF used to capture before decode finished.
+                page.wait_for_function(
+                    "() => Array.from(document.images).every((img) => img.complete)",
+                    timeout=timeout_ms,
+                )
                 pdf = page.pdf(
                     format="A4",
                     print_background=True,
