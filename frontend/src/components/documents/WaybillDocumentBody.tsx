@@ -63,10 +63,10 @@ export function WaybillDocumentBody({ data }: Props) {
         </div>
 
         <section className="mt-6 border-b border-black/10 pb-4 print:mt-5 print:border-black print:pb-3">
-          <div className="grid grid-cols-1 gap-6 text-sm md:grid-cols-2">
-            <div>
+          <div className="grid grid-cols-2 items-start gap-x-3 gap-y-0 text-sm sm:gap-x-6 md:gap-x-10 print:gap-x-4">
+            <div className="min-w-0">
               <div className="font-bold text-black">Ship from:</div>
-              <div className="mt-2 space-y-1 text-black/80">
+              <div className="mt-2 space-y-1 break-words text-black/80">
                 <div className="font-semibold text-black">{APP_NAME}</div>
                 {COMPANY_CONTACT.addresses.map((line) => (
                   <div key={line}>{line}</div>
@@ -82,9 +82,9 @@ export function WaybillDocumentBody({ data }: Props) {
                 </div>
               </div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="font-bold text-black">Ship to:</div>
-              <div className="mt-2 space-y-1 text-black/80">
+              <div className="mt-2 space-y-1 break-words text-black/80">
                 <div className="font-semibold text-black">{data.customer_name}</div>
                 <div>{data.address ?? "—"}</div>
                 <div>{data.phone ?? "—"}</div>

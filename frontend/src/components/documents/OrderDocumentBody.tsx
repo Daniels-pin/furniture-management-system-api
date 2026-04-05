@@ -61,10 +61,10 @@ export function OrderDocumentBody({ data, maskCustomer }: Props) {
         </header>
 
         <section className="mt-5 border-b border-black/10 pb-3 print:mt-4 print:border-black print:pb-2">
-          <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2 md:items-start md:gap-x-10">
+          <div className="grid grid-cols-2 items-start gap-x-3 gap-y-0 text-sm sm:gap-x-6 md:gap-x-10 print:gap-x-4">
             <div className="min-w-0">
               <div className="font-bold text-black">From:</div>
-              <div className="mt-1.5 space-y-0.5 leading-snug text-black/80">
+              <div className="mt-1.5 space-y-0.5 break-words leading-snug text-black/80">
                 <div className="font-semibold text-black">{APP_NAME}</div>
                 {COMPANY_CONTACT.addresses.map((line) => (
                   <div key={line}>{line}</div>
@@ -80,9 +80,9 @@ export function OrderDocumentBody({ data, maskCustomer }: Props) {
                 </div>
               </div>
             </div>
-            <div className="min-w-0 md:pl-6">
+            <div className="min-w-0">
               <div className="font-bold text-black">Customer:</div>
-              <div className="mt-1.5 space-y-0.5 leading-snug text-black/80">
+              <div className="mt-1.5 space-y-0.5 break-words leading-snug text-black/80">
                 <div className="font-semibold text-black">{maskCustomer ? "—" : c?.name}</div>
                 <div>{maskCustomer ? "—" : c?.address ?? "—"}</div>
                 <div>{maskCustomer ? "—" : c?.phone ?? "—"}</div>
