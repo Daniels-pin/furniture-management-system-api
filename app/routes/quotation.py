@@ -123,7 +123,6 @@ def _link_customer(db: Session, phone: str, email: str | None) -> int | None:
 
 def _render_quotation_email_html(p: models.Quotation) -> str:
     issued = p.created_at.strftime("%B %d, %Y") if p.created_at else "—"
-    due = p.due_date.strftime("%B %d, %Y") if p.due_date else "—"
     logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
     logo_html = (
         f"<img src='{escape(logo_url)}' alt='{escape(APP_NAME)} logo' style='width:160px;height:160px;max-width:100%;object-fit:contain;object-position:left top'/>"
@@ -239,10 +238,6 @@ def _render_quotation_email_html(p: models.Quotation) -> str:
                   <div style="font-size:16px;font-weight:900">{grand}</div>
                 </div>
               </div>
-            </div>
-
-            <div style="margin-top:14px;font-size:13px;color:#111">
-              <span style="color:#666">Due date:</span> <strong>{escape(due)}</strong>
             </div>
 
             <div style="margin-top:16px;border-top:1px solid #e5e5e5;padding-top:10px">

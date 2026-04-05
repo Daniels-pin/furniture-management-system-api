@@ -54,19 +54,11 @@ export function ProformaDocumentBody({ data, maskCustomer }: Props) {
           </div>
         </header>
 
-        <div className="mt-4 flex flex-wrap justify-between gap-4 border-b border-black/5 pb-4 text-sm print:hidden">
+        <div className="mt-4 flex flex-wrap gap-4 border-b border-black/5 pb-4 text-sm print:hidden">
           <div>
             <span className="font-semibold text-black/60">Status</span>
             <div className="mt-1">{statusBadge(data.status)}</div>
           </div>
-          {data.due_date ? (
-            <div className="text-right">
-              <span className="font-semibold text-black/60">Due date</span>
-              <div className="mt-1 font-semibold">
-                {new Date(data.due_date).toLocaleDateString(undefined, { dateStyle: "long" })}
-              </div>
-            </div>
-          ) : null}
         </div>
 
         <section className="mt-5 border-b border-black/10 pb-3 print:mt-4 print:border-black print:pb-2">
