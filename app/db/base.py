@@ -13,4 +13,7 @@ from app.models import (
     Quotation,
     QuotationItem,
     Waybill,
+    InventoryMaterial,
+    InventoryMaterialPayment,
+    InventoryMovement,
 )

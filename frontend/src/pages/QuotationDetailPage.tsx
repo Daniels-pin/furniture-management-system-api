@@ -201,11 +201,16 @@ export function QuotationDetailPage() {
               className="border-red-600 text-red-700 hover:bg-red-50"
               isLoading={acting}
               onClick={async () => {
-                if (!window.confirm("Delete this quotation permanently?")) return;
+                if (
+                  !window.confirm(
+                    "Move this quotation to Trash? You can restore it later from the Trash page."
+                  )
+                )
+                  return;
                 try {
                   setActing(true);
                   await quotationApi.delete(id);
-                  toast.push("success", "Quotation deleted.");
+                  toast.push("success", "Quotation moved to Trash.");
                   nav("/quotations");
                 } catch (e) {
                   toast.push("error", getErrorMessage(e));

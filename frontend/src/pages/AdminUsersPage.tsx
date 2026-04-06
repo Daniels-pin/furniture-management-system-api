@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Role, User } from "../types/api";
-import { usersApi } from "../services/endpoints";
+import { adminApi, usersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
@@ -11,6 +13,8 @@ import { Select } from "../components/ui/Select";
 
 export function AdminUsersPage() {
   const toast = useToast();
+  const auth = useAuth();
+  const nav = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [q, setQ] = useState("");
@@ -20,6 +24,8 @@ export function AdminUsersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [impersonateConfirmId, setImpersonateConfirmId] = useState<number | null>(null);
+  const [impersonatingId, setImpersonatingId] = useState<number | null>(null);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -124,15 +130,26 @@ export function AdminUsersPage() {
                     <td className="py-3 pr-4">{u.username}</td>
                     <td className="py-3 pr-4">{u.role}</td>
                     <td className="py-3 pr-0 text-right">
-                      <Button
-                        variant="ghost"
-                        disabled={deletingId === u.id}
-                        onClick={() => {
-                          if (typeof u.id === "number") setConfirmDeleteId(u.id);
-                        }}
-                      >
-                        Delete
-                      </Button>
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        {typeof u.id === "number" && u.id !== auth.userId ? (
+                          <Button
+                            variant="secondary"
+                            disabled={impersonatingId !== null || deletingId === u.id}
+                            onClick={() => setImpersonateConfirmId(u.id)}
+                          >
+                            Login as User
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          disabled={deletingId === u.id}
+                          onClick={() => {
+                            if (typeof u.id === "number") setConfirmDeleteId(u.id);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                   );
@@ -190,6 +207,47 @@ export function AdminUsersPage() {
               }}
             >
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={impersonateConfirmId !== null}
+        title="Log in as this user?"
+        onClose={() => setImpersonateConfirmId(null)}
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            You will switch to this user&apos;s session for support and debugging. Your admin session can be
+            restored with <span className="font-semibold text-black">Exit</span> in the impersonation banner.
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setImpersonateConfirmId(null)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={impersonateConfirmId !== null && impersonatingId === impersonateConfirmId}
+              onClick={() => {
+                if (impersonateConfirmId === null) return;
+                const id = impersonateConfirmId;
+                setImpersonatingId(id);
+                void (async () => {
+                  try {
+                    const res = await adminApi.impersonate(id);
+                    auth.beginImpersonation(res.access_token, res.restore_token);
+                    toast.push("success", "Impersonation started");
+                    setImpersonateConfirmId(null);
+                    nav("/dashboard", { replace: true });
+                  } catch (err) {
+                    toast.push("error", getErrorMessage(err));
+                  } finally {
+                    setImpersonatingId(null);
+                  }
+                })();
+              }}
+            >
+              Continue
             </Button>
           </div>
         </div>

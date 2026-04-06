@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
-from app.auth.auth import get_current_user
-from app.schemas import ProductCreate, ProductResponse
-from typing import List
+from app.auth.auth import forbid_factory, get_current_user, is_factory_user
+from app.db.alive import product_alive
+from app.schemas import ProductCreate, ProductNameResponse, ProductResponse
+from typing import List, Union
 
 from app.utils.activity_log import log_activity, PRODUCT_CREATED
 
@@ -16,7 +17,7 @@ router = APIRouter()
 def create_product(
     product: ProductCreate,
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user=Depends(forbid_factory),
 ):
     new_product = models.Product(
         name=product.name,
@@ -41,9 +42,12 @@ def create_product(
 
 
 #  GET PRODUCTS
-@router.get("/products", response_model=List[ProductResponse])
+@router.get("/products", response_model=List[Union[ProductResponse, ProductNameResponse]])
 def get_products(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user=Depends(get_current_user),
 ):
-    return db.query(models.Product).all()
+    rows = db.query(models.Product).filter(product_alive()).order_by(models.Product.id.desc()).all()
+    if is_factory_user(user):
+        return [ProductNameResponse(id=p.id, name=p.name) for p in rows]
+    return rows

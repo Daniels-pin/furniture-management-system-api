@@ -19,6 +19,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_quotation_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
+from app.db.alive import customer_alive, quotation_alive
 from app.schemas import (
     ConvertPresalesToInvoiceRequest,
     QuotationCreate,
@@ -113,7 +114,12 @@ def _quotation_to_detail(db: Session, p: models.Quotation) -> dict:
 
 def _link_customer(db: Session, phone: str, email: str | None) -> int | None:
     phone = phone.strip()
-    c = db.query(models.Customer).filter(models.Customer.phone == phone).first()
+    c = (
+        db.query(models.Customer)
+        .filter(models.Customer.phone == phone)
+        .filter(customer_alive())
+        .first()
+    )
     if c:
         if email and not (c.email or "").strip():
             c.email = str(email).strip()
@@ -261,8 +267,12 @@ def list_quotations(
 ):
     lim = max(1, min(int(limit or 20), 100))
     off = max(0, int(offset or 0))
-    total = db.query(func.count(models.Quotation.id)).scalar() or 0
-    q = db.query(models.Quotation).options(joinedload(models.Quotation.items))
+    q = (
+        db.query(models.Quotation)
+        .options(joinedload(models.Quotation.items))
+        .filter(quotation_alive())
+    )
+    total = q.count()
     rows = q.order_by(models.Quotation.id.desc()).offset(off).limit(lim).all()
     out = []
     for p in rows:
@@ -350,6 +360,7 @@ def get_quotation(
         db.query(models.Quotation)
         .options(joinedload(models.Quotation.items))
         .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
         .first()
     )
     if not p:
@@ -364,7 +375,12 @@ def update_quotation(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    p = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
     if p.status == "converted":
@@ -443,7 +459,12 @@ def finalize_quotation(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    p = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
     if p.status == "converted":
@@ -476,6 +497,7 @@ def send_quotation_email(
         db.query(models.Quotation)
         .options(joinedload(models.Quotation.items))
         .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
         .first()
     )
     if not p:
@@ -488,7 +510,15 @@ def send_quotation_email(
     html = _render_quotation_email_html(p)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", p.id)
-        safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
+    except RuntimeError as e:
+        logger.exception("Quotation PDF generation failed for email")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Quotation PDF generation failed for email")
+        raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
+
+    safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
+    try:
         send_email_html_with_pdf_attachment(
             to_email,
             subject,
@@ -529,7 +559,12 @@ def record_quotation_print(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    p = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
     log_activity(
@@ -545,7 +580,7 @@ def record_quotation_print(
 
 
 @router.post("/quotations/{quotation_id}/download")
-def download_quotation_file(
+def download_quotation_pdf(
     quotation_id: int,
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
@@ -554,12 +589,21 @@ def download_quotation_file(
         db.query(models.Quotation)
         .options(joinedload(models.Quotation.items))
         .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
         .first()
     )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
 
-    html = _render_quotation_email_html(p)
+    try:
+        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", p.id)
+    except RuntimeError as e:
+        logger.exception("Quotation PDF download failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Quotation PDF download failed")
+        raise HTTPException(status_code=500, detail="Could not generate PDF") from e
+
     log_activity(
         db,
         action=QUOTATION_DOWNLOADED,
@@ -570,11 +614,11 @@ def download_quotation_file(
     )
     db.commit()
 
-    safe_name = f"quotation-{p.quote_number.replace('/', '-')}.html"
+    safe = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
     return Response(
-        content=html.encode("utf-8"),
-        media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="quotation-{safe}.pdf"'},
     )
 
 
@@ -660,6 +704,7 @@ def convert_quotation_to_invoice(
         db.query(models.Quotation)
         .options(joinedload(models.Quotation.items))
         .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
         .first()
     )
     if not p:
@@ -732,7 +777,12 @@ def delete_quotation(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    p = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    p = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .filter(quotation_alive())
+        .first()
+    )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
     if p.status == "converted":
@@ -748,8 +798,9 @@ def delete_quotation(
         entity_type="quotation",
         entity_id=pid,
         actor_user=user,
-        meta={"quote_number": meta_num},
+        meta={"quote_number": meta_num, "soft_delete": True},
     )
-    db.delete(p)
+    p.deleted_at = datetime.utcnow()
+    p.deleted_by_id = user.id
     db.commit()
-    return {"message": "Quotation deleted"}
+    return {"message": "Quotation moved to Trash"}

@@ -28,6 +28,8 @@ class Customer(Base):
     birth_day = Column(Integer, nullable=True)
     birth_month = Column(Integer, nullable=True)
     creator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     orders = relationship("Order", back_populates="customer")
 
@@ -38,6 +40,9 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     price = Column(Float)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
 
 class Order(Base):
     __tablename__ = "orders"
@@ -62,6 +67,8 @@ class Order(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     updated_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     customer = relationship("Customer", back_populates="orders")
     items = relationship(
     "OrderItem",
@@ -85,6 +92,8 @@ class Invoice(Base):
     status = Column(String, default="unpaid")
     created_at = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     order = relationship("Order", back_populates="invoice")
     customer = relationship("Customer")
@@ -145,6 +154,8 @@ class ProformaInvoice(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     converted_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     items = relationship(
         "ProformaItem",
@@ -196,6 +207,8 @@ class Quotation(Base):
 
     converted_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     converted_proforma_id = Column(Integer, ForeignKey("proforma_invoices.id", ondelete="SET NULL"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     items = relationship(
         "QuotationItem",
@@ -232,5 +245,79 @@ class Waybill(Base):
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     order = relationship("Order", back_populates="waybills")
+
+
+class InventoryMaterial(Base):
+    """Factory raw materials (not finished products / sales catalog)."""
+
+    __tablename__ = "inventory_materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    material_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    # numeric: quantity is used; status_only: quantity stays NULL (stock_level is manual only).
+    tracking_mode = Column(String, nullable=False)
+    quantity = Column(Numeric(14, 4), nullable=True)
+    unit = Column(String, nullable=False)
+    # User-set only — never derived from quantity.
+    stock_level = Column(String, nullable=False)
+    supplier_name = Column(String, nullable=False, default="")
+    payment_status = Column(String, nullable=False, default="unpaid")
+    cost = Column(Numeric(11, 2), nullable=True)
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    updated_by_user = relationship("User", foreign_keys=[updated_by_id])
+    movements = relationship(
+        "InventoryMovement",
+        back_populates="material",
+        cascade="all, delete-orphan",
+    )
+    payments = relationship(
+        "InventoryMaterialPayment",
+        back_populates="material",
+        cascade="all, delete-orphan",
+        order_by="InventoryMaterialPayment.id",
+    )
+
+
+class InventoryMaterialPayment(Base):
+    """Supplier payment recorded against a material line (sum drives amount paid / balance)."""
+
+    __tablename__ = "inventory_material_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    material_id = Column(Integer, ForeignKey("inventory_materials.id", ondelete="CASCADE"), nullable=False)
+    amount = Column(Numeric(11, 2), nullable=False)
+    paid_at = Column(DateTime, nullable=False)
+    note = Column(String, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    material = relationship("InventoryMaterial", back_populates="payments")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+
+
+class InventoryMovement(Base):
+    __tablename__ = "inventory_movements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    material_id = Column(Integer, ForeignKey("inventory_materials.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String, nullable=False)  # added | used | adjusted
+    quantity_delta = Column(Numeric(14, 4), nullable=True)
+    meta = Column(JSON, nullable=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    material = relationship("InventoryMaterial", back_populates="movements")

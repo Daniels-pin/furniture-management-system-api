@@ -10,6 +10,9 @@ export type JwtPayload = {
   role?: "showroom" | "manager" | "factory" | "admin";
   username?: string;
   exp?: number;
+  impersonated_by?: number;
+  is_impersonation?: boolean;
+  impersonation_subject?: string;
 };
 
 /** Treat JWT as expired only after this leeway past `exp` (handles slightly fast device clocks). */

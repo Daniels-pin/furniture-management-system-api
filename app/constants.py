@@ -1,5 +1,25 @@
 APP_NAME = "No Limits Furniture Nig Ltd"
 
+# Factory inventory (raw materials) — enforced on API to avoid inconsistent free-text units.
+INVENTORY_UNITS: tuple[str, ...] = (
+    "kg",
+    "g",
+    "pcs",
+    "rolls",
+    "sheets",
+    "m",
+    "m2",
+    "m3",
+    "liters",
+    "boxes",
+    "bags",
+    "sets",
+    "pairs",
+    "bottles",
+    "cans",
+    "other",
+)
+
 COMPANY_EMAIL = "sales@nolimitsfurniture.com.ng"
 COMPANY_PHONES = ("08064757611", "08069983816")
 COMPANY_ADDRESSES = (

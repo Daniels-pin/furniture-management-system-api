@@ -15,16 +15,18 @@ export function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardApi.get>> | null>(null);
 
-  const items = useMemo(
-    () => [
+  const items = useMemo(() => {
+    const rows = [
       { label: "Total Orders", value: data?.total_orders ?? 0 },
-      { label: "Total Customers", value: data?.total_customers ?? 0 },
       { label: "Pending Orders", value: data?.pending_orders ?? 0 },
       { label: "Orders In Progress", value: data?.in_progress_orders ?? 0 },
       { label: "Completed Orders", value: data?.completed_orders ?? 0 }
-    ],
-    [data]
-  );
+    ];
+    if (auth.role !== "factory") {
+      rows.splice(1, 0, { label: "Total Customers", value: data?.total_customers ?? 0 });
+    }
+    return rows;
+  }, [data, auth.role]);
 
   useEffect(() => {
     let alive = true;
@@ -64,7 +66,12 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+      <div
+        className={[
+          "grid grid-cols-1 gap-4",
+          auth.role === "factory" ? "md:grid-cols-4" : "md:grid-cols-5"
+        ].join(" ")}
+      >
         {items.map((x) => (
           <Card key={x.label}>
             <div className="text-sm font-semibold text-black/60">{x.label}</div>

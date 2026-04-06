@@ -1,12 +1,16 @@
 import { api } from "./api";
 import type {
   AuditLogItem,
+  ChangePasswordRequest,
   Customer,
   CustomerCreate,
+  ImpersonateResponse,
   InvoiceDetail,
   InvoiceListItem,
   LoginRequest,
   LoginResponse,
+  StopImpersonationRequest,
+  TrashItem,
   Order,
   OrderAdminUpdate,
   ProformaDetail,
@@ -19,12 +23,51 @@ import type {
   UserCreate,
   Paginated,
   WaybillDetail,
-  WaybillListItem
+  WaybillListItem,
+  InventoryFinancialSummary,
+  InventoryMaterial,
+  InventoryMovement,
+  InventoryMovementAction,
+  InventoryPayment,
+  InventorySupplierFinancialRow
 } from "../types/api";
 
 export const authApi = {
   async login(payload: LoginRequest) {
     const { data } = await api.post<LoginResponse>("/auth/login", payload);
+    return data;
+  },
+  async changePassword(payload: ChangePasswordRequest) {
+    const { data } = await api.post<{ message: string }>("/auth/change-password", payload);
+    return data;
+  }
+};
+
+export const trashApi = {
+  async list() {
+    const { data } = await api.get<{ items: TrashItem[] }>("/trash");
+    return data;
+  },
+  async restore(entity_type: string, entity_id: number) {
+    const { data } = await api.post<{ message: string }>("/trash/restore", {
+      entity_type,
+      entity_id
+    });
+    return data;
+  },
+  async purge(entity_type: string, entity_id: number) {
+    const { data } = await api.delete<{ message: string }>(`/trash/purge/${entity_type}/${entity_id}`);
+    return data;
+  }
+};
+
+export const adminApi = {
+  async impersonate(userId: number) {
+    const { data } = await api.post<ImpersonateResponse>(`/admin/impersonate/${userId}`);
+    return data;
+  },
+  async stopImpersonation(body: StopImpersonationRequest) {
+    const { data } = await api.post<LoginResponse>("/admin/stop-impersonation", body);
     return data;
   }
 };
@@ -147,6 +190,22 @@ export const ordersApi = {
   async sendEmail(orderId: number) {
     const { data } = await api.post<{ message: string }>(`/orders/${orderId}/send-email`);
     return data;
+  },
+  async download(orderId: number) {
+    const res = await api.post(`/orders/${orderId}/download`, {}, { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = `order-${orderId}.pdf`;
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   },
   async createMultipart(form: FormData) {
     const { data } = await api.post<Order>("/orders", form, {
@@ -325,7 +384,7 @@ export const proformaApi = {
     const res = await api.post(`/proforma/${id}/download`, {}, { responseType: "blob" });
     const blob = res.data as Blob;
     const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `proforma-${id}.html`;
+    let filename = `proforma-${id}.pdf`;
     if (cd) {
       const m = /filename="([^"]+)"/.exec(cd);
       if (m) filename = m[1];
@@ -391,7 +450,7 @@ export const quotationApi = {
     const res = await api.post(`/quotations/${id}/download`, {}, { responseType: "blob" });
     const blob = res.data as Blob;
     const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `quotation-${id}.html`;
+    let filename = `quotation-${id}.pdf`;
     if (cd) {
       const m = /filename="([^"]+)"/.exec(cd);
       if (m) filename = m[1];
@@ -473,7 +532,7 @@ export const waybillApi = {
     const res = await api.post(`/waybills/${id}/download`, {}, { responseType: "blob" });
     const blob = res.data as Blob;
     const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `waybill-${id}.html`;
+    let filename = `waybill-${id}.pdf`;
     if (cd) {
       const m = /filename="([^"]+)"/.exec(cd);
       if (m) filename = m[1];
@@ -497,6 +556,106 @@ export const auditApi = {
     if (typeof params?.limit === "number") qp.limit = params.limit;
     if (typeof params?.offset === "number") qp.offset = params.offset;
     const { data } = await api.get<Paginated<AuditLogItem>>("/audit/logs", { params: qp });
+    return data;
+  }
+};
+
+export const inventoryApi = {
+  async units() {
+    const { data } = await api.get<{ units: string[] }>("/inventory/units");
+    return data;
+  },
+  async suppliers() {
+    const { data } = await api.get<{ suppliers: string[] }>("/inventory/suppliers");
+    return data;
+  },
+  async lowStockCount() {
+    const { data } = await api.get<{ count: number }>("/inventory/low-stock-count");
+    return data;
+  },
+  async list(params?: {
+    search?: string;
+    stock_level?: InventoryMaterial["stock_level"];
+    supplier?: string;
+    payment_status?: InventoryMaterial["payment_status"];
+  }) {
+    const qp: Record<string, string> = {};
+    if (params?.search?.trim()) qp.search = params.search.trim();
+    if (params?.stock_level) qp.stock_level = params.stock_level;
+    if (params?.supplier?.trim()) qp.supplier = params.supplier.trim();
+    if (params?.payment_status) qp.payment_status = params.payment_status;
+    const { data } = await api.get<InventoryMaterial[]>("/inventory", { params: qp });
+    return data;
+  },
+  async create(payload: Record<string, unknown>) {
+    const { data } = await api.post<InventoryMaterial>("/inventory", payload);
+    return data;
+  },
+  async update(materialId: number, payload: Record<string, unknown>) {
+    const { data } = await api.put<InventoryMaterial>(`/inventory/${materialId}`, payload);
+    return data;
+  },
+  async remove(materialId: number) {
+    const { data } = await api.delete<{ message: string }>(`/inventory/${materialId}`);
+    return data;
+  },
+  async postMovement(materialId: number, body: { action: InventoryMovementAction; quantity_delta: string | number }) {
+    const { data } = await api.post<InventoryMovement>(`/inventory/${materialId}/movements`, body);
+    return data;
+  },
+  async movements(params?: { material_id?: number; limit?: number; offset?: number }) {
+    const qp: Record<string, number> = {};
+    if (params?.material_id) qp.material_id = params.material_id;
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<InventoryMovement[]>("/inventory/movements", { params: qp });
+    return data;
+  },
+  async bulkDelete(ids: number[]) {
+    const { data } = await api.post<{ message: string; deleted_ids: number[] }>("/inventory/bulk-delete", { ids });
+    return data;
+  },
+  async bulkStockLevel(ids: number[], stock_level: InventoryMaterial["stock_level"]) {
+    const { data } = await api.post<{ message: string; updated_ids: number[] }>("/inventory/bulk-stock-level", {
+      ids,
+      stock_level
+    });
+    return data;
+  },
+  async financialSummary() {
+    const { data } = await api.get<InventoryFinancialSummary>("/inventory/financial-summary");
+    return data;
+  },
+  async supplierFinancials() {
+    const { data } = await api.get<InventorySupplierFinancialRow[]>("/inventory/supplier-financials");
+    return data;
+  },
+  async listPayments(materialId: number) {
+    const { data } = await api.get<InventoryPayment[]>(`/inventory/${materialId}/payments`);
+    return data;
+  },
+  async addPayment(materialId: number, body: { amount: string | number; paid_at: string; note?: string | null }) {
+    const { data } = await api.post<InventoryPayment>(`/inventory/${materialId}/payments`, body);
+    return data;
+  },
+  async deletePayment(materialId: number, paymentId: number) {
+    const { data } = await api.delete<{ message: string }>(
+      `/inventory/${materialId}/payments/${paymentId}`
+    );
+    return data;
+  },
+  async bulkUpdate(
+    ids: number[],
+    patch: {
+      stock_level?: InventoryMaterial["stock_level"];
+      supplier_name?: string;
+      category?: string | null;
+    }
+  ) {
+    const { data } = await api.post<{ message: string; updated_ids: number[] }>("/inventory/bulk-update", {
+      ids,
+      ...patch
+    });
     return data;
   }
 };

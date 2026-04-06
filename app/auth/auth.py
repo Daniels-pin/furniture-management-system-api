@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
-from app.auth.utils import verify_password, create_access_token
+from app.auth.utils import verify_password, create_access_token, hash_password
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
-from app.schemas import LoginRequest
+from app.schemas import ChangePasswordRequest, LoginRequest
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-from app.utils.activity_log import log_activity, LOGIN
+from app.utils.activity_log import log_activity, LOGIN, PASSWORD_CHANGED
 
 router = APIRouter()
 
@@ -84,3 +84,33 @@ def require_role(allowed_roles: list):
             raise HTTPException(status_code=403, detail="Not authorized")
         return user
     return role_checker
+
+
+def forbid_factory(user=Depends(get_current_user)):
+    if normalize_role(getattr(user, "role", None)) == "factory":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return user
+
+
+def is_factory_user(user) -> bool:
+    return normalize_role(getattr(user, "role", None)) == "factory"
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    if not verify_password(body.current_password, user.password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.password = hash_password(body.new_password)
+    log_activity(
+        db,
+        action=PASSWORD_CHANGED,
+        entity_type="user",
+        entity_id=user.id,
+        actor_user=user,
+    )
+    db.commit()
+    return {"message": "Password updated"}

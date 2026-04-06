@@ -7,10 +7,12 @@ import smtplib
 from html import escape
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
-from app.auth.auth import require_role, get_current_user
+from app.auth.auth import get_current_user, is_factory_user, normalize_role, require_role
+from app.db.alive import customer_alive, order_alive
 from app.auth.pdf_access import require_order_reader
 from datetime import datetime, timedelta
 from app.schemas import (
@@ -47,6 +49,7 @@ from app.utils.activity_log import (
     ORDER_STATUS_UPDATED,
     ORDER_MARKED_PAID,
     ORDER_EMAIL_SENT,
+    ORDER_DOWNLOADED,
     INVOICE_GENERATED,
 )
 from types import SimpleNamespace
@@ -55,6 +58,16 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 TWOPLACES = Decimal("0.01")
+
+
+def _soft_delete_order_bundle(db: Session, order: models.Order, user) -> None:
+    now = datetime.utcnow()
+    order.deleted_at = now
+    order.deleted_by_id = user.id
+    inv = db.query(models.Invoice).filter(models.Invoice.order_id == order.id).first()
+    if inv:
+        inv.deleted_at = now
+        inv.deleted_by_id = user.id
 
 
 def _parse_optional_email(raw: Optional[str]) -> Optional[str]:
@@ -73,29 +86,37 @@ def _build_order_response(
     subtotal_from_items = compute_subtotal(items)
     effective_total_price = order.total_price if order.total_price is not None else subtotal_from_items
     units = display_unit_amounts(SimpleNamespace(total_price=effective_total_price), items)
+    factory = is_factory_user(user)
+    item_rows: list[dict] = []
+    for i, it in enumerate(items):
+        row = {
+            "id": it.id,
+            "item_name": it.item_name,
+            "description": it.description,
+            "quantity": it.quantity,
+        }
+        if not factory:
+            row["amount"] = units[i] if i < len(units) else it.amount
+        item_rows.append(row)
+
+    cust_payload = None
+    if not factory and customer is not None:
+        cust_payload = {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+            "email": customer.email,
+        }
+
     base: dict = {
         "id": order.id,
         "status": order.status,
         "due_date": order.due_date,
         "created_at": order.created_at,
         "image_url": order.image_url,
-        "customer": {
-            "id": customer.id,
-            "name": customer.name,
-            "phone": customer.phone,
-            "address": customer.address,
-            "email": customer.email,
-        },
-        "items": [
-            {
-                "id": it.id,
-                "item_name": it.item_name,
-                "description": it.description,
-                "quantity": it.quantity,
-                "amount": units[i] if i < len(units) else it.amount,
-            }
-            for i, it in enumerate(items)
-        ],
+        "customer": cust_payload,
+        "items": item_rows,
     }
 
     if user.role in ("admin", "showroom"):
@@ -142,6 +163,7 @@ def _build_order_response(
                 updated_by_username = (actor2.email or "").split("@")[0] if actor2 and actor2.email else None
             base["created_by"] = created_by_username
             base["updated_by"] = updated_by_username
+        base["created_by_id"] = order.created_by
 
     return base
 
@@ -398,7 +420,10 @@ def create_order(
         tx = db.begin_nested() if had_outer_tx else db.begin()
         with tx:
             existing = (
-                db.query(models.Customer).filter(models.Customer.phone == phone).first()
+                db.query(models.Customer)
+                .filter(models.Customer.phone == phone)
+                .filter(customer_alive())
+                .first()
             )
             if existing:
                 customer = existing
@@ -495,7 +520,12 @@ def create_order_json(
     if email_val is not None:
         email_val = str(email_val).strip() or None
 
-    existing = db.query(models.Customer).filter(models.Customer.phone == phone).first()
+    existing = (
+        db.query(models.Customer)
+        .filter(models.Customer.phone == phone)
+        .filter(customer_alive())
+        .first()
+    )
     if existing:
         new_customer = existing
         if email_val and not (existing.email or "").strip():
@@ -582,6 +612,7 @@ def get_orders(
         db.query(models.Order)
         .options(joinedload(models.Order.items), joinedload(models.Order.customer))
         .join(models.Customer, models.Order.customer_id == models.Customer.id)
+        .filter(order_alive())
     )
 
     if status:
@@ -647,6 +678,7 @@ def get_orders(
                     "amount_paid": order.amount_paid,
                     "balance": order.balance,
                     "payment_status": order.payment_status,
+                    "created_by_id": order.created_by,
                 }
             )
 
@@ -665,6 +697,7 @@ def get_orders_alerts(
     q = (
         db.query(models.Order)
         .options(joinedload(models.Order.customer))
+        .filter(order_alive())
         .filter(models.Order.due_date.isnot(None))
         .filter(models.Order.due_date <= upcoming)
         .filter(models.Order.status != "completed")
@@ -700,17 +733,27 @@ def get_reminders(
 
     #  Role-based filtering
     if user.role == "showroom":
-        orders = db.query(models.Order).filter(
-            models.Order.created_by == user.id,
-            models.Order.due_date <= upcoming,
-            models.Order.due_date >= today
-        ).all()
+        orders = (
+            db.query(models.Order)
+            .filter(order_alive())
+            .filter(
+                models.Order.created_by == user.id,
+                models.Order.due_date <= upcoming,
+                models.Order.due_date >= today,
+            )
+            .all()
+        )
     else:
         # factory + admin
-        orders = db.query(models.Order).filter(
-            models.Order.due_date <= upcoming,
-            models.Order.due_date >= today
-        ).all()
+        orders = (
+            db.query(models.Order)
+            .filter(order_alive())
+            .filter(
+                models.Order.due_date <= upcoming,
+                models.Order.due_date >= today,
+            )
+            .all()
+        )
 
     result = []
 
@@ -731,7 +774,7 @@ def get_order(
     db: Session = Depends(get_db),
     user=Depends(require_order_reader),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -747,33 +790,37 @@ def get_order(
     subtotal_from_items = compute_subtotal(items)
     effective_total_price = order.total_price if order.total_price is not None else subtotal_from_items
     units = display_unit_amounts(SimpleNamespace(total_price=effective_total_price), items)
+    factory = is_factory_user(user)
+
+    item_rows: list[dict] = []
+    for i, item in enumerate(items):
+        row = {
+            "id": item.id,
+            "item_name": item.item_name,
+            "description": item.description,
+            "quantity": item.quantity,
+        }
+        if not factory:
+            row["amount"] = units[i] if i < len(units) else item.amount
+        item_rows.append(row)
+
+    cust_payload = None
+    if not factory and customer is not None:
+        cust_payload = {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+            "email": customer.email,
+        }
 
     base = {
         "order_id": order.id,
         "status": order.status,
         "due_date": order.due_date,
         "image_url": order.image_url,
-        "tax_percent": order.tax_percent,
-        "tax": order.tax,
-        "customer": None
-        if user.role == "factory"
-        else {
-            "id": customer.id,
-            "name": customer.name,
-            "phone": customer.phone,
-            "address": customer.address,
-            "email": customer.email,
-        },
-        "items": [
-            {
-                "id": item.id,
-                "item_name": item.item_name,
-                "description": item.description,
-                "quantity": item.quantity,
-                "amount": units[i] if i < len(units) else item.amount,
-            }
-            for i, item in enumerate(items)
-        ],
+        "customer": cust_payload,
+        "items": item_rows,
     }
 
     if user.role in ("admin", "showroom"):
@@ -798,6 +845,8 @@ def get_order(
                 "discount_value": order.discount_value,
                 "discount_amount": order.discount_amount,
                 "final_price": order.final_price,
+                "tax_percent": order.tax_percent,
+                "tax": order.tax,
                 "total": total,
                 "amount_paid": order.amount_paid,
                 "balance": order.balance,
@@ -806,7 +855,12 @@ def get_order(
                 "updated_by": updated_by_username,
             }
         )
-        inv_row = db.query(models.Invoice.id).filter(models.Invoice.order_id == order.id).first()
+        inv_row = (
+            db.query(models.Invoice.id)
+            .filter(models.Invoice.order_id == order.id)
+            .filter(models.Invoice.deleted_at.is_(None))
+            .first()
+        )
         if inv_row:
             base["invoice_id"] = inv_row[0]
 
@@ -819,7 +873,7 @@ def put_order_admin(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -955,7 +1009,12 @@ def put_order_admin(
                 "updated_by": updated_by_username,
             }
         )
-        inv_row = db.query(models.Invoice.id).filter(models.Invoice.order_id == order.id).first()
+        inv_row = (
+            db.query(models.Invoice.id)
+            .filter(models.Invoice.order_id == order.id)
+            .filter(models.Invoice.deleted_at.is_(None))
+            .first()
+        )
         if inv_row:
             base["invoice_id"] = inv_row[0]
     return base
@@ -968,7 +1027,7 @@ def update_order_pricing(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -1011,12 +1070,15 @@ def update_order_pricing(
 def delete_order(
     order_id: int,
     db: Session = Depends(get_db),
-    user = Depends(require_role(["admin"]))
+    user=Depends(require_role(["admin", "showroom"])),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    if normalize_role(user.role) == "showroom" and order.created_by != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     oid = order.id
     log_activity(
@@ -1025,11 +1087,12 @@ def delete_order(
         entity_type="order",
         entity_id=oid,
         actor_user=user,
+        meta={"soft_delete": True},
     )
-    db.delete(order)
+    _soft_delete_order_bundle(db, order, user)
     db.commit()
 
-    return {"message": "Order deleted"}
+    return {"message": "Order moved to Trash"}
 
 
 @router.patch("/orders/{order_id}/status")
@@ -1043,7 +1106,7 @@ def update_order_status_patch(
     if status not in allowed:
         raise HTTPException(status_code=400, detail="Invalid status value")
 
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -1072,6 +1135,7 @@ def send_order_email(
         db.query(models.Order)
         .options(joinedload(models.Order.customer))
         .filter(models.Order.id == order_id)
+        .filter(order_alive())
         .first()
     )
     if not order:
@@ -1127,13 +1191,48 @@ def send_order_email(
     return {"message": "Order sent"}
 
 
+@router.post("/orders/{order_id}/download")
+def download_order_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    try:
+        pdf_bytes = document_pdf_bytes_via_ui("order", "order", order.id)
+    except RuntimeError as e:
+        logger.exception("Order PDF download failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Order PDF download failed")
+        raise HTTPException(status_code=500, detail="Could not generate PDF") from e
+
+    log_activity(
+        db,
+        action=ORDER_DOWNLOADED,
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+        meta={"order_id": order.id},
+    )
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="order-{order.id}.pdf"'},
+    )
+
+
 @router.post("/orders/{order_id}/mark_paid")
 def mark_order_fully_paid(
     order_id: int,
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.total_price is None:

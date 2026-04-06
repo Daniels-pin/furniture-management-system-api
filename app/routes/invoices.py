@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 import os
@@ -15,6 +16,7 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.auth.pdf_access import require_invoice_reader
 from app.database import get_db
+from app.db.alive import invoice_alive, order_alive
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
@@ -267,8 +269,14 @@ def list_invoices(
 ):
     lim = max(1, min(int(limit or 20), 100))
     off = max(0, int(offset or 0))
-    total = db.query(func.count(models.Invoice.id)).scalar() or 0
-    q = db.query(models.Invoice).options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
+    q = (
+        db.query(models.Invoice)
+        .join(models.Order, models.Invoice.order_id == models.Order.id)
+        .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
+        .filter(invoice_alive())
+        .filter(order_alive())
+    )
+    total = q.count()
     rows = q.order_by(models.Invoice.id.desc()).offset(off).limit(lim).all()
     return {"items": [_invoice_to_list_item(db, inv, user) for inv in rows], "total": total}
 
@@ -283,12 +291,15 @@ def get_invoice_by_order(
         db.query(models.Invoice)
         .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
         .filter(models.Invoice.order_id == order_id)
+        .filter(invoice_alive())
         .first()
     )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found for this order")
 
     order = inv.order
+    if not order or order.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Order not found")
     items = (
         db.query(models.OrderItem)
         .filter(models.OrderItem.order_id == order.id)
@@ -325,13 +336,18 @@ def issue_invoice_for_order(
     user=Depends(require_role(["admin", "showroom"])),
 ):
     """Create an invoice for an order that does not already have one (e.g. after invoice-only delete)."""
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.customer_id is None:
         raise HTTPException(status_code=400, detail="Order has no customer")
 
-    existing = db.query(models.Invoice).filter(models.Invoice.order_id == order_id).first()
+    existing = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.order_id == order_id)
+        .filter(invoice_alive())
+        .first()
+    )
     if existing:
         raise HTTPException(status_code=400, detail="This order already has an invoice")
 
@@ -370,13 +386,14 @@ def get_invoice(
         db.query(models.Invoice)
         .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
         .filter(models.Invoice.id == invoice_id)
+        .filter(invoice_alive())
         .first()
     )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     order = inv.order
-    if not order:
+    if not order or order.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Order not found")
 
     items = (
@@ -414,8 +431,13 @@ def delete_invoice(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    """Remove the invoice row only; the linked order and line items are kept. Admin only."""
-    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    """Soft-delete invoice only; linked order and line items are kept. Admin only."""
+    inv = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.id == invoice_id)
+        .filter(invoice_alive())
+        .first()
+    )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -428,11 +450,13 @@ def delete_invoice(
         entity_type="invoice",
         entity_id=iid,
         actor_user=user,
-        meta={"invoice_number": inv_num, "order_id": oid},
+        meta={"invoice_number": inv_num, "order_id": oid, "soft_delete": True},
     )
-    db.delete(inv)
+    now = datetime.utcnow()
+    inv.deleted_at = now
+    inv.deleted_by_id = user.id
     db.commit()
-    return {"message": "Invoice deleted", "order_id": oid}
+    return {"message": "Invoice moved to Trash", "order_id": oid}
 
 
 @router.post("/invoices/{invoice_id}/send-email")
@@ -445,6 +469,7 @@ def send_invoice_email(
         db.query(models.Invoice)
         .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
         .filter(models.Invoice.id == invoice_id)
+        .filter(invoice_alive())
         .first()
     )
     if not inv:
@@ -453,7 +478,7 @@ def send_invoice_email(
         raise HTTPException(status_code=400, detail="Customer has no email")
 
     order = inv.order
-    if not order:
+    if not order or order.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Order not found")
     items = (
         db.query(models.OrderItem)
@@ -521,7 +546,12 @@ def record_invoice_print(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    inv = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.id == invoice_id)
+        .filter(invoice_alive())
+        .first()
+    )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     log_activity(
@@ -542,7 +572,12 @@ def download_invoice_pdf(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    inv = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    inv = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.id == invoice_id)
+        .filter(invoice_alive())
+        .first()
+    )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     try:

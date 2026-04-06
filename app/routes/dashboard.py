@@ -8,7 +8,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
-from app.auth.auth import get_current_user
+from app.auth.auth import get_current_user, normalize_role
+from app.db.alive import customer_alive, order_alive
 from app.database import get_db
 
 router = APIRouter()
@@ -19,21 +20,34 @@ def get_dashboard(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    # Core metrics
-    total_orders = db.query(func.count(models.Order.id)).scalar() or 0
-    total_customers = db.query(func.count(models.Customer.id)).scalar() or 0
+    # Core metrics (exclude soft-deleted rows)
+    total_orders = db.query(func.count(models.Order.id)).filter(order_alive()).scalar() or 0
+    total_customers = (
+        db.query(func.count(models.Customer.id)).filter(customer_alive()).scalar() or 0
+        if normalize_role(user.role) != "factory"
+        else 0
+    )
 
     pending_orders = (
-        db.query(func.count(models.Order.id)).filter(models.Order.status == "pending").scalar() or 0
+        db.query(func.count(models.Order.id))
+        .filter(order_alive())
+        .filter(models.Order.status == "pending")
+        .scalar()
+        or 0
     )
     in_progress_orders = (
         db.query(func.count(models.Order.id))
+        .filter(order_alive())
         .filter(models.Order.status == "in_progress")
         .scalar()
         or 0
     )
     completed_orders = (
-        db.query(func.count(models.Order.id)).filter(models.Order.status == "completed").scalar() or 0
+        db.query(func.count(models.Order.id))
+        .filter(order_alive())
+        .filter(models.Order.status == "completed")
+        .scalar()
+        or 0
     )
 
     # Upcoming due orders (<= 14 days, not completed)
@@ -42,6 +56,7 @@ def get_dashboard(
     due_rows = (
         db.query(models.Order)
         .options(joinedload(models.Order.customer))
+        .filter(order_alive())
         .filter(models.Order.due_date.isnot(None))
         .filter(models.Order.due_date <= upcoming)
         .filter(models.Order.status != "completed")
@@ -67,6 +82,7 @@ def get_dashboard(
     recent_rows = (
         db.query(models.Order)
         .options(joinedload(models.Order.customer))
+        .filter(order_alive())
         .order_by(models.Order.created_at.desc())
         .limit(5)
         .all()
@@ -96,17 +112,25 @@ def get_dashboard(
 
     # Admin-only financials
     if user.role == "admin":
-        total_revenue = db.query(
-            func.coalesce(
-                func.sum(
-                    func.coalesce(models.Order.final_price, models.Order.total_price)
-                    + func.coalesce(models.Order.tax, 0)
-                ),
-                0,
+        total_revenue = (
+            db.query(
+                func.coalesce(
+                    func.sum(
+                        func.coalesce(models.Order.final_price, models.Order.total_price)
+                        + func.coalesce(models.Order.tax, 0)
+                    ),
+                    0,
+                )
             )
-        ).scalar()
-        amount_paid = db.query(func.coalesce(func.sum(models.Order.amount_paid), 0)).scalar()
-        outstanding_balance = db.query(func.coalesce(func.sum(models.Order.balance), 0)).scalar()
+            .filter(order_alive())
+            .scalar()
+        )
+        amount_paid = (
+            db.query(func.coalesce(func.sum(models.Order.amount_paid), 0)).filter(order_alive()).scalar()
+        )
+        outstanding_balance = (
+            db.query(func.coalesce(func.sum(models.Order.balance), 0)).filter(order_alive()).scalar()
+        )
 
         # Normalize to Decimal (some DB drivers may return Decimal already)
         resp.update(

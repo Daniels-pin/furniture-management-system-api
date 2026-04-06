@@ -15,6 +15,9 @@ from app.routes.invoices import router as invoices_router
 from app.routes.orders import router as orders_router
 from app.routes.products import router as products_router
 from app.routes.users import router as users_router
+from app.routes.admin_impersonate import router as admin_impersonate_router
+from app.routes.trash import router as trash_router
+from app.routes.inventory import router as inventory_router
 
 app = FastAPI() 
 
@@ -77,6 +80,8 @@ def protected(user = Depends(get_current_user)):
 
 app.include_router(customers_router, tags=["Customers"])
 app.include_router(users_router, tags=["Users"])
+app.include_router(admin_impersonate_router)
+app.include_router(trash_router)
 app.include_router(products_router, tags=["Products"])
 app.include_router(orders_router, tags=["Orders"])
 app.include_router(invoices_router, tags=["Invoices"])
@@ -85,4 +90,5 @@ app.include_router(audit_router, tags=["Audit"])
 app.include_router(proforma_router, tags=["Proforma"])
 app.include_router(quotation_router, tags=["Quotations"])
 app.include_router(waybill_router, tags=["Waybills"])
+app.include_router(inventory_router, tags=["Inventory"])
 

@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { quotationApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { Modal } from "../components/ui/Modal";
 import { PaginationFooter } from "../components/ui/Pagination";
 import type { QuotationListItem } from "../types/api";
 import { formatMoney } from "../utils/money";
@@ -24,11 +26,14 @@ function statusBadge(status: string) {
 
 export function QuotationListPage() {
   const toast = useToast();
+  const auth = useAuth();
   const nav = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<QuotationListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [deleteTarget, setDeleteTarget] = useState<QuotationListItem | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,6 +51,21 @@ export function QuotationListPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function confirmDeleteQuotation() {
+    if (!deleteTarget) return;
+    setDeleteSubmitting(true);
+    try {
+      await quotationApi.delete(deleteTarget.id);
+      toast.push("success", "Quotation moved to Trash.");
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -71,19 +91,20 @@ export function QuotationListPage() {
                 <th className="py-3 pr-4 font-semibold">Customer</th>
                 <th className="py-3 pr-4 font-semibold">Status</th>
                 <th className="py-3 pr-4 font-semibold">Total</th>
-                <th className="py-3 pr-0 font-semibold">Created</th>
+                <th className="py-3 pr-4 font-semibold">Created</th>
+                {auth.role === "admin" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-6 text-black/60">
+                  <td colSpan={auth.role === "admin" ? 6 : 5} className="py-6 text-black/60">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-6 text-black/60">
+                  <td colSpan={auth.role === "admin" ? 6 : 5} className="py-6 text-black/60">
                     No quotations yet.
                   </td>
                 </tr>
@@ -98,10 +119,28 @@ export function QuotationListPage() {
                     <td className="py-3 pr-4 text-black/80">{r.customer_name}</td>
                     <td className="py-3 pr-4">{statusBadge(r.status)}</td>
                     <td className="py-3 pr-4">{formatMoney(r.grand_total)}</td>
-                    <td className="py-3 pr-0 text-black/60">
+                    <td className="py-3 pr-4 text-black/60">
                       {new Date(r.created_at).toLocaleString()}
                       {r.created_by ? <span className="ml-2 text-black/40">· {r.created_by}</span> : null}
                     </td>
+                    {auth.role === "admin" ? (
+                      <td className="py-3 pr-0 text-right">
+                        {r.status !== "converted" ? (
+                          <button
+                            type="button"
+                            className="text-xs font-bold text-red-700 hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget(r);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        ) : (
+                          <span className="text-xs text-black/35">—</span>
+                        )}
+                      </td>
+                    ) : null}
                   </tr>
                 ))
               )}
@@ -110,6 +149,34 @@ export function QuotationListPage() {
         </div>
         <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
       </Card>
+
+      <Modal
+        open={deleteTarget !== null}
+        title="Move quotation to Trash?"
+        onClose={() => {
+          if (!deleteSubmitting) setDeleteTarget(null);
+        }}
+      >
+        <div className="space-y-4 px-6 pb-6">
+          <p className="text-sm text-black/70">
+            <span className="font-semibold text-black">#{deleteTarget?.quote_number}</span> for{" "}
+            {deleteTarget?.customer_name} will be soft-deleted. You can restore it from the Trash page.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" disabled={deleteSubmitting} onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="border-red-600 bg-red-600 text-white hover:bg-red-700"
+              disabled={deleteSubmitting}
+              isLoading={deleteSubmitting}
+              onClick={() => void confirmDeleteQuotation()}
+            >
+              Move to Trash
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

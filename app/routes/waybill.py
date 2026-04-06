@@ -18,6 +18,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_waybill_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.database import get_db
+from app.db.alive import order_alive, waybill_alive
 from app.schemas import WaybillCreate, WaybillLogisticsUpdate, WaybillStatusUpdate
 from app.utils.activity_log import (
     WAYBILL_CREATED,
@@ -242,8 +243,14 @@ def list_waybills(
     user=Depends(require_role(["admin", "showroom"])),
 ):
     lim, off = _paginate_params(limit, offset)
-    total = db.query(func.count(models.Waybill.id)).scalar() or 0
-    q = db.query(models.Waybill).options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
+    q = (
+        db.query(models.Waybill)
+        .join(models.Order, models.Waybill.order_id == models.Order.id)
+        .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
+        .filter(waybill_alive())
+        .filter(order_alive())
+    )
+    total = q.count()
     rows = q.order_by(models.Waybill.id.desc()).offset(off).limit(lim).all()
     out = []
     for wb in rows:
@@ -274,6 +281,7 @@ def create_waybill(
         db.query(models.Order)
         .options(joinedload(models.Order.customer))
         .filter(models.Order.id == payload.order_id)
+        .filter(order_alive())
         .first()
     )
     if not order:
@@ -305,6 +313,7 @@ def create_waybill(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == wb.id)
+        .filter(waybill_alive())
         .first()
     )
     return _waybill_to_detail(db, wb)
@@ -317,7 +326,7 @@ def update_waybill_logistics(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).filter(waybill_alive()).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
     wb.driver_name = payload.driver_name
@@ -330,6 +339,7 @@ def update_waybill_logistics(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == waybill_id)
+        .filter(waybill_alive())
         .first()
     )
     return _waybill_to_detail(db, wb)
@@ -345,10 +355,13 @@ def get_waybill(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == waybill_id)
+        .filter(waybill_alive())
         .first()
     )
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
+    if wb.order and wb.order.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Order not found")
     return _waybill_to_detail(db, wb)
 
 
@@ -358,7 +371,7 @@ def record_waybill_view(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).filter(waybill_alive()).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
     log_activity(
@@ -380,7 +393,7 @@ def update_waybill_status(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).filter(waybill_alive()).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
     new_s = payload.delivery_status.strip().lower()
@@ -403,6 +416,7 @@ def update_waybill_status(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == waybill_id)
+        .filter(waybill_alive())
         .first()
     )
     return _waybill_to_detail(db, wb)
@@ -418,6 +432,7 @@ def send_waybill_email(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
         .filter(models.Waybill.id == waybill_id)
+        .filter(waybill_alive())
         .first()
     )
     if not wb:
@@ -433,7 +448,15 @@ def send_waybill_email(
     html = _render_waybill_html(db, wb)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb.id)
-        safe_n = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
+    except RuntimeError as e:
+        logger.exception("Waybill PDF generation failed for email")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Waybill PDF generation failed for email")
+        raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
+
+    safe_n = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
+    try:
         send_email_html_with_pdf_attachment(
             to_email,
             subject,
@@ -474,7 +497,7 @@ def record_waybill_print(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).filter(waybill_alive()).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
     if not _waybill_driver_ready(wb):
@@ -501,6 +524,7 @@ def download_waybill(
         db.query(models.Waybill)
         .options(joinedload(models.Waybill.order))
         .filter(models.Waybill.id == waybill_id)
+        .filter(waybill_alive())
         .first()
     )
     if not wb:
@@ -508,7 +532,15 @@ def download_waybill(
     if not _waybill_driver_ready(wb):
         raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
 
-    html = _render_waybill_html(db, wb)
+    try:
+        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb.id)
+    except RuntimeError as e:
+        logger.exception("Waybill PDF download failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Waybill PDF download failed")
+        raise HTTPException(status_code=500, detail="Could not generate PDF") from e
+
     log_activity(
         db,
         action=WAYBILL_DOWNLOADED,
@@ -519,11 +551,11 @@ def download_waybill(
     )
     db.commit()
 
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", f"waybill-{wb.waybill_number}.html")
+    safe = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
     return Response(
-        content=html.encode("utf-8"),
-        media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="waybill-{safe}.pdf"'},
     )
 
 
@@ -533,7 +565,7 @@ def delete_waybill(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).first()
+    wb = db.query(models.Waybill).filter(models.Waybill.id == waybill_id).filter(waybill_alive()).first()
     if not wb:
         raise HTTPException(status_code=404, detail="Waybill not found")
     meta_num = wb.waybill_number
@@ -544,8 +576,9 @@ def delete_waybill(
         entity_type="waybill",
         entity_id=wid,
         actor_user=user,
-        meta={"waybill_number": meta_num},
+        meta={"waybill_number": meta_num, "soft_delete": True},
     )
-    db.delete(wb)
+    wb.deleted_at = datetime.utcnow()
+    wb.deleted_by_id = user.id
     db.commit()
-    return {"message": "Waybill deleted"}
+    return {"message": "Waybill moved to Trash"}

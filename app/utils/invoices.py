@@ -48,7 +48,12 @@ def create_invoice_for_order(db: Session, order: models.Order, customer_id: int)
 
 
 def sync_invoice_from_order(db: Session, order: models.Order) -> None:
-    inv = db.query(models.Invoice).filter(models.Invoice.order_id == order.id).first()
+    inv = (
+        db.query(models.Invoice)
+        .filter(models.Invoice.order_id == order.id)
+        .filter(models.Invoice.deleted_at.is_(None))
+        .first()
+    )
     if not inv:
         return
     # Keep invoice row as the original total; discounted final is derived from the order.

@@ -1,7 +1,9 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../state/auth";
 import { useEffect, useRef, useState } from "react";
-import { customersApi, ordersApi } from "../../services/endpoints";
+import { getErrorMessage } from "../../services/api";
+import { useToast } from "../../state/toast";
+import { customersApi, inventoryApi, ordersApi } from "../../services/endpoints";
 import { StatusBadge } from "../ui/StatusBadge";
 import { APP_NAME } from "../../config/app";
 
@@ -23,8 +25,10 @@ function NavItem({ to, label }: { to: string; label: string }) {
 
 export function AppLayout() {
   const auth = useAuth();
+  const toast = useToast();
   const location = useLocation();
   const nav = useNavigate();
+  const [exitImpLoading, setExitImpLoading] = useState(false);
   const [dueSoon, setDueSoon] = useState<number>(0);
   const [open, setOpen] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(false);
@@ -32,6 +36,7 @@ export function AppLayout() {
   const [bOpen, setBOpen] = useState(false);
   const [birthdaysLoading, setBirthdaysLoading] = useState(false);
   const [birthdays, setBirthdays] = useState<Awaited<ReturnType<typeof customersApi.birthdaysToday>> | null>(null);
+  const [lowStockCount, setLowStockCount] = useState(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const bWrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,6 +57,10 @@ export function AppLayout() {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (auth.role === "factory") {
+      setBirthdays(null);
+      return;
+    }
     let alive = true;
     (async () => {
       try {
@@ -65,7 +74,28 @@ export function AppLayout() {
     return () => {
       alive = false;
     };
-  }, [location.pathname]);
+  }, [location.pathname, auth.role]);
+
+  useEffect(() => {
+    if (auth.role !== "admin" && auth.role !== "factory") {
+      setLowStockCount(0);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const res = await inventoryApi.lowStockCount();
+        if (!alive) return;
+        setLowStockCount(typeof res?.count === "number" ? res.count : 0);
+      } catch {
+        if (!alive) return;
+        setLowStockCount(0);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [location.pathname, auth.role]);
 
   const showRed = dueSoon > 0;
 
@@ -120,6 +150,33 @@ export function AppLayout() {
 
   return (
     <div className="min-h-dvh bg-white">
+      {auth.isImpersonation ? (
+        <div
+          className="border-b border-amber-700/20 bg-amber-100 px-4 py-2.5 text-center text-sm font-semibold text-amber-950"
+          role="status"
+        >
+          <span>
+            You are logged in as{" "}
+            <span className="font-bold">{auth.impersonationSubject ?? auth.username ?? "user"}</span>{" "}
+            (Impersonation Mode)
+          </span>
+          <button
+            type="button"
+            disabled={exitImpLoading}
+            className="ml-3 inline-flex items-center rounded-lg border border-amber-800/40 bg-white px-3 py-1 text-xs font-bold text-amber-950 shadow-sm hover:bg-amber-50 disabled:opacity-60"
+            onClick={() => {
+              setExitImpLoading(true);
+              void auth
+                .exitImpersonation()
+                .then(() => nav("/dashboard", { replace: true }))
+                .catch((e) => toast.push("error", getErrorMessage(e)))
+                .finally(() => setExitImpLoading(false));
+            }}
+          >
+            {exitImpLoading ? "Exiting…" : "Exit"}
+          </button>
+        </div>
+      ) : null}
       <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-4 py-6 md:grid-cols-[240px_1fr]">
         <aside className="min-w-0 overflow-hidden rounded-3xl border border-black/10 bg-white p-4 shadow-soft">
           <div className="px-2 pb-4">
@@ -144,7 +201,14 @@ export function AppLayout() {
                 <NavItem to="/proforma" label="Proforma Invoice" />
               </>
             ) : null}
-            <NavItem to="/customers" label="Customers" />
+            {auth.role === "admin" || auth.role === "showroom" ? (
+              <NavItem to="/customers" label="Customers" />
+            ) : null}
+            {auth.role === "admin" || auth.role === "factory" ? (
+              <NavItem to="/inventory" label="Inventory" />
+            ) : null}
+            <NavItem to="/trash" label="Trash" />
+            <NavItem to="/account" label="Account" />
             {auth.role === "admin" ? <NavItem to="/admin/users" label="Admin Users" /> : null}
             {auth.role === "admin" ? <NavItem to="/admin/activity" label="Activity Log" /> : null}
           </nav>
@@ -169,73 +233,105 @@ export function AppLayout() {
           <div className="mb-4 flex items-center justify-end">
             <div className="flex items-center gap-2">
               <div className="relative" ref={bWrapRef}>
+                {auth.role === "factory" ? null : (
+                  <>
+                    <button
+                      className="relative rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      aria-label="Birthdays today"
+                      type="button"
+                      onClick={() => void toggleBirthdays()}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M12 2c1.1 0 2 .9 2 2v2h-4V4c0-1.1.9-2 2-2Z"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                        />
+                        <path
+                          d="M6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10Z"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinejoin="round"
+                        />
+                        <path d="M5 10h14" stroke="currentColor" strokeWidth="1.6" />
+                      </svg>
+                      <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] font-bold text-black/70">
+                        {Array.isArray(birthdays) ? birthdays.length : 0}
+                      </span>
+                    </button>
+
+                    {bOpen ? (
+                      <div className="absolute right-0 mt-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
+                        <div className="flex items-center justify-between px-4 py-3">
+                          <div className="text-sm font-semibold">Birthdays today</div>
+                          <button
+                            className="rounded-xl px-2 py-1 text-sm font-semibold text-black/70 hover:bg-black/5"
+                            onClick={() => setBOpen(false)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="max-h-[360px] overflow-auto border-t border-black/10">
+                          {birthdaysLoading ? (
+                            <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
+                          ) : !birthdays || birthdays.length === 0 ? (
+                            <div className="px-4 py-4 text-sm text-black/60">No birthdays today</div>
+                          ) : (
+                            <div className="divide-y divide-black/5">
+                              {birthdays.map((c) => (
+                                <button
+                                  key={c.id}
+                                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
+                                  onClick={() => {
+                                    setBOpen(false);
+                                    nav("/customers");
+                                  }}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold">{c.name}</div>
+                                    <div className="mt-0.5 text-xs text-black/60">
+                                      {c.birth_day && c.birth_month ? `${c.birth_day}/${c.birth_month}` : "—"}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 text-xs font-semibold text-black/50">View</div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              {auth.role === "admin" || auth.role === "factory" ? (
                 <button
-                  className="relative rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                  aria-label="Birthdays today"
                   type="button"
-                  onClick={() => void toggleBirthdays()}
+                  className="relative rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                  aria-label={`Low stock materials${lowStockCount ? `: ${lowStockCount}` : ""}`}
+                  onClick={() => nav("/inventory")}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <path
-                      d="M12 2c1.1 0 2 .9 2 2v2h-4V4c0-1.1.9-2 2-2Z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                    />
-                    <path
-                      d="M6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10Z"
+                      d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"
                       stroke="currentColor"
                       strokeWidth="1.6"
                       strokeLinejoin="round"
                     />
-                    <path d="M5 10h14" stroke="currentColor" strokeWidth="1.6" />
+                    <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="1.6" />
+                    <path d="M4 12h16" stroke="currentColor" strokeWidth="1.6" />
                   </svg>
-                  <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] font-bold text-black/70">
-                    {Array.isArray(birthdays) ? birthdays.length : 0}
+                  <span
+                    className={[
+                      "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                      lowStockCount > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
+                    ].join(" ")}
+                  >
+                    {lowStockCount}
                   </span>
                 </button>
-
-                {bOpen ? (
-                  <div className="absolute right-0 mt-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <div className="text-sm font-semibold">Birthdays today</div>
-                      <button
-                        className="rounded-xl px-2 py-1 text-sm font-semibold text-black/70 hover:bg-black/5"
-                        onClick={() => setBOpen(false)}
-                      >
-                        Close
-                      </button>
-                    </div>
-                    <div className="max-h-[360px] overflow-auto border-t border-black/10">
-                      {birthdaysLoading ? (
-                        <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
-                      ) : !birthdays || birthdays.length === 0 ? (
-                        <div className="px-4 py-4 text-sm text-black/60">No birthdays today</div>
-                      ) : (
-                        <div className="divide-y divide-black/5">
-                          {birthdays.map((c) => (
-                            <button
-                              key={c.id}
-                              className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                              onClick={() => {
-                                setBOpen(false);
-                                nav("/customers");
-                              }}
-                            >
-                              <div className="min-w-0">
-                                <div className="text-sm font-semibold">{c.name}</div>
-                                <div className="mt-0.5 text-xs text-black/60">
-                                  {c.birth_day && c.birth_month ? `${c.birth_day}/${c.birth_month}` : "—"}
-                                </div>
-                              </div>
-                              <div className="shrink-0 text-xs font-semibold text-black/50">View</div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
 
               <div className="relative" ref={wrapRef}>
               <button

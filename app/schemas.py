@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from typing import List, Literal, Optional
 from enum import Enum
@@ -78,6 +78,20 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def passwords_valid(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("New passwords do not match")
+        if self.new_password == self.current_password:
+            raise ValueError("New password must be different from the current password")
+        return self
+
+
 class ProductCreate(BaseModel):
     name: str
     price: float
@@ -88,6 +102,12 @@ class ProductResponse(ProductCreate):
 
     class Config:
         orm_mode = True
+
+
+class ProductNameResponse(BaseModel):
+    id: int
+    name: str
+
 
 class OrderItemResponse(BaseModel):
     id: int
@@ -105,6 +125,7 @@ class OrderResponse(BaseModel):
     due_date: Optional[datetime]
     created_at: datetime
     image_url: Optional[str] = None
+    created_by_id: Optional[int] = None
     total_price: Optional[Decimal] = None
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
@@ -450,3 +471,214 @@ class WaybillLogisticsUpdate(BaseModel):
 
 class WaybillStatusUpdate(BaseModel):
     delivery_status: str = Field(..., min_length=1)
+
+
+# --- Factory inventory (materials) ---
+
+InventoryTrackingMode = Literal["numeric", "status_only"]
+InventoryStockLevel = Literal["low", "medium", "full"]
+InventoryPaymentStatus = Literal["paid", "partial", "unpaid"]
+InventoryMovementAction = Literal["added", "used", "adjusted"]
+
+
+def _inventory_unit_validator(unit: str) -> str:
+    from app.constants import INVENTORY_UNITS
+
+    u = (unit or "").strip()
+    if u not in INVENTORY_UNITS:
+        raise ValueError(f"unit must be one of: {', '.join(INVENTORY_UNITS)}")
+    return u
+
+
+class InventoryMaterialCreate(BaseModel):
+    material_name: str = Field(..., min_length=1)
+    category: Optional[str] = None
+    tracking_mode: InventoryTrackingMode
+    quantity: Optional[Decimal] = Field(None, ge=0)
+    unit: str = Field(..., min_length=1)
+    stock_level: InventoryStockLevel
+    supplier_name: str = Field(default="", max_length=500)
+    cost: Optional[Decimal] = Field(None, ge=0)
+    notes: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def validate_unit(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _inventory_unit_validator(str(v))
+
+    @field_validator("category", "notes", mode="before")
+    @classmethod
+    def strip_optional_str(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("supplier_name", mode="before")
+    @classmethod
+    def strip_supplier(cls, v: object) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    @model_validator(mode="after")
+    def tracking_matches_quantity(self):
+        if self.tracking_mode == "status_only":
+            if self.quantity is not None:
+                raise ValueError("quantity must be omitted for status_only tracking")
+        return self
+
+
+class InventoryMaterialUpdate(BaseModel):
+    material_name: Optional[str] = Field(None, min_length=1)
+    category: Optional[str] = None
+    tracking_mode: Optional[InventoryTrackingMode] = None
+    quantity: Optional[Decimal] = Field(None, ge=0)
+    unit: Optional[str] = Field(None, min_length=1)
+    stock_level: Optional[InventoryStockLevel] = None
+    supplier_name: Optional[str] = Field(None, max_length=500)
+    cost: Optional[Decimal] = Field(None, ge=0)
+    notes: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def validate_unit(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _inventory_unit_validator(str(v))
+
+    @field_validator("category", "notes", mode="before")
+    @classmethod
+    def strip_optional_str(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("supplier_name", mode="before")
+    @classmethod
+    def strip_supplier(cls, v: object) -> object:
+        if v is None:
+            return None
+        return str(v).strip() or None
+
+
+class InventoryMaterialOut(BaseModel):
+    id: int
+    material_name: str
+    category: Optional[str] = None
+    tracking_mode: str
+    quantity: Optional[Decimal] = None
+    unit: str
+    stock_level: str
+    supplier_name: str
+    payment_status: str
+    cost: Optional[Decimal] = None
+    amount_paid: Decimal
+    balance: Optional[Decimal] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    added_by: Optional[str] = None
+    last_updated_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryPaymentCreate(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    paid_at: datetime
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
+class InventoryPaymentOut(BaseModel):
+    id: int
+    material_id: int
+    amount: Decimal
+    paid_at: datetime
+    note: Optional[str] = None
+    created_at: datetime
+    recorded_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryFinancialSummary(BaseModel):
+    total_cost: Decimal
+    total_paid: Decimal
+    total_outstanding: Decimal
+    material_count: int
+
+
+class InventorySupplierFinancialRow(BaseModel):
+    supplier_name: str
+    total_cost: Decimal
+    total_paid: Decimal
+    outstanding: Decimal
+
+
+class InventoryMovementCreate(BaseModel):
+    action: InventoryMovementAction
+    quantity_delta: Decimal
+
+    @model_validator(mode="after")
+    def quantity_delta_rules(self):
+        if self.action == "used" and self.quantity_delta >= 0:
+            raise ValueError("used movements expect a negative quantity_delta")
+        if self.action == "added" and self.quantity_delta <= 0:
+            raise ValueError("added movements expect a positive quantity_delta")
+        if self.action == "adjusted" and self.quantity_delta == 0:
+            raise ValueError("adjusted movement requires a non-zero quantity_delta")
+        return self
+
+
+class InventoryMovementOut(BaseModel):
+    id: int
+    material_id: int
+    material_name: str
+    action: str
+    quantity_delta: Optional[Decimal] = None
+    meta: Optional[dict] = None
+    actor_username: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryBulkDelete(BaseModel):
+    ids: List[int] = Field(..., min_length=1)
+
+
+class InventoryBulkStockLevel(BaseModel):
+    ids: List[int] = Field(..., min_length=1)
+    stock_level: InventoryStockLevel
+
+
+class InventoryBulkPatch(BaseModel):
+    ids: List[int] = Field(..., min_length=1)
+    stock_level: Optional[InventoryStockLevel] = None
+    supplier_name: Optional[str] = Field(None, max_length=500)
+    category: Optional[str] = None
+
+    @model_validator(mode="after")
+    def at_least_one_field(self):
+        if self.stock_level is None and self.supplier_name is None and self.category is None:
+            raise ValueError("Provide at least one field to update")
+        return self
+
+
+class InventoryUnitsResponse(BaseModel):
+    units: List[str]

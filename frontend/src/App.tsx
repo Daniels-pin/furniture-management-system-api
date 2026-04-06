@@ -8,6 +8,9 @@ import { OrderDetailsPage } from "./pages/OrderDetailsPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminActivityLogPage } from "./pages/AdminActivityLogPage";
+import { TrashPage } from "./pages/TrashPage";
+import { InventoryPage } from "./pages/InventoryPage";
+import { AccountPage } from "./pages/AccountPage";
 import { InvoicesPage } from "./pages/InvoicesPage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { ProformaListPage } from "./pages/ProformaListPage";
@@ -143,7 +146,24 @@ export default function App() {
             </RequireAuth>
           }
         />
-        <Route path="customers" element={<CustomersPage />} />
+        <Route
+          path="customers"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <CustomersPage />
+            </RequireAuth>
+          }
+        />
+        <Route path="trash" element={<TrashPage />} />
+        <Route
+          path="inventory"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <InventoryPage />
+            </RequireAuth>
+          }
+        />
+        <Route path="account" element={<AccountPage />} />
         <Route
           path="admin/users"
           element={

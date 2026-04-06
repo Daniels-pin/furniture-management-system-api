@@ -47,7 +47,13 @@ export function OrdersPage() {
   const [createOpen, setCreateOpen] = useState(false);
 
   const canCreate = auth.role === "showroom" || auth.role === "admin";
-  const canDelete = auth.role === "admin";
+  function canDeleteOrder(o: Order): boolean {
+    if (auth.role === "admin") return true;
+    if (auth.role === "showroom" && typeof auth.userId === "number" && o.created_by_id === auth.userId) {
+      return true;
+    }
+    return false;
+  }
   const canSeePricing = auth.role === "admin" || auth.role === "showroom";
   const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "admin";
   const canUpdateStatus = auth.role === "admin" || auth.role === "factory";
@@ -101,7 +107,7 @@ export function OrdersPage() {
     setOrders((xs) => xs.filter((x) => x.id !== orderId)); // immediate remove
     try {
       await ordersApi.delete(orderId);
-      toast.push("success", `Order #${orderId} deleted`);
+      toast.push("success", `Order #${orderId} moved to Trash`);
     } catch (err) {
       setOrders(prev); // revert
       toast.push("error", getErrorMessage(err));
@@ -228,7 +234,7 @@ export function OrdersPage() {
                         </td>
                       ) : null}
                       <td className="py-3 pr-0 text-right">
-                        {canDelete ? (
+                        {canDeleteOrder(o) ? (
                           <Button
                             variant="ghost"
                             disabled={deletingId === o.id}
@@ -276,12 +282,12 @@ export function OrdersPage() {
 
       <Modal
         open={confirmDeleteId !== null}
-        title="Delete order?"
+        title="Move order to Trash?"
         onClose={() => setConfirmDeleteId(null)}
       >
         <div className="space-y-4">
           <div className="text-sm text-black/70">
-            This action cannot be undone. The order and its items will be removed.
+            The order will be moved to Trash. You can restore it from Trash unless an admin permanently purges it.
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirmDeleteId(null)}>

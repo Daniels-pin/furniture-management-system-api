@@ -8,8 +8,9 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import get_current_user, require_role
+from app.auth.auth import forbid_factory, require_role
 from app.database import get_db
+from app.db.alive import customer_alive
 from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
 
 from app.utils.activity_log import log_activity, username_from_email, CUSTOMER_CREATED, CUSTOMER_DELETED
@@ -27,33 +28,25 @@ def _creator_username(db: Session, customer: models.Customer) -> str | None:
 @router.get("/customers", response_model=List[CustomerPublicResponse], response_model_exclude_none=True)
 def get_customers(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user=Depends(forbid_factory),
 ):
-    customers = db.query(models.Customer).all()
+    customers = db.query(models.Customer).filter(customer_alive()).order_by(models.Customer.id.desc()).all()
 
     result = []
 
     for c in customers:
-        if user.role == "factory":
-            # 🔒 Limited view
-            result.append({
-                "id": c.id,
-                "name": c.name
-            })
-        else:
-            # ✅ Full view
-            row = {
-                "id": c.id,
-                "name": c.name,
-                "phone": c.phone,
-                "address": c.address,
-                "email": c.email,
-                "birth_day": c.birth_day,
-                "birth_month": c.birth_month,
-            }
-            if user.role in ("admin", "showroom"):
-                row["created_by"] = _creator_username(db, c)
-            result.append(row)
+        row = {
+            "id": c.id,
+            "name": c.name,
+            "phone": c.phone,
+            "address": c.address,
+            "email": c.email,
+            "birth_day": c.birth_day,
+            "birth_month": c.birth_month,
+        }
+        if user.role in ("admin", "showroom"):
+            row["created_by"] = _creator_username(db, c)
+        result.append(row)
 
     return result
 
@@ -64,7 +57,12 @@ def export_customer_contacts(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    rows = db.query(models.Customer).order_by(models.Customer.id.asc()).all()
+    rows = (
+        db.query(models.Customer)
+        .filter(customer_alive())
+        .order_by(models.Customer.id.asc())
+        .all()
+    )
     buf = StringIO()
     writer = csv.writer(buf, lineterminator="\n")
     if kind == "phones":
@@ -97,7 +95,7 @@ def export_customer_contacts(
 def create_customer(
     customer: CustomerCreate,
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user=Depends(forbid_factory),
 ):
     new_customer = models.Customer(
         name=customer.name,
@@ -142,32 +140,33 @@ def create_customer(
 )
 def birthdays_today(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(forbid_factory),
 ):
     today = datetime.utcnow()
-    q = db.query(models.Customer).filter(
-        models.Customer.birth_day == today.day,
-        models.Customer.birth_month == today.month,
+    q = (
+        db.query(models.Customer)
+        .filter(customer_alive())
+        .filter(
+            models.Customer.birth_day == today.day,
+            models.Customer.birth_month == today.month,
+        )
     )
     customers = q.order_by(models.Customer.id.desc()).all()
 
     result = []
     for c in customers:
-        if user.role == "factory":
-            result.append({"id": c.id, "name": c.name})
-        else:
-            row = {
-                "id": c.id,
-                "name": c.name,
-                "phone": c.phone,
-                "address": c.address,
-                "email": c.email,
-                "birth_day": c.birth_day,
-                "birth_month": c.birth_month,
-            }
-            if user.role in ("admin", "showroom"):
-                row["created_by"] = _creator_username(db, c)
-            result.append(row)
+        row = {
+            "id": c.id,
+            "name": c.name,
+            "phone": c.phone,
+            "address": c.address,
+            "email": c.email,
+            "birth_day": c.birth_day,
+            "birth_month": c.birth_month,
+        }
+        if user.role in ("admin", "showroom"):
+            row["created_by"] = _creator_username(db, c)
+        result.append(row)
     return result
 
 
@@ -177,15 +176,25 @@ def delete_customer(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    customer = (
+        db.query(models.Customer)
+        .filter(models.Customer.id == customer_id)
+        .filter(customer_alive())
+        .first()
+    )
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    has_orders = db.query(models.Order).filter(models.Order.customer_id == customer_id).first()
-    if has_orders:
+    has_active_orders = (
+        db.query(models.Order)
+        .filter(models.Order.customer_id == customer_id)
+        .filter(models.Order.deleted_at.is_(None))
+        .first()
+    )
+    if has_active_orders:
         raise HTTPException(
             status_code=400,
-            detail="Customer has existing orders and cannot be deleted",
+            detail="Customer has active orders and cannot be moved to Trash",
         )
 
     cid = customer.id
@@ -195,7 +204,9 @@ def delete_customer(
         entity_type="customer",
         entity_id=cid,
         actor_user=user,
+        meta={"soft_delete": True},
     )
-    db.delete(customer)
+    customer.deleted_at = datetime.utcnow()
+    customer.deleted_by_id = user.id
     db.commit()
-    return {"message": "Customer deleted"}
+    return {"message": "Customer moved to Trash"}

@@ -67,6 +67,7 @@ export function OrderDetailsPage() {
   const [preInvoicePromptOpen, setPreInvoicePromptOpen] = useState(false);
   const [invoicePrepEditFlow, setInvoicePrepEditFlow] = useState(false);
   const [sendingOrderEmail, setSendingOrderEmail] = useState(false);
+  const [downloadingOrderPdf, setDownloadingOrderPdf] = useState(false);
   const [waybillModalOpen, setWaybillModalOpen] = useState(false);
   const [wbDriverName, setWbDriverName] = useState("");
   const [wbDriverPhone, setWbDriverPhone] = useState("");
@@ -260,33 +261,57 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
-            {canIssueInvoice && data.customer?.email?.trim() ? (
+            {canIssueInvoice ? (
               <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold">Order document</div>
                     <div className="mt-1 text-sm text-black/60">
-                      Email a PDF copy of this order to the customer ({data.customer.email}).
+                      {data.customer?.email?.trim()
+                        ? `Download a PDF or email a copy to the customer (${data.customer.email}).`
+                        : "Download a print-ready PDF of this order. Add a customer email to send by email."}
                     </div>
                   </div>
-                  <Button
-                    variant="secondary"
-                    isLoading={sendingOrderEmail}
-                    onClick={async () => {
-                      if (!data) return;
-                      try {
-                        setSendingOrderEmail(true);
-                        await ordersApi.sendEmail(data.order_id);
-                        toast.push("success", "Order PDF emailed to customer.");
-                      } catch (err) {
-                        toast.push("error", getErrorMessage(err));
-                      } finally {
-                        setSendingOrderEmail(false);
-                      }
-                    }}
-                  >
-                    Email order (PDF)
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      isLoading={downloadingOrderPdf}
+                      onClick={async () => {
+                        if (!data) return;
+                        try {
+                          setDownloadingOrderPdf(true);
+                          await ordersApi.download(data.order_id);
+                          toast.push("success", "Order PDF downloaded.");
+                        } catch (err) {
+                          toast.push("error", getErrorMessage(err));
+                        } finally {
+                          setDownloadingOrderPdf(false);
+                        }
+                      }}
+                    >
+                      Download PDF
+                    </Button>
+                    {data.customer?.email?.trim() ? (
+                      <Button
+                        variant="secondary"
+                        isLoading={sendingOrderEmail}
+                        onClick={async () => {
+                          if (!data) return;
+                          try {
+                            setSendingOrderEmail(true);
+                            await ordersApi.sendEmail(data.order_id);
+                            toast.push("success", "Order PDF emailed to customer.");
+                          } catch (err) {
+                            toast.push("error", getErrorMessage(err));
+                          } finally {
+                            setSendingOrderEmail(false);
+                          }
+                        }}
+                      >
+                        Email order (PDF)
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </Card>
             ) : null}
@@ -419,17 +444,8 @@ export function OrderDetailsPage() {
                   ) : null}
                 </div>
               ) : (
-                <div className="mt-4 text-sm text-black/70">
-                  {(data as any).tax_percent != null && (data as any).tax_percent !== "" ? (
-                    <>
-                      Tax ({(data as any).tax_percent}%):{" "}
-                      <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
-                    </>
-                  ) : (
-                    <>
-                      Tax: <span className="font-semibold text-black">{formatMoney((data as any).tax)}</span>
-                    </>
-                  )}
+                <div className="mt-4 text-sm text-black/60">
+                  Pricing and tax details are not shown for your role.
                 </div>
               )}
             </Card>

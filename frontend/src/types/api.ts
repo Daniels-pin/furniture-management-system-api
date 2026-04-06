@@ -3,6 +3,29 @@ export type Role = "showroom" | "factory" | "admin";
 export type LoginRequest = { email: string; password: string };
 export type LoginResponse = { access_token: string; token_type: "bearer" | string };
 
+export type ChangePasswordRequest = {
+  current_password: string;
+  new_password: string;
+  confirm_password: string;
+};
+
+export type TrashItem = {
+  entity_type: string;
+  entity_id: number;
+  deleted_at: string;
+  deleted_by_id: number;
+  deleted_by_username?: string | null;
+  label: string;
+};
+
+export type ImpersonateResponse = {
+  access_token: string;
+  token_type: "bearer" | string;
+  restore_token: string;
+};
+
+export type StopImpersonationRequest = { restore_token: string };
+
 export type Customer = {
   id: number;
   name: string;
@@ -47,7 +70,7 @@ export type Order = {
   due_date?: string | null;
   created_at: string;
   image_url?: string | null;
-  customer: Customer;
+  customer?: Customer | null;
   items: OrderItem[];
   total_price?: string | number | null;
   discount_type?: "fixed" | "percentage" | null;
@@ -62,6 +85,7 @@ export type Order = {
   payment_status?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
+  created_by_id?: number | null;
 };
 
 export type OrderUploadResponse = {
@@ -271,5 +295,65 @@ export type OrderAdminUpdate = {
   tax?: string | number | null;
   /** When set, activity log records this update as part of invoice preparation. */
   update_context?: "before_invoice";
+};
+
+export type InventoryTrackingMode = "numeric" | "status_only";
+export type InventoryStockLevel = "low" | "medium" | "full";
+export type InventoryPaymentStatus = "paid" | "partial" | "unpaid";
+export type InventoryMovementAction = "added" | "used" | "adjusted";
+
+export type InventoryMaterial = {
+  id: number;
+  material_name: string;
+  category?: string | null;
+  tracking_mode: InventoryTrackingMode;
+  quantity?: string | number | null;
+  unit: string;
+  stock_level: InventoryStockLevel;
+  supplier_name: string;
+  payment_status: InventoryPaymentStatus;
+  cost?: string | number | null;
+  amount_paid: string | number;
+  balance?: string | number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  added_by?: string | null;
+  last_updated_by?: string | null;
+};
+
+export type InventoryPayment = {
+  id: number;
+  material_id: number;
+  amount: string | number;
+  paid_at: string;
+  note?: string | null;
+  created_at: string;
+  recorded_by?: string | null;
+};
+
+export type InventoryFinancialSummary = {
+  total_cost: string | number;
+  total_paid: string | number;
+  total_outstanding: string | number;
+  material_count: number;
+};
+
+export type InventorySupplierFinancialRow = {
+  supplier_name: string;
+  total_cost: string | number;
+  total_paid: string | number;
+  outstanding: string | number;
+};
+
+export type InventoryMovement = {
+  id: number;
+  material_id: number;
+  material_name: string;
+  action: string;
+  quantity_delta?: string | number | null;
+  meta?: Record<string, unknown> | null;
+  actor_username?: string | null;
+  created_at: string;
 };
 

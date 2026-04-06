@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
+from app.db.alive import customer_alive
 from app.utils.activity_log import username_from_email
 from app.utils.invoices import create_invoice_for_order
 from app.utils.pricing import TotalsResult, compute_totals
@@ -97,7 +98,12 @@ def get_or_create_customer_for_presales(
 ) -> models.Customer:
     phone = phone.strip()
     email_val = (email or "").strip() or None
-    existing = db.query(models.Customer).filter(models.Customer.phone == phone).first()
+    existing = (
+        db.query(models.Customer)
+        .filter(models.Customer.phone == phone)
+        .filter(customer_alive())
+        .first()
+    )
     if existing:
         if email_val and not (existing.email or "").strip():
             existing.email = email_val
