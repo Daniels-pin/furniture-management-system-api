@@ -37,3 +37,15 @@ def upload_image(file: UploadFile) -> str:
         raise
     except Exception:
         raise HTTPException(status_code=502, detail="Image upload failed")
+
+
+def upload_images(files: list[UploadFile]) -> list[str]:
+    """
+    Upload multiple images to Cloudinary and return secure URLs in order.
+    """
+    if not files:
+        return []
+    urls: list[str] = []
+    for f in files:
+        urls.append(upload_image(f))
+    return urls

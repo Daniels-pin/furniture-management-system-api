@@ -10,6 +10,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { formatMoney, parseMoneyNumber } from "../utils/money";
+import { isValidThousandsCommaNumber, parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import type { OrderCreateItem, OrderStatus } from "../types/api";
 
 type Details = Awaited<ReturnType<typeof ordersApi.get>>;
@@ -60,6 +61,7 @@ export function OrderDetailsPage() {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [creatingWaybill, setCreatingWaybill] = useState(false);
@@ -509,40 +511,40 @@ export function OrderDetailsPage() {
           <Card>
             <div className="text-sm font-semibold">Image</div>
             <div className="mt-3">
-              {!data.image_url ? (
+              {!((data as any).image_urls?.length) && !data.image_url ? (
                 <div className="flex aspect-[4/3] items-center justify-center rounded-2xl border border-black/10 bg-black/[0.02] text-sm text-black/50">
                   No image uploaded
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className="group relative block w-full overflow-hidden rounded-2xl border border-black/10 bg-black/[0.02]"
-                  onClick={() => setZoomOpen(true)}
-                >
-                  <img
-                    src={data.image_url}
-                    alt={`Order #${data.order_id}`}
-                    className="h-auto w-full object-contain"
-                    onLoad={() => setImgLoaded(true)}
-                    onError={() => setImgError(true)}
-                  />
-                  {!imgLoaded && !imgError ? (
-                    <div className="absolute inset-0 flex items-center justify-center text-sm text-black/50">
-                      Loading image…
-                    </div>
-                  ) : null}
-                  {imgError ? (
-                    <div className="absolute inset-0 flex items-center justify-center text-sm text-black/50">
-                      Failed to load image
-                    </div>
-                  ) : null}
-                  <div className="pointer-events-none absolute inset-0 opacity-0 transition group-hover:opacity-100">
-                    <div className="absolute inset-0 bg-black/5" />
-                    <div className="absolute bottom-3 right-3 rounded-xl border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold">
-                      Click to zoom
-                    </div>
-                  </div>
-                </button>
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                  {(((data as any).image_urls as string[] | null | undefined) ?? (data.image_url ? [data.image_url] : []))
+                    .filter(Boolean)
+                    .map((src, idx) => (
+                      <button
+                        key={`${src}-${idx}`}
+                        type="button"
+                        className="group relative block overflow-hidden rounded-2xl border border-black/10 bg-black/[0.02]"
+                        onClick={() => {
+                          setImgLoaded(false);
+                          setImgError(false);
+                          setZoomSrc(src);
+                          setZoomOpen(true);
+                        }}
+                      >
+                        <img
+                          src={src}
+                          alt={`Order #${data.order_id} image ${idx + 1}`}
+                          className="aspect-[4/3] w-full object-cover"
+                        />
+                        <div className="pointer-events-none absolute inset-0 opacity-0 transition group-hover:opacity-100">
+                          <div className="absolute inset-0 bg-black/5" />
+                          <div className="absolute bottom-2 right-2 rounded-xl border border-black/10 bg-white px-2.5 py-1 text-[11px] font-semibold">
+                            Zoom
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                </div>
               )}
             </div>
           </Card>
@@ -671,7 +673,7 @@ export function OrderDetailsPage() {
         </form>
       </Modal>
 
-      {zoomOpen && data?.image_url ? (
+      {zoomOpen && (zoomSrc || data?.image_url) ? (
         <div className="fixed inset-0 z-50">
           <button className="absolute inset-0 bg-black/60" onClick={() => setZoomOpen(false)} />
           <div className="relative mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))]">
@@ -680,12 +682,15 @@ export function OrderDetailsPage() {
                 <div className="text-sm font-semibold text-white/80">Image preview</div>
                 <button
                   className="rounded-xl px-3 py-1.5 text-sm font-semibold text-white/80 hover:bg-white/10"
-                  onClick={() => setZoomOpen(false)}
+                  onClick={() => {
+                    setZoomOpen(false);
+                    setZoomSrc(null);
+                  }}
                 >
                   Close
                 </button>
               </div>
-              <img src={data.image_url} alt="Order image preview" className="w-full object-contain" />
+              <img src={zoomSrc ?? data.image_url ?? ""} alt="Order image preview" className="w-full object-contain" />
             </div>
           </div>
         </div>
@@ -767,16 +772,42 @@ function EditOrderModal({
       const name = it.item_name.trim();
       const desc = it.description.trim();
       const qty = Number(it.quantity);
-      const amt = it.amount.trim() === "" ? NaN : Number(it.amount);
+      const amt = parseMoneyInput(it.amount);
       if (!name) e[`n${idx}`] = "Item name required";
       if (!desc) e[`d${idx}`] = "Description required";
       if (!Number.isFinite(qty) || qty <= 0) e[`q${idx}`] = "Invalid quantity";
-      if (!Number.isFinite(amt) || amt < 0) e[`a${idx}`] = "Amount required (≥ 0)";
-      if (name && desc && Number.isFinite(qty) && qty > 0 && Number.isFinite(amt) && amt >= 0) {
+      if (amt === null || !Number.isFinite(amt) || amt < 0) {
+        e[`a${idx}`] = isValidThousandsCommaNumber(it.amount) ? "Amount required (≥ 0)" : "Invalid comma formatting";
+      }
+      if (name && desc && Number.isFinite(qty) && qty > 0 && amt !== null && Number.isFinite(amt) && amt >= 0) {
         payload.push({ item_name: name, description: desc, quantity: qty, amount: amt });
       }
     });
     if (payload.length === 0) e.items = "At least one valid item required";
+
+    // Optional pricing fields
+    if (totalPrice.trim() && !isValidThousandsCommaNumber(totalPrice)) e.totalPrice = "Invalid comma formatting";
+    const tp = parseMoneyInput(totalPrice);
+    if (totalPrice.trim() && (tp === null || !Number.isFinite(tp) || tp < 0)) e.totalPrice = e.totalPrice || "Total price must be >= 0";
+
+    if (deposit.trim() && !isValidThousandsCommaNumber(deposit)) e.deposit = "Invalid comma formatting";
+    const dp = parseMoneyInput(deposit);
+    if (deposit.trim() && (dp === null || !Number.isFinite(dp) || dp < 0)) e.deposit = e.deposit || "Deposit must be >= 0";
+
+    if (tax.trim() && !isValidThousandsCommaNumber(tax)) e.tax = "Invalid comma formatting";
+    const tx = parseMoneyInput(tax);
+    if (tax.trim() && (tx === null || !Number.isFinite(tx) || tx < 0)) e.tax = e.tax || "Tax % must be >= 0";
+    if (tax.trim() && tx !== null && Number.isFinite(tx) && tx > 100) e.tax = "Tax % must be <= 100";
+
+    if (discountType) {
+      if (discountValue.trim() && !isValidThousandsCommaNumber(discountValue)) e.discountValue = "Invalid comma formatting";
+      const dv = parseMoneyInput(discountValue);
+      if (!discountValue.trim() || dv === null || !Number.isFinite(dv) || dv < 0) e.discountValue = "Enter a valid discount value";
+      if (discountType === "percentage" && dv !== null && Number.isFinite(dv) && dv > 100) e.discountValue = "Percentage discount must be <= 100";
+    } else if (discountValue.trim()) {
+      e.discountType = "Select a discount type";
+    }
+
     setErr(e);
     return { ok: Object.keys(e).length === 0, payload, errors: e };
   }
@@ -795,11 +826,11 @@ function EditOrderModal({
         status,
         due_date: dueDate ? new Date(dueDate).toISOString() : null,
         items: payload,
-        total_price: totalPrice.trim() === "" ? null : Number(totalPrice),
-        amount_paid: deposit.trim() === "" ? null : Number(deposit),
+        total_price: totalPrice.trim() === "" ? null : Number(sanitizeMoneyInput(totalPrice)),
+        amount_paid: deposit.trim() === "" ? null : Number(sanitizeMoneyInput(deposit)),
         discount_type: discountType || null,
-        discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(discountValue)) : null,
-        tax: tax.trim() === "" ? null : Number(tax),
+        discount_value: discountType ? (discountValue.trim() === "" ? 0 : Number(sanitizeMoneyInput(discountValue))) : null,
+        tax: tax.trim() === "" ? null : Number(sanitizeMoneyInput(tax)),
         ...(invoicePrepFlow ? { update_context: "before_invoice" as const } : {})
       });
       await onSaved(updated, invoicePrepFlow);
@@ -915,12 +946,14 @@ function EditOrderModal({
             value={totalPrice}
             onChange={(e) => setTotalPrice(e.target.value)}
             inputMode="decimal"
+            error={err.totalPrice}
           />
           <Input
             label="Deposit made (optional)"
             value={deposit}
             onChange={(e) => setDeposit(e.target.value)}
             inputMode="decimal"
+            error={err.deposit}
           />
           <Input
             label="Tax % (optional)"
@@ -928,6 +961,7 @@ function EditOrderModal({
             onChange={(e) => setTax(e.target.value)}
             inputMode="decimal"
             placeholder="e.g. 7.5 for 7.5% VAT"
+            error={err.tax}
           />
           <label className="block">
             <div className="mb-1 text-sm font-medium">Discount type (optional)</div>
@@ -940,6 +974,7 @@ function EditOrderModal({
               <option value="fixed">Fixed</option>
               <option value="percentage">Percentage</option>
             </select>
+            {err.discountType ? <div className="mt-1 text-xs text-black/70">{err.discountType}</div> : null}
           </label>
           <Input
             label="Discount value (optional)"
@@ -947,6 +982,7 @@ function EditOrderModal({
             onChange={(e) => setDiscountValue(e.target.value)}
             inputMode="decimal"
             placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
+            error={err.discountValue}
           />
         </div>
 
@@ -1001,7 +1037,7 @@ function TaxInlineEditor({
           setBusy(true);
           try {
             await ordersApi.updatePricing(orderId, {
-              tax: tax.trim() === "" ? null : Number(tax)
+              tax: tax.trim() === "" ? null : Number(sanitizeMoneyInput(tax))
             });
             await onSaved();
             toast.push("success", "Tax updated");

@@ -12,6 +12,7 @@ import { Modal } from "../components/ui/Modal";
 import { Select } from "../components/ui/Select";
 import { useNavigate } from "react-router-dom";
 import { formatMoney } from "../utils/money";
+import { isValidThousandsCommaNumber, parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 
 function daysRemaining(dueDateIso?: string | null) {
   if (!dueDateIso) return null;
@@ -342,7 +343,7 @@ function CreateOrderModal({
     Array<{ item_name: string; description: string; quantity: string; amount: string }>
   >([{ item_name: "", description: "", quantity: "1", amount: "" }]);
   const [dueDate, setDueDate] = useState<string>("");
-  const [image, setImage] = useState<File | null>(null);
+  const [images, setImages] = useState<File[]>([]);
   const [amountPaid, setAmountPaid] = useState<string>("");
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">("");
   const [discountValue, setDiscountValue] = useState<string>("");
@@ -359,7 +360,7 @@ function CreateOrderModal({
     setCustomerEmail("");
     setItems([{ item_name: "", description: "", quantity: "1", amount: "" }]);
     setDueDate("");
-    setImage(null);
+    setImages([]);
     setAmountPaid("");
     setDiscountType("");
     setDiscountValue("");
@@ -373,9 +374,9 @@ function CreateOrderModal({
     let sum = 0;
     for (const it of items) {
       const qty = Number(it.quantity);
-      const amt = Number(it.amount);
+      const amt = parseMoneyInput(it.amount);
       if (!Number.isFinite(qty) || qty <= 0) continue;
-      if (!Number.isFinite(amt) || amt < 0) continue;
+      if (amt === null || !Number.isFinite(amt) || amt < 0) continue;
       sum += qty * amt;
     }
     return sum;
@@ -397,12 +398,14 @@ function CreateOrderModal({
       const name = it.item_name.trim();
       const desc = it.description.trim();
       const qty = Number(it.quantity);
-      const amt = it.amount.trim() === "" ? null : Number(it.amount);
+      const amt = parseMoneyInput(it.amount);
       if (!name) e[`items.${idx}.item_name`] = "Item name is required";
       if (!desc) e[`items.${idx}.description`] = "Description is required";
       if (!Number.isFinite(qty) || qty <= 0) e[`items.${idx}.quantity`] = "Quantity must be > 0";
       if (it.amount.trim() === "") e[`items.${idx}.amount`] = "Amount is required";
-      else if (!Number.isFinite(amt) || (amt as number) < 0) e[`items.${idx}.amount`] = "Amount must be >= 0";
+      else if (amt === null || !Number.isFinite(amt) || amt < 0) {
+        e[`items.${idx}.amount`] = isValidThousandsCommaNumber(it.amount) ? "Amount must be >= 0" : "Invalid comma formatting";
+      }
       if (name && desc && Number.isFinite(qty) && qty > 0)
         normalizedItems.push({ item_name: name, description: desc, quantity: qty, amount: amt } as any);
     });
@@ -410,15 +413,23 @@ function CreateOrderModal({
     if (normalizedItems.length === 0) e.items = "Items required";
 
     if (canInputPricing) {
-      if (amountPaid && Number(amountPaid) < 0) e.amountPaid = "Deposit made cannot be negative";
-      if (tax && Number(tax) < 0) e.tax = "Tax % cannot be negative";
-      if (tax && Number(tax) > 100) e.tax = "Tax % cannot exceed 100";
+      if (amountPaid.trim() && !isValidThousandsCommaNumber(amountPaid)) e.amountPaid = "Invalid comma formatting";
+      const ap = parseMoneyInput(amountPaid);
+      if (amountPaid.trim() && (ap === null || !Number.isFinite(ap) || ap < 0)) e.amountPaid = e.amountPaid || "Deposit made cannot be negative";
+
+      if (tax.trim() && !isValidThousandsCommaNumber(tax)) e.tax = "Invalid comma formatting";
+      const tx = parseMoneyInput(tax);
+      if (tax.trim() && (tx === null || !Number.isFinite(tx) || tx < 0)) e.tax = e.tax || "Tax % cannot be negative";
+      if (tax.trim() && tx !== null && Number.isFinite(tx) && tx > 100) e.tax = "Tax % cannot exceed 100";
       if (discountType) {
-        const dv = Number(discountValue);
-        if (!discountValue.trim() || !Number.isFinite(dv) || dv < 0) {
+        if (discountValue.trim() && !isValidThousandsCommaNumber(discountValue)) {
+          e.discountValue = "Invalid comma formatting";
+        }
+        const dv = parseMoneyInput(discountValue);
+        if (!discountValue.trim() || dv === null || !Number.isFinite(dv) || dv < 0) {
           e.discountValue = "Enter a valid discount value";
         }
-        if (discountType === "percentage" && dv > 100) {
+        if (discountType === "percentage" && dv !== null && Number.isFinite(dv) && dv > 100) {
           e.discountValue = "Percentage discount must be <= 100";
         }
       } else if (discountValue.trim()) {
@@ -446,7 +457,7 @@ function CreateOrderModal({
           item_name: it.item_name.trim(),
           description: it.description.trim(),
           quantity: Number(it.quantity),
-          amount: it.amount.trim() === "" ? null : Number(it.amount)
+          amount: it.amount.trim() === "" ? null : Number(sanitizeMoneyInput(it.amount))
         }))
         .filter(
           (it) =>
@@ -458,15 +469,15 @@ function CreateOrderModal({
       form.append("items_json", JSON.stringify(payload));
 
       if (dueDate) form.append("due_date", new Date(dueDate).toISOString());
-      if (image) form.append("image", image);
+      for (const f of images) form.append("images", f);
 
       if (canInputPricing) {
         // Subtotal is always system-calculated from items.
         form.append("total_price", String(computedSubtotal));
-        if (amountPaid) form.append("amount_paid", amountPaid);
+        if (amountPaid.trim()) form.append("amount_paid", sanitizeMoneyInput(amountPaid));
         if (discountType) form.append("discount_type", discountType);
-        if (discountType && discountValue.trim()) form.append("discount_value", discountValue);
-        if (tax.trim()) form.append("tax", tax.trim());
+        if (discountType && discountValue.trim()) form.append("discount_value", sanitizeMoneyInput(discountValue));
+        if (tax.trim()) form.append("tax", sanitizeMoneyInput(tax.trim()));
       }
 
       await ordersApi.createMultipart(form);
@@ -617,9 +628,10 @@ function CreateOrderModal({
               className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm"
               type="file"
               accept="image/*"
-              onChange={(e) => setImage(e.target.files?.[0] ?? null)}
+              multiple
+              onChange={(e) => setImages(Array.from(e.target.files ?? []))}
             />
-            <div className="mt-1 text-xs text-black/50">Optional. Uploads via backend to Cloudinary.</div>
+            <div className="mt-1 text-xs text-black/50">Optional. You can select multiple images; uploads via backend to Cloudinary.</div>
           </label>
         </div>
 

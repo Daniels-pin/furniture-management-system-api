@@ -53,6 +53,8 @@ class Order(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime)
     image_url = Column(String, nullable=True)
+    # New (preferred): array of URLs for multi-image upload. Kept nullable for backward compatibility.
+    image_urls = Column(JSON, nullable=True)
     total_price = Column(Numeric(11, 2), nullable=True)
     discount_type = Column(String, nullable=True)
     discount_value = Column(Numeric(11, 2), nullable=True)

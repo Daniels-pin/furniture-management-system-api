@@ -7,6 +7,7 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import type { ProformaPayload } from "../types/api";
+import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
 type Line = { item_name: string; description: string; quantity: string; amount: string };
 
@@ -93,7 +94,7 @@ export function ProformaFormPage() {
   function buildPayload(saveAsDraft: boolean): ProformaPayload {
     const items = lines.map((ln) => {
       const q = Number(ln.quantity);
-      const amt = ln.amount.trim() === "" ? null : Number(ln.amount);
+      const amt = parseMoneyInput(ln.amount);
       return {
         item_name: ln.item_name.trim(),
         description: ln.description.trim(),
@@ -101,8 +102,8 @@ export function ProformaFormPage() {
         amount: amt !== null && Number.isFinite(amt) && amt >= 0 ? amt : null
       };
     });
-    const dv = discountValue.trim() === "" ? null : Number(discountValue);
-    const tx = tax.trim() === "" ? null : Number(tax);
+    const dv = parseMoneyInput(discountValue);
+    const tx = parseMoneyInput(tax);
     return {
       customer_name: customerName.trim(),
       phone: phone.trim(),
@@ -128,10 +129,23 @@ export function ProformaFormPage() {
       return;
     }
     for (const ln of named) {
-      if (ln.amount.trim() === "" || !Number.isFinite(Number(ln.amount)) || Number(ln.amount) < 0) {
+      const amt = parseMoneyInput(ln.amount);
+      if (ln.amount.trim() === "" || amt === null || !Number.isFinite(amt) || amt < 0) {
         toast.push("error", "Enter a valid amount (≥ 0) for each line item.");
         return;
       }
+      if (!isValidThousandsCommaNumber(ln.amount)) {
+        toast.push("error", "Fix comma formatting in amount fields (e.g. 1,000).");
+        return;
+      }
+    }
+    if (discountValue.trim() && !isValidThousandsCommaNumber(discountValue)) {
+      toast.push("error", "Fix comma formatting in discount value (e.g. 1,000).");
+      return;
+    }
+    if (tax.trim() && !isValidThousandsCommaNumber(tax)) {
+      toast.push("error", "Fix comma formatting in tax (e.g. 7.5 or 1,000).");
+      return;
     }
     setSaving(true);
     try {
@@ -256,12 +270,14 @@ export function ProformaFormPage() {
             value={discountValue}
             onChange={(e) => setDiscountValue(e.target.value)}
             placeholder={discountType === "percentage" ? "e.g. 10" : "Amount"}
+            error={discountValue.trim() && !isValidThousandsCommaNumber(discountValue) ? "Invalid comma formatting" : undefined}
           />
           <Input
             label="Tax %"
             value={tax}
             onChange={(e) => setTax(e.target.value)}
             placeholder="e.g. 7.5"
+            error={tax.trim() && !isValidThousandsCommaNumber(tax) ? "Invalid comma formatting" : undefined}
           />
         </div>
 

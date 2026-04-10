@@ -31,7 +31,7 @@ from app.schemas import (
 from fastapi import Query
 from typing import List, Optional
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
-from app.utils.cloudinary import upload_image
+from app.utils.cloudinary import upload_image, upload_images
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.pricing import compute_discount, compute_pricing, compute_totals
@@ -115,6 +115,7 @@ def _build_order_response(
         "due_date": order.due_date,
         "created_at": order.created_at,
         "image_url": order.image_url,
+        "image_urls": order.image_urls,
         "customer": cust_payload,
         "items": item_rows,
     }
@@ -363,7 +364,9 @@ def create_order(
     # Items (list of {item_name, description, quantity})
     items_json: Optional[str] = Form(None),
     due_date: datetime | None = Form(None),
+    # Backward compatible: "image" (single) still accepted; prefer "images" for multi-upload.
     image: UploadFile | None = File(None),
+    images: list[UploadFile] | None = File(None),
     total_price: Decimal | None = Form(None),
     amount_paid: Decimal | None = Form(None),
     discount_type: Optional[str] = Form(None),
@@ -401,10 +404,14 @@ def create_order(
 
     email_val = _parse_optional_email(customer_email)
 
-    # 3) Upload image (optional) before DB writes
-    image_url = None
+    # 3) Upload image(s) (optional) before DB writes
+    image_urls: list[str] = []
+    if images:
+        image_urls.extend(upload_images(images))
     if image is not None:
-        image_url = upload_image(image)
+        # Legacy single file field; append so older clients still work.
+        image_urls.append(upload_image(image))
+    image_url = image_urls[0] if image_urls else None
 
     # 4) Pricing + discount + tax
     computed_subtotal = _items_subtotal(items_payload)
@@ -445,6 +452,7 @@ def create_order(
                 due_date=due_date,
                 created_by=user.id,
                 image_url=image_url,
+                image_urls=image_urls or None,
                 total_price=original_total,
                 discount_type=totals.discount_type,
                 discount_value=totals.discount_value,

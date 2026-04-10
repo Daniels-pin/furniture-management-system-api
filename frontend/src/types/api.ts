@@ -70,6 +70,7 @@ export type Order = {
   due_date?: string | null;
   created_at: string;
   image_url?: string | null;
+  image_urls?: string[] | null;
   customer?: Customer | null;
   items: OrderItem[];
   total_price?: string | number | null;
@@ -95,6 +96,7 @@ export type OrderUploadResponse = {
   item_name: string;
   description?: string | null;
   image_url?: string | null;
+  image_urls?: string[] | null;
   total_price?: string | number | null;
   amount_paid?: string | number | null;
   balance?: string | number | null;

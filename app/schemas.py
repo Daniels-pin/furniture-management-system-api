@@ -125,6 +125,7 @@ class OrderResponse(BaseModel):
     due_date: Optional[datetime]
     created_at: datetime
     image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     created_by_id: Optional[int] = None
     total_price: Optional[Decimal] = None
     discount_type: Optional[str] = None
@@ -153,6 +154,7 @@ class OrderDetailsResponse(BaseModel):
     status: OrderStatus
     due_date: Optional[datetime] = None
     image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     total_price: Optional[Decimal] = None
     discount_type: Optional[str] = None
     discount_value: Optional[Decimal] = None
@@ -223,6 +225,7 @@ class OrderUploadResponse(BaseModel):
     item_name: str
     description: Optional[str] = None
     image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     total_price: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
     balance: Optional[Decimal] = None

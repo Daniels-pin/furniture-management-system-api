@@ -18,7 +18,23 @@ def _to_decimal(value: object, field_name: str) -> Optional[Decimal]:
     if isinstance(value, Decimal):
         return value
     try:
-        return Decimal(str(value))
+        s0 = str(value).strip()
+        if not s0:
+            return None
+        # Accept "1,000" but reject invalid comma placement like "10,00".
+        if "," in s0:
+            # Valid:
+            # - 1000
+            # - 1,000
+            # - 1,000,000
+            # - 1,000.50
+            # - 1000.50
+            import re
+
+            if not re.fullmatch(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?", s0):
+                raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
+            s0 = s0.replace(",", "")
+        return Decimal(s0)
     except (InvalidOperation, ValueError):
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
 

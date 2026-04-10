@@ -19,6 +19,7 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { formatMoney } from "../utils/money";
+import { isValidThousandsCommaNumber, sanitizeMoneyInput } from "../utils/moneyInput";
 
 function fmtNum(v: string | number | null | undefined) {
   if (v === null || v === undefined || v === "") return "—";
@@ -231,7 +232,7 @@ export function InventoryPage() {
         unit: form.unit,
         stock_level: form.stock_level,
         supplier_name: form.supplier_name.trim(),
-        cost: form.cost.trim() ? form.cost.trim() : null,
+        cost: form.cost.trim() ? sanitizeMoneyInput(form.cost.trim()) : null,
         notes: form.notes.trim() || null
       };
       if (form.tracking_mode === "numeric") {
@@ -300,6 +301,10 @@ export function InventoryPage() {
       toast.push("error", "Enter payment amount");
       return;
     }
+    if (!isValidThousandsCommaNumber(raw)) {
+      toast.push("error", "Fix comma formatting (e.g. 1,000).");
+      return;
+    }
     if (!payDate.trim()) {
       toast.push("error", "Choose payment date");
       return;
@@ -308,7 +313,7 @@ export function InventoryPage() {
     try {
       const paid_at = new Date(payDate).toISOString();
       await inventoryApi.addPayment(payRow.id, {
-        amount: raw,
+        amount: sanitizeMoneyInput(raw),
         paid_at,
         note: payNote.trim() || null
       });
@@ -739,7 +744,14 @@ export function InventoryPage() {
             Payment status is calculated from recorded payments vs. cost. Use <span className="font-semibold text-black/70">Payments</span> on
             each row to log supplier payments.
           </div>
-          <Input label="Cost" type="text" inputMode="decimal" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))} />
+          <Input
+            label="Cost"
+            type="text"
+            inputMode="decimal"
+            value={form.cost}
+            onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+            error={form.cost.trim() && !isValidThousandsCommaNumber(form.cost) ? "Invalid comma formatting" : undefined}
+          />
           <label className="block">
             <div className="mb-1 text-sm font-medium">Notes</div>
             <textarea
@@ -892,6 +904,7 @@ export function InventoryPage() {
               inputMode="decimal"
               value={payAmount}
               onChange={(e) => setPayAmount(e.target.value)}
+              error={payAmount.trim() && !isValidThousandsCommaNumber(payAmount) ? "Invalid comma formatting" : undefined}
             />
             <label className="block md:col-span-1">
               <div className="mb-1 text-sm font-medium">Payment date</div>

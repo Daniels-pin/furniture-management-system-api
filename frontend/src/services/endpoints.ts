@@ -136,6 +136,7 @@ export const ordersApi = {
       status: Order["status"];
       due_date?: string | null;
       image_url?: string | null;
+      image_urls?: string[] | null;
       total_price?: string | number | null;
       discount_type?: "fixed" | "percentage" | null;
       discount_value?: string | number | null;
@@ -161,6 +162,7 @@ export const ordersApi = {
       status: Order["status"];
       due_date?: string | null;
       image_url?: string | null;
+      image_urls?: string[] | null;
       total_price?: string | number | null;
       discount_type?: "fixed" | "percentage" | null;
       discount_value?: string | number | null;
