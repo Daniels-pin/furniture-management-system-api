@@ -5,6 +5,7 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { StatusBadge } from "../components/ui/StatusBadge";
+import { ImageLightbox } from "../components/ui/ImageLightbox";
 import { invoicesApi, ordersApi, waybillApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
@@ -58,10 +59,8 @@ export function OrderDetailsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<Details | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [imgError, setImgError] = useState(false);
-  const [zoomOpen, setZoomOpen] = useState(false);
-  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [paying, setPaying] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [creatingWaybill, setCreatingWaybill] = useState(false);
@@ -106,8 +105,6 @@ export function OrderDetailsPage() {
       setIsLoading(true);
       setNotFound(false);
       setData(null);
-      setImgLoaded(false);
-      setImgError(false);
       try {
         if (!Number.isFinite(id)) throw new Error("Invalid order id");
         const res = await ordersApi.get(id);
@@ -130,6 +127,13 @@ export function OrderDetailsPage() {
       alive = false;
     };
   }, [id, toast]);
+
+  const images = useMemo(() => {
+    const xs = (((data as any)?.image_urls as string[] | null | undefined) ?? []).filter(Boolean);
+    if (xs.length) return xs;
+    const legacy = (data as any)?.image_url;
+    return legacy ? [legacy] : [];
+  }, [data]);
 
   return (
     <div className="space-y-6">
@@ -525,10 +529,8 @@ export function OrderDetailsPage() {
                         type="button"
                         className="group relative block overflow-hidden rounded-2xl border border-black/10 bg-black/[0.02]"
                         onClick={() => {
-                          setImgLoaded(false);
-                          setImgError(false);
-                          setZoomSrc(src);
-                          setZoomOpen(true);
+                          setLightboxIndex(idx);
+                          setLightboxOpen(true);
                         }}
                       >
                         <img
@@ -673,28 +675,14 @@ export function OrderDetailsPage() {
         </form>
       </Modal>
 
-      {zoomOpen && (zoomSrc || data?.image_url) ? (
-        <div className="fixed inset-0 z-50">
-          <button className="absolute inset-0 bg-black/60" onClick={() => setZoomOpen(false)} />
-          <div className="relative mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))]">
-            <div className="overflow-hidden rounded-3xl border border-white/10 bg-black shadow-soft">
-              <div className="flex items-center justify-between px-4 py-3">
-                <div className="text-sm font-semibold text-white/80">Image preview</div>
-                <button
-                  className="rounded-xl px-3 py-1.5 text-sm font-semibold text-white/80 hover:bg-white/10"
-                  onClick={() => {
-                    setZoomOpen(false);
-                    setZoomSrc(null);
-                  }}
-                >
-                  Close
-                </button>
-              </div>
-              <img src={zoomSrc ?? data.image_url ?? ""} alt="Order image preview" className="w-full object-contain" />
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ImageLightbox
+        open={lightboxOpen}
+        title={data ? `Order #${displayNumber ?? data.order_id}` : "Image preview"}
+        images={images}
+        index={lightboxIndex}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxOpen(false)}
+      />
     </div>
   );
 }

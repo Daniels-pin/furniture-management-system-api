@@ -655,6 +655,7 @@ def get_orders(
             "due_date": order.due_date,
             "created_at": order.created_at,
             "image_url": order.image_url,
+            "image_urls": order.image_urls,
             "customer": None
             if user.role == "factory"
             else {
@@ -827,6 +828,7 @@ def get_order(
         "status": order.status,
         "due_date": order.due_date,
         "image_url": order.image_url,
+        "image_urls": order.image_urls,
         "customer": cust_payload,
         "items": item_rows,
     }
@@ -965,6 +967,7 @@ def put_order_admin(
         "status": order.status,
         "due_date": order.due_date,
         "image_url": order.image_url,
+        "image_urls": order.image_urls,
         "customer": None
         if user.role == "factory"
         else {
