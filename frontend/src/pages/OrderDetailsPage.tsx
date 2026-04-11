@@ -23,6 +23,13 @@ function isoToDateInput(iso?: string | null) {
   return d.toISOString().slice(0, 10);
 }
 
+function formatCustomerBirthday(bd?: number | null, bm?: number | null) {
+  if (bm == null || bd == null) return "—";
+  const d = new Date(2000, Number(bm) - 1, Number(bd));
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+}
+
 function discountLabel(dType?: unknown) {
   const t = typeof dType === "string" ? dType : "";
   if (t === "percentage") return "Percentage";
@@ -224,7 +231,13 @@ export function OrderDetailsPage() {
                     <div className="text-xs font-semibold text-black/60">Address</div>
                     <div className="mt-1 text-sm font-semibold">{data.customer.address ?? "—"}</div>
                   </div>
-                  <div className="rounded-2xl border border-black/10 bg-white p-4 md:col-span-3">
+                  <div className="rounded-2xl border border-black/10 bg-white p-4">
+                    <div className="text-xs font-semibold text-black/60">Birthday</div>
+                    <div className="mt-1 text-sm font-semibold">
+                      {formatCustomerBirthday(data.customer.birth_day, data.customer.birth_month)}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 md:col-span-2">
                     <div className="text-xs font-semibold text-black/60">Email</div>
                     <div className="mt-1 text-sm font-semibold">{data.customer.email ?? "—"}</div>
                   </div>

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -25,8 +26,24 @@ ENTITY_TYPES: frozenset[str] = frozenset(
         "quotation",
         "waybill",
         "inventory_material",
+        "factory_tool",
+        "factory_machine",
     )
 )
+
+# Lower runs first — reduces FK failures when purging everything in trash.
+_PURGE_ORDER: dict[str, int] = {
+    "factory_tool": 10,
+    "factory_machine": 20,
+    "inventory_material": 30,
+    "product": 40,
+    "proforma": 50,
+    "quotation": 60,
+    "waybill": 70,
+    "invoice": 80,
+    "order": 90,
+    "customer": 100,
+}
 
 
 class TrashRow(BaseModel):
@@ -45,6 +62,29 @@ class TrashListResponse(BaseModel):
 class TrashRestoreRequest(BaseModel):
     entity_type: str = Field(..., min_length=2)
     entity_id: int = Field(..., ge=1)
+
+
+class TrashPurgeItem(BaseModel):
+    entity_type: str = Field(..., min_length=2)
+    entity_id: int = Field(..., ge=1)
+
+
+class TrashPurgeBulkRequest(BaseModel):
+    items: list[TrashPurgeItem] = Field(..., max_length=500)
+
+
+class TrashPurgeBulkResponse(BaseModel):
+    purged: int
+    failed: list[dict[str, Any]]
+
+
+class TrashPurgeAllRequest(BaseModel):
+    confirm: Literal["PERMANENTLY_DELETE_ALL_TRASH"]
+
+
+class TrashPurgeAllResponse(BaseModel):
+    purged: int
+    failed: list[dict[str, Any]]
 
 
 def _actor_label(db: Session, user_id: int | None) -> str | None:
@@ -74,13 +114,7 @@ def _sync_invoice_restore(db: Session, order: models.Order) -> None:
         inv.deleted_by_id = None
 
 
-@router.get("", response_model=TrashListResponse)
-def list_trash(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    is_admin = normalize_role(user.role) == "admin"
-    uid = user.id
+def _gather_trash_rows(db: Session, is_admin: bool, uid: int) -> list[TrashRow]:
     rows: list[TrashRow] = []
     trashed_order_ids: set[int] = set()
 
@@ -239,6 +273,54 @@ def list_trash(
             )
         )
 
+    for ft in (
+        db.query(models.FactoryTool)
+        .filter(models.FactoryTool.deleted_at.isnot(None))
+        .order_by(models.FactoryTool.deleted_at.desc())
+        .all()
+    ):
+        if not _can_see_row(is_admin, ft.deleted_by_id, uid):
+            continue
+        rows.append(
+            TrashRow(
+                entity_type="factory_tool",
+                entity_id=ft.id,
+                deleted_at=ft.deleted_at,
+                deleted_by_id=ft.deleted_by_id or 0,
+                deleted_by_username=_actor_label(db, ft.deleted_by_id),
+                label=f"Tool: {ft.name or ft.id}",
+            )
+        )
+
+    for fm in (
+        db.query(models.FactoryMachine)
+        .filter(models.FactoryMachine.deleted_at.isnot(None))
+        .order_by(models.FactoryMachine.deleted_at.desc())
+        .all()
+    ):
+        if not _can_see_row(is_admin, fm.deleted_by_id, uid):
+            continue
+        rows.append(
+            TrashRow(
+                entity_type="factory_machine",
+                entity_id=fm.id,
+                deleted_at=fm.deleted_at,
+                deleted_by_id=fm.deleted_by_id or 0,
+                deleted_by_username=_actor_label(db, fm.deleted_by_id),
+                label=f"Machine: {fm.machine_name or fm.id}",
+            )
+        )
+
+    return rows
+
+
+@router.get("", response_model=TrashListResponse)
+def list_trash(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    is_admin = normalize_role(user.role) == "admin"
+    rows = _gather_trash_rows(db, is_admin, user.id)
     rows.sort(key=lambda r: r.deleted_at, reverse=True)
     return TrashListResponse(items=rows)
 
@@ -286,7 +368,70 @@ def _load_trashed_entity(
         if not invm or invm.deleted_at is None:
             raise HTTPException(status_code=404, detail="Not in trash")
         return "inventory_material", invm
+    if entity_type == "factory_tool":
+        ft = db.query(models.FactoryTool).filter(models.FactoryTool.id == entity_id).first()
+        if not ft or ft.deleted_at is None:
+            raise HTTPException(status_code=404, detail="Not in trash")
+        return "factory_tool", ft
+    if entity_type == "factory_machine":
+        fm = db.query(models.FactoryMachine).filter(models.FactoryMachine.id == entity_id).first()
+        if not fm or fm.deleted_at is None:
+            raise HTTPException(status_code=404, detail="Not in trash")
+        return "factory_machine", fm
     raise HTTPException(status_code=400, detail="Invalid entity_type")
+
+
+def _purge_prepare_delete(db: Session, entity_type: str, entity: Any) -> dict[str, Any]:
+    meta: dict[str, Any] = {"entity_type": entity_type, "entity_id": entity.id}
+    if entity_type == "order":
+        meta["order_id"] = entity.id
+        db.delete(entity)
+    elif entity_type == "invoice":
+        meta["invoice_id"] = entity.id
+        db.delete(entity)
+    elif entity_type == "customer":
+        db.delete(entity)
+    elif entity_type == "product":
+        db.delete(entity)
+    elif entity_type == "proforma":
+        db.delete(entity)
+    elif entity_type == "quotation":
+        db.delete(entity)
+    elif entity_type == "waybill":
+        db.delete(entity)
+    elif entity_type == "inventory_material":
+        db.delete(entity)
+    elif entity_type == "factory_tool":
+        db.delete(entity)
+    elif entity_type == "factory_machine":
+        db.delete(entity)
+    return meta
+
+
+def _purge_one(db: Session, entity_type: str, entity_id: int, user) -> None:
+    if entity_type not in ENTITY_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid entity_type")
+    _et, entity = _load_trashed_entity(db, entity_type, entity_id)
+    meta = _purge_prepare_delete(db, entity_type, entity)
+    log_activity(
+        db,
+        action=TRASH_PURGED,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        actor_user=user,
+        meta=meta,
+    )
+
+
+def _commit_purge(db: Session) -> None:
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot purge: other records still reference this item. Purge or restore linked data first.",
+        )
 
 
 @router.post("/restore")
@@ -334,6 +479,18 @@ def restore_item(
     return {"message": "Restored"}
 
 
+@router.post("/purge")
+def purge_item_post(
+    body: TrashPurgeItem,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    """Permanently delete one trashed row (POST avoids DELETE being blocked by some proxies)."""
+    _purge_one(db, body.entity_type, body.entity_id, user)
+    _commit_purge(db)
+    return {"message": "Permanently deleted"}
+
+
 @router.delete("/purge/{entity_type}/{entity_id}")
 def purge_item(
     entity_type: str,
@@ -341,41 +498,90 @@ def purge_item(
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    if entity_type not in ENTITY_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid entity_type")
-
-    _et, entity = _load_trashed_entity(db, entity_type, entity_id)
-
-    meta: dict[str, Any] = {"entity_type": entity_type, "entity_id": entity_id}
-
-    if entity_type == "order":
-        oid = entity.id
-        db.delete(entity)
-        meta["order_id"] = oid
-    elif entity_type == "invoice":
-        iid = entity.id
-        db.delete(entity)
-        meta["invoice_id"] = iid
-    elif entity_type == "customer":
-        db.delete(entity)
-    elif entity_type == "product":
-        db.delete(entity)
-    elif entity_type == "proforma":
-        db.delete(entity)
-    elif entity_type == "quotation":
-        db.delete(entity)
-    elif entity_type == "waybill":
-        db.delete(entity)
-    elif entity_type == "inventory_material":
-        db.delete(entity)
-
-    log_activity(
-        db,
-        action=TRASH_PURGED,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        actor_user=user,
-        meta=meta,
-    )
-    db.commit()
+    _purge_one(db, entity_type, entity_id, user)
+    _commit_purge(db)
     return {"message": "Permanently deleted"}
+
+
+@router.post("/purge-bulk", response_model=TrashPurgeBulkResponse)
+def purge_bulk(
+    body: TrashPurgeBulkRequest,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    purged = 0
+    failed: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for item in body.items:
+        key = (item.entity_type, item.entity_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        if item.entity_type not in ENTITY_TYPES:
+            failed.append(
+                {"entity_type": item.entity_type, "entity_id": item.entity_id, "detail": "Invalid entity_type"}
+            )
+            continue
+        try:
+            _purge_one(db, item.entity_type, item.entity_id, user)
+            _commit_purge(db)
+            purged += 1
+        except HTTPException as e:
+            db.rollback()
+            failed.append(
+                {
+                    "entity_type": item.entity_type,
+                    "entity_id": item.entity_id,
+                    "detail": e.detail if isinstance(e.detail, str) else str(e.detail),
+                }
+            )
+        except IntegrityError:
+            db.rollback()
+            failed.append(
+                {
+                    "entity_type": item.entity_type,
+                    "entity_id": item.entity_id,
+                    "detail": "Database constraint: referenced by another row",
+                }
+            )
+    return TrashPurgeBulkResponse(purged=purged, failed=failed)
+
+
+@router.post("/purge-all", response_model=TrashPurgeAllResponse)
+def purge_all(
+    body: TrashPurgeAllRequest,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin"])),
+):
+    rows = _gather_trash_rows(db, True, user.id)
+    rows.sort(
+        key=lambda r: (_PURGE_ORDER.get(r.entity_type, 999), r.deleted_at, r.entity_type, r.entity_id),
+    )
+    purged = 0
+    failed: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            _purge_one(db, r.entity_type, r.entity_id, user)
+            _commit_purge(db)
+            purged += 1
+        except HTTPException as e:
+            db.rollback()
+            failed.append(
+                {
+                    "entity_type": r.entity_type,
+                    "entity_id": r.entity_id,
+                    "label": r.label,
+                    "detail": e.detail if isinstance(e.detail, str) else str(e.detail),
+                }
+            )
+        except IntegrityError:
+            db.rollback()
+            failed.append(
+                {
+                    "entity_type": r.entity_type,
+                    "entity_id": r.entity_id,
+                    "label": r.label,
+                    "detail": "Database constraint: referenced by another row",
+                }
+            )
+    return TrashPurgeAllResponse(purged=purged, failed=failed)

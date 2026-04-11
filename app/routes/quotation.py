@@ -775,7 +775,7 @@ def convert_quotation_to_invoice(
 def delete_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin", "showroom"])),
 ):
     p = (
         db.query(models.Quotation)
@@ -785,11 +785,6 @@ def delete_quotation(
     )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    if p.status == "converted":
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete a quotation that was converted",
-        )
     pid = p.id
     meta_num = p.quote_number
     log_activity(

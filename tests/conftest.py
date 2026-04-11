@@ -35,7 +35,7 @@ _test_engine = create_engine(
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_test_engine)
 
 
-def _seed_admin() -> None:
+def _seed_users() -> None:
     db = TestingSessionLocal()
     try:
         db.add(
@@ -44,6 +44,22 @@ def _seed_admin() -> None:
                 email="admin@company.com",
                 password=hash_password("admin123"),
                 role="admin",
+            )
+        )
+        db.add(
+            models.User(
+                name="showroom",
+                email="showroom@company.com",
+                password=hash_password("showroom123"),
+                role="showroom",
+            )
+        )
+        db.add(
+            models.User(
+                name="factory",
+                email="factory@company.com",
+                password=hash_password("factory123"),
+                role="factory",
             )
         )
         db.commit()
@@ -55,7 +71,7 @@ def _seed_admin() -> None:
 def _fresh_db() -> None:
     Base.metadata.drop_all(bind=_test_engine)
     Base.metadata.create_all(bind=_test_engine)
-    _seed_admin()
+    _seed_users()
     yield
 
 
@@ -82,6 +98,26 @@ def admin_token(client):
     r = client.post(
         "/auth/login",
         json={"email": "admin@company.com", "password": "admin123"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture
+def showroom_token(client):
+    r = client.post(
+        "/auth/login",
+        json={"email": "showroom@company.com", "password": "showroom123"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture
+def factory_token(client):
+    r = client.post(
+        "/auth/login",
+        json={"email": "factory@company.com", "password": "factory123"},
     )
     assert r.status_code == 200, r.text
     return r.json()["access_token"]

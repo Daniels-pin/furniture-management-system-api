@@ -55,7 +55,7 @@ export function ProformaDetailPage() {
   const canEdit = data && data.status !== "converted";
   const canFinalize = data?.status === "draft";
   const canConvert = data && data.status !== "converted" && !data.converted_order_id;
-  const canDelete = auth.role === "admin" && data && data.status !== "converted";
+  const canPresalesDelete = (auth.role === "admin" || auth.role === "showroom") && data;
 
   return (
     <div className="space-y-6">
@@ -165,17 +165,22 @@ export function ProformaDetailPage() {
               View order
             </Button>
           ) : null}
-          {canDelete ? (
+          {canPresalesDelete ? (
             <Button
               variant="secondary"
               className="border-red-600 text-red-700 hover:bg-red-50"
               isLoading={acting}
               onClick={async () => {
-                if (!window.confirm("Delete this proforma permanently?")) return;
+                const extra =
+                  data?.status === "converted"
+                    ? " The converted order and invoice stay in place; only this proforma record is removed from the active list."
+                    : "";
+                if (!window.confirm(`Move this proforma to Trash? You can restore it later from the Trash page.${extra}`))
+                  return;
                 try {
                   setActing(true);
                   await proformaApi.delete(id);
-                  toast.push("success", "Proforma deleted.");
+                  toast.push("success", "Proforma moved to Trash.");
                   nav("/proforma");
                 } catch (e) {
                   toast.push("error", getErrorMessage(e));

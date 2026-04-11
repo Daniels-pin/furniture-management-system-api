@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { RequireAuth } from "./routes/RequireAuth";
 import { AppLayout } from "./components/layout/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
@@ -10,6 +10,10 @@ import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminActivityLogPage } from "./pages/AdminActivityLogPage";
 import { TrashPage } from "./pages/TrashPage";
 import { InventoryPage } from "./pages/InventoryPage";
+import { InventoryMaterialDetailPage } from "./pages/InventoryMaterialDetailPage";
+import { EquipmentPage } from "./pages/EquipmentPage";
+import { ToolDetailPage } from "./pages/ToolDetailPage";
+import { MachineDetailPage } from "./pages/MachineDetailPage";
 import { AccountPage } from "./pages/AccountPage";
 import { InvoicesPage } from "./pages/InvoicesPage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
@@ -26,6 +30,11 @@ import { QuotationPdfExportPage } from "./pages/pdf-export/QuotationPdfExportPag
 import { ProformaPdfExportPage } from "./pages/pdf-export/ProformaPdfExportPage";
 import { WaybillPdfExportPage } from "./pages/pdf-export/WaybillPdfExportPage";
 import { OrderPdfExportPage } from "./pages/pdf-export/OrderPdfExportPage";
+
+function LegacyMachineDetailRedirect() {
+  const { machineId } = useParams();
+  return <Navigate to={`/equipment/machine/${machineId ?? ""}`} replace />;
+}
 
 export default function App() {
   return (
@@ -156,10 +165,52 @@ export default function App() {
         />
         <Route path="trash" element={<TrashPage />} />
         <Route
+          path="inventory/:materialId"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <InventoryMaterialDetailPage />
+            </RequireAuth>
+          }
+        />
+        <Route
           path="inventory"
           element={
             <RequireAuth roles={["admin", "factory"]}>
               <InventoryPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="equipment/tool/:toolId"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <ToolDetailPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="equipment/machine/:machineId"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <MachineDetailPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="equipment"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <EquipmentPage />
+            </RequireAuth>
+          }
+        />
+        <Route path="tools" element={<Navigate to="/equipment" replace />} />
+        <Route path="machines" element={<Navigate to="/equipment" replace />} />
+        <Route
+          path="machines/:machineId"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <LegacyMachineDetailRedirect />
             </RequireAuth>
           }
         />

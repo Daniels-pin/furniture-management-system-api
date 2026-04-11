@@ -207,6 +207,7 @@ export function AppLayout() {
             {auth.role === "admin" || auth.role === "factory" ? (
               <NavItem to="/inventory" label="Inventory" />
             ) : null}
+            {auth.role === "admin" || auth.role === "factory" ? <NavItem to="/equipment" label="Equipment" /> : null}
             <NavItem to="/trash" label="Trash" />
             <NavItem to="/account" label="Account" />
             {auth.role === "admin" ? <NavItem to="/admin/users" label="Admin Users" /> : null}

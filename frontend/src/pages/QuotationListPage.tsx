@@ -92,19 +92,21 @@ export function QuotationListPage() {
                 <th className="py-3 pr-4 font-semibold">Status</th>
                 <th className="py-3 pr-4 font-semibold">Total</th>
                 <th className="py-3 pr-4 font-semibold">Created</th>
-                {auth.role === "admin" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
+                {auth.role === "admin" || auth.role === "showroom" ? (
+                  <th className="py-3 pr-0 text-right font-semibold">Actions</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={auth.role === "admin" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.role === "admin" || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={auth.role === "admin" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.role === "admin" || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
                     No quotations yet.
                   </td>
                 </tr>
@@ -123,22 +125,18 @@ export function QuotationListPage() {
                       {new Date(r.created_at).toLocaleString()}
                       {r.created_by ? <span className="ml-2 text-black/40">· {r.created_by}</span> : null}
                     </td>
-                    {auth.role === "admin" ? (
+                    {auth.role === "admin" || auth.role === "showroom" ? (
                       <td className="py-3 pr-0 text-right">
-                        {r.status !== "converted" ? (
-                          <button
-                            type="button"
-                            className="text-xs font-bold text-red-700 hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteTarget(r);
-                            }}
-                          >
-                            Delete
-                          </button>
-                        ) : (
-                          <span className="text-xs text-black/35">—</span>
-                        )}
+                        <button
+                          type="button"
+                          className="text-xs font-bold text-red-700 hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteTarget(r);
+                          }}
+                        >
+                          Delete
+                        </button>
                       </td>
                     ) : null}
                   </tr>
@@ -161,6 +159,9 @@ export function QuotationListPage() {
           <p className="text-sm text-black/70">
             <span className="font-semibold text-black">#{deleteTarget?.quote_number}</span> for{" "}
             {deleteTarget?.customer_name} will be soft-deleted. You can restore it from the Trash page.
+            {deleteTarget?.status === "converted" ? (
+              <span className="mt-2 block">Any linked order or proforma invoice is not removed.</span>
+            ) : null}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" disabled={deleteSubmitting} onClick={() => setDeleteTarget(null)}>

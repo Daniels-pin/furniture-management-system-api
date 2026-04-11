@@ -323,3 +323,84 @@ class InventoryMovement(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     material = relationship("InventoryMaterial", back_populates="movements")
+
+
+class FactoryTool(Base):
+    """Named factory tools (check-out / return tracking)."""
+
+    __tablename__ = "factory_tools"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    tracking_records = relationship("ToolTrackingRecord", back_populates="tool")
+
+
+class ToolTrackingRecord(Base):
+    """Single check-out event; returned_at null means tool still out."""
+
+    __tablename__ = "tool_tracking_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tool_id = Column(Integer, ForeignKey("factory_tools.id", ondelete="CASCADE"), nullable=False, index=True)
+    checkout_at = Column(DateTime, nullable=False, index=True)
+    returned_at = Column(DateTime, nullable=True, index=True)
+    borrower_name = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    tool = relationship("FactoryTool", back_populates="tracking_records")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+
+
+class FactoryMachine(Base):
+    """Factory machines (usage + status similar to inventory materials)."""
+
+    __tablename__ = "factory_machines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    machine_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    serial_number = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    # available | in_use | maintenance
+    status = Column(String, nullable=False, default="available")
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    updated_by_user = relationship("User", foreign_keys=[updated_by_id])
+    activities = relationship(
+        "MachineActivity",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+    )
+
+
+class MachineActivity(Base):
+    """Append-only activity / usage log for a machine."""
+
+    __tablename__ = "machine_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    machine_id = Column(Integer, ForeignKey("factory_machines.id", ondelete="CASCADE"), nullable=False, index=True)
+    # usage_start | usage_end | status_change | note
+    kind = Column(String, nullable=False)
+    message = Column(String, nullable=True)
+    meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    machine = relationship("FactoryMachine", back_populates="activities")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])

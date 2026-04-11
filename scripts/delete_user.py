@@ -1,8 +1,15 @@
 import argparse
+import os
+import sys
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from sqlalchemy.orm import Session
+
+# Ensure imports work when running as a script (python scripts/delete_user.py ...).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from app import models
 from app.database import SessionLocal

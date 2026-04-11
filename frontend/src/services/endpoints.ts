@@ -26,10 +26,20 @@ import type {
   WaybillListItem,
   InventoryFinancialSummary,
   InventoryMaterial,
+  InventoryMaterialDetail,
   InventoryMovement,
   InventoryMovementAction,
   InventoryPayment,
-  InventorySupplierFinancialRow
+  InventorySupplierFinancialRow,
+  FactoryTool,
+  ToolTrackingDaysPage,
+  ToolTrackingRecordsPage,
+  ToolTrackingRecord,
+  FactoryMachine,
+  FactoryMachineDetail,
+  FactoryToolDetail,
+  MachineActivity,
+  MachineStatus
 } from "../types/api";
 
 export const authApi = {
@@ -55,8 +65,23 @@ export const trashApi = {
     });
     return data;
   },
+  /** Permanently delete one trashed row (POST avoids DELETE being blocked by some proxies). */
   async purge(entity_type: string, entity_id: number) {
-    const { data } = await api.delete<{ message: string }>(`/trash/purge/${entity_type}/${entity_id}`);
+    const { data } = await api.post<{ message: string }>("/trash/purge", { entity_type, entity_id });
+    return data;
+  },
+  async purgeBulk(items: { entity_type: string; entity_id: number }[]) {
+    const { data } = await api.post<{ purged: number; failed: { entity_type: string; entity_id: number; detail: string }[] }>(
+      "/trash/purge-bulk",
+      { items }
+    );
+    return data;
+  },
+  async purgeAll() {
+    const { data } = await api.post<{ purged: number; failed: { entity_type: string; entity_id: number; detail: string; label?: string }[] }>(
+      "/trash/purge-all",
+      { confirm: "PERMANENTLY_DELETE_ALL_TRASH" as const }
+    );
     return data;
   }
 };
@@ -589,6 +614,10 @@ export const inventoryApi = {
     const { data } = await api.get<InventoryMaterial[]>("/inventory", { params: qp });
     return data;
   },
+  async getDetail(materialId: number) {
+    const { data } = await api.get<InventoryMaterialDetail>(`/inventory/${materialId}`);
+    return data;
+  },
   async create(payload: Record<string, unknown>) {
     const { data } = await api.post<InventoryMaterial>("/inventory", payload);
     return data;
@@ -601,8 +630,18 @@ export const inventoryApi = {
     const { data } = await api.delete<{ message: string }>(`/inventory/${materialId}`);
     return data;
   },
-  async postMovement(materialId: number, body: { action: InventoryMovementAction; quantity_delta: string | number }) {
+  async postMovement(
+    materialId: number,
+    body: { action: InventoryMovementAction; quantity_delta: string | number; note?: string | null }
+  ) {
     const { data } = await api.post<InventoryMovement>(`/inventory/${materialId}/movements`, body);
+    return data;
+  },
+  async postPurchase(
+    materialId: number,
+    body: { quantity: string | number; purchase_amount?: string | number | null; note?: string | null }
+  ) {
+    const { data } = await api.post<InventoryMaterialDetail>(`/inventory/${materialId}/purchase`, body);
     return data;
   },
   async movements(params?: { material_id?: number; limit?: number; offset?: number }) {
@@ -658,6 +697,77 @@ export const inventoryApi = {
       ids,
       ...patch
     });
+    return data;
+  }
+};
+
+export const toolsApi = {
+  async list() {
+    const { data } = await api.get<FactoryTool[]>("/tools");
+    return data;
+  },
+  async getDetail(toolId: number, params?: { history_limit?: number }) {
+    const { data } = await api.get<FactoryToolDetail>(`/tools/${toolId}`, { params });
+    return data;
+  },
+  async create(body: { name: string; notes?: string | null }) {
+    const { data } = await api.post<FactoryTool>("/tools", body);
+    return data;
+  },
+  async update(toolId: number, body: { name?: string; notes?: string | null }) {
+    const { data } = await api.put<FactoryTool>(`/tools/${toolId}`, body);
+    return data;
+  },
+  async remove(toolId: number) {
+    const { data } = await api.delete<{ message: string }>(`/tools/${toolId}`);
+    return data;
+  },
+  async trackingDays(params?: { page?: number; per_page?: number }) {
+    const { data } = await api.get<ToolTrackingDaysPage>("/tools/tracking/days", { params });
+    return data;
+  },
+  async trackingByDay(params: {
+    date: string;
+    status?: "all" | "returned" | "in_use";
+    page?: number;
+    per_page?: number;
+  }) {
+    const { data } = await api.get<ToolTrackingRecordsPage>("/tools/tracking/by-day", { params });
+    return data;
+  },
+  async checkout(body: { tool_id: number; borrower_name?: string | null; notes?: string | null; checkout_at?: string }) {
+    const { data } = await api.post<ToolTrackingRecord>("/tools/tracking/checkout", body);
+    return data;
+  },
+  async returnRecord(recordId: number, body?: { returned_at?: string | null }) {
+    const { data } = await api.post<ToolTrackingRecord>(`/tools/tracking/${recordId}/return`, body ?? {});
+    return data;
+  }
+};
+
+export const machinesApi = {
+  async list(params?: { search?: string; status?: MachineStatus }) {
+    const { data } = await api.get<FactoryMachine[]>("/machines", { params });
+    return data;
+  },
+  async create(body: Record<string, unknown>) {
+    const { data } = await api.post<FactoryMachine>("/machines", body);
+    return data;
+  },
+  async getDetail(machineId: number, params?: { activity_limit?: number }) {
+    const { data } = await api.get<FactoryMachineDetail>(`/machines/${machineId}`, { params });
+    return data;
+  },
+  async update(machineId: number, body: Record<string, unknown>) {
+    const { data } = await api.put<FactoryMachine>(`/machines/${machineId}`, body);
+    return data;
+  },
+  async remove(machineId: number) {
+    const { data } = await api.delete<{ message: string }>(`/machines/${machineId}`);
+    return data;
+  },
+  async postActivity(machineId: number, body: { kind: MachineActivity["kind"]; message?: string | null; new_status?: MachineStatus }) {
+    const { data } = await api.post<MachineActivity>(`/machines/${machineId}/activities`, body);
     return data;
   }
 };

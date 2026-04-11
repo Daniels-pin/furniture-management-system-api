@@ -16,4 +16,8 @@ from app.models import (
     InventoryMaterial,
     InventoryMaterialPayment,
     InventoryMovement,
+    FactoryTool,
+    ToolTrackingRecord,
+    FactoryMachine,
+    MachineActivity,
 )

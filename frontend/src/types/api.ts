@@ -359,3 +359,91 @@ export type InventoryMovement = {
   created_at: string;
 };
 
+export type InventoryMaterialQtyStats = {
+  total_quantity_purchased: string | number;
+  total_quantity_used: string | number;
+  current_quantity?: string | number | null;
+};
+
+export type InventoryMaterialDetail = {
+  material: InventoryMaterial;
+  stats: InventoryMaterialQtyStats;
+};
+
+export type FactoryTool = {
+  id: number;
+  name: string;
+  notes?: string | null;
+  in_use: boolean;
+  created_at: string;
+};
+
+export type ToolTrackingDaySummary = {
+  date: string;
+  checkouts: number;
+  still_out: number;
+};
+
+export type ToolTrackingDaysPage = {
+  items: ToolTrackingDaySummary[];
+  page: number;
+  per_page: number;
+  total_days: number;
+};
+
+export type ToolTrackingRecord = {
+  id: number;
+  tool_id: number;
+  tool_name: string;
+  checkout_at: string;
+  returned_at?: string | null;
+  borrower_name?: string | null;
+  notes?: string | null;
+  checked_out_by?: string | null;
+};
+
+export type ToolTrackingRecordsPage = {
+  date: string;
+  status_filter: "all" | "returned" | "in_use";
+  items: ToolTrackingRecord[];
+  page: number;
+  per_page: number;
+  total: number;
+};
+
+export type MachineStatus = "available" | "in_use" | "maintenance";
+export type MachineActivityKind = "usage_start" | "usage_end" | "status_change" | "note";
+
+export type FactoryMachine = {
+  id: number;
+  machine_name: string;
+  category?: string | null;
+  serial_number?: string | null;
+  location?: string | null;
+  status: MachineStatus;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MachineActivity = {
+  id: number;
+  machine_id: number;
+  kind: MachineActivityKind;
+  message?: string | null;
+  meta?: Record<string, unknown> | null;
+  created_at: string;
+  recorded_by?: string | null;
+};
+
+export type FactoryMachineDetail = {
+  machine: FactoryMachine;
+  activities: MachineActivity[];
+};
+
+export type FactoryToolDetail = {
+  tool: FactoryTool;
+  records: ToolTrackingRecord[];
+  current_record_id?: number | null;
+};
+

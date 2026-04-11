@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
@@ -19,12 +19,15 @@ from app.schemas import (
     InventoryBulkStockLevel,
     InventoryFinancialSummary,
     InventoryMaterialCreate,
+    InventoryMaterialDetailResponse,
     InventoryMaterialOut,
+    InventoryMaterialQtyStats,
     InventoryMaterialUpdate,
     InventoryMovementCreate,
     InventoryMovementOut,
     InventoryPaymentCreate,
     InventoryPaymentOut,
+    InventoryStockPurchaseCreate,
     InventorySupplierFinancialRow,
     InventoryUnitsResponse,
 )
@@ -164,6 +167,46 @@ def _get_alive(
     return q.first()
 
 
+def _movement_quantity_stats(db: Session, material_id: int) -> tuple[Decimal, Decimal]:
+    """From movement log: totals for `added` (inbound) and `used` (consumption). Adjustments excluded."""
+    total_purchased = db.query(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            models.InventoryMovement.action == "added",
+                            models.InventoryMovement.quantity_delta.isnot(None),
+                            models.InventoryMovement.quantity_delta > 0,
+                        ),
+                        models.InventoryMovement.quantity_delta,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+    ).filter(models.InventoryMovement.material_id == material_id).scalar()
+    total_used = db.query(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            models.InventoryMovement.action == "used",
+                            models.InventoryMovement.quantity_delta.isnot(None),
+                        ),
+                        -models.InventoryMovement.quantity_delta,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+    ).filter(models.InventoryMovement.material_id == material_id).scalar()
+    return Decimal(str(total_purchased or 0)), Decimal(str(total_used or 0))
+
+
 def _append_movement(
     db: Session,
     *,
@@ -293,9 +336,13 @@ def list_movements(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    q = db.query(models.InventoryMovement, models.InventoryMaterial.material_name).join(
-        models.InventoryMaterial,
-        models.InventoryMaterial.id == models.InventoryMovement.material_id,
+    q = (
+        db.query(models.InventoryMovement, models.InventoryMaterial.material_name)
+        .join(
+            models.InventoryMaterial,
+            models.InventoryMaterial.id == models.InventoryMovement.material_id,
+        )
+        .filter(inventory_material_alive())
     )
     if material_id is not None:
         q = q.filter(models.InventoryMovement.material_id == material_id)
@@ -416,6 +463,28 @@ def create_inventory(
     assert row is not None
     paid = _paid_for_material(db, row.id)
     return _material_to_out(row, amount_paid=paid)
+
+
+@router.get("/inventory/{material_id}", response_model=InventoryMaterialDetailResponse)
+def get_inventory_material_detail(
+    material_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_inventory_access),
+):
+    row = _get_alive(db, material_id, with_users=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Material not found")
+    paid = _paid_for_material(db, material_id)
+    tpurch, tused = _movement_quantity_stats(db, material_id)
+    cur = _as_dec(row.quantity) if row.tracking_mode == "numeric" else None
+    return InventoryMaterialDetailResponse(
+        material=_material_to_out(row, amount_paid=paid),
+        stats=InventoryMaterialQtyStats(
+            total_quantity_purchased=tpurch,
+            total_quantity_used=tused,
+            current_quantity=cur,
+        ),
+    )
 
 
 @router.put("/inventory/{material_id}", response_model=InventoryMaterialOut)
@@ -663,12 +732,16 @@ def post_movement(
     row.updated_by_id = user.id
     row.updated_at = datetime.utcnow()
 
+    mov_meta: dict[str, Any] | None = None
+    if body.note:
+        mov_meta = {"note": body.note}
+
     mov = _append_movement(
         db,
         material_id=row.id,
         action=body.action,
         quantity_delta=delta,
-        meta=None,
+        meta=mov_meta,
         actor_user=user,
     )
     log_activity(
@@ -690,6 +763,73 @@ def post_movement(
         meta=mov.meta,
         actor_username=mov.actor_username,
         created_at=mov.created_at,
+    )
+
+
+@router.post("/inventory/{material_id}/purchase", response_model=InventoryMaterialDetailResponse)
+def post_inventory_purchase(
+    material_id: int,
+    body: InventoryStockPurchaseCreate,
+    db: Session = Depends(get_db),
+    user=Depends(require_inventory_access),
+):
+    """Log a new inbound purchase: increases quantity, appends an `added` movement, and optionally adds to cumulative supplier cost."""
+    row = _get_alive(db, material_id, with_users=False)
+    if not row:
+        raise HTTPException(status_code=404, detail="Material not found")
+    if row.tracking_mode != "numeric":
+        raise HTTPException(
+            status_code=400,
+            detail="Purchases apply only to numeric tracking materials",
+        )
+    qty = body.quantity
+    if row.quantity is None:
+        row.quantity = Decimal("0")
+    new_qty = row.quantity + qty
+    row.quantity = new_qty
+
+    meta: dict[str, Any] = {"kind": "purchase"}
+    if body.purchase_amount is not None:
+        meta["purchase_amount"] = str(body.purchase_amount)
+    if body.note:
+        meta["note"] = body.note
+
+    _append_movement(
+        db,
+        material_id=row.id,
+        action="added",
+        quantity_delta=qty,
+        meta=meta,
+        actor_user=user,
+    )
+    if body.purchase_amount is not None and body.purchase_amount > 0:
+        prev = _as_dec(row.cost) or Decimal("0")
+        row.cost = prev + body.purchase_amount
+
+    row.updated_by_id = user.id
+    row.updated_at = datetime.utcnow()
+    _sync_material_payment_status(db, row)
+    log_activity(
+        db,
+        action=INVENTORY_MATERIAL_UPDATED,
+        entity_type="inventory_material",
+        entity_id=row.id,
+        actor_user=user,
+        meta={"material_name": row.material_name, "movement": "purchase"},
+    )
+    db.commit()
+    row = _get_alive(db, material_id, with_users=True)
+    assert row is not None
+    paid = _paid_for_material(db, material_id)
+    tpurch, tused = _movement_quantity_stats(db, material_id)
+    cur = _as_dec(row.quantity) if row.tracking_mode == "numeric" else None
+    return InventoryMaterialDetailResponse(
+        material=_material_to_out(row, amount_paid=paid),
+        stats=InventoryMaterialQtyStats(
+            total_quantity_purchased=tpurch,
+            total_quantity_used=tused,
+            current_quantity=cur,
+        ),
     )
 
 

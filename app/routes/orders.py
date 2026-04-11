@@ -80,6 +80,64 @@ def _parse_optional_email(raw: Optional[str]) -> Optional[str]:
         raise HTTPException(status_code=422, detail="Invalid email format") from e
 
 
+def _parse_customer_birth_form(day_raw: Optional[str], month_raw: Optional[str]) -> tuple[Optional[int], Optional[int]]:
+    d = (day_raw or "").strip()
+    m = (month_raw or "").strip()
+    if not d and not m:
+        return None, None
+    if not d or not m:
+        raise HTTPException(
+            status_code=422,
+            detail="Birthday requires both day and month, or leave both blank",
+        )
+    try:
+        bd = int(d)
+        bm = int(m)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail="Birthday day and month must be whole numbers") from e
+    if not (1 <= bd <= 31) or not (1 <= bm <= 12):
+        raise HTTPException(status_code=422, detail="Invalid birthday day or month")
+    return bd, bm
+
+
+def _coerce_customer_birth_ints(birth_day: Optional[int], birth_month: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+    if birth_day is None and birth_month is None:
+        return None, None
+    if birth_day is None or birth_month is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Birthday requires both day and month, or omit both",
+        )
+    if not (1 <= birth_day <= 31) or not (1 <= birth_month <= 12):
+        raise HTTPException(status_code=422, detail="Invalid birthday day or month")
+    return birth_day, birth_month
+
+
+def _customer_public_payload(customer: models.Customer) -> dict:
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "address": customer.address,
+        "email": customer.email,
+        "birth_day": customer.birth_day,
+        "birth_month": customer.birth_month,
+    }
+
+
+def _apply_birthday_to_customer(
+    customer: models.Customer,
+    birth_day: Optional[int],
+    birth_month: Optional[int],
+) -> None:
+    if birth_day is None:
+        return
+    if customer.birth_day is not None or customer.birth_month is not None:
+        return
+    customer.birth_day = birth_day
+    customer.birth_month = birth_month
+
+
 def _build_order_response(
     db: Session, order: models.Order, customer: models.Customer, items: list[models.OrderItem], user
 ) -> dict:
@@ -101,13 +159,7 @@ def _build_order_response(
 
     cust_payload = None
     if not factory and customer is not None:
-        cust_payload = {
-            "id": customer.id,
-            "name": customer.name,
-            "phone": customer.phone,
-            "address": customer.address,
-            "email": customer.email,
-        }
+        cust_payload = _customer_public_payload(customer)
 
     base: dict = {
         "id": order.id,
@@ -360,6 +412,8 @@ def create_order(
     customer_phone: Optional[str] = Form(None),
     customer_address: Optional[str] = Form(None),
     customer_email: Optional[str] = Form(None),
+    customer_birth_day: Optional[str] = Form(None),
+    customer_birth_month: Optional[str] = Form(None),
 
     # Items (list of {item_name, description, quantity})
     items_json: Optional[str] = Form(None),
@@ -403,6 +457,7 @@ def create_order(
         raise HTTPException(status_code=422, detail="Customer info missing")
 
     email_val = _parse_optional_email(customer_email)
+    birth_day, birth_month = _parse_customer_birth_form(customer_birth_day, customer_birth_month)
 
     # 3) Upload image(s) (optional) before DB writes
     image_urls: list[str] = []
@@ -436,12 +491,15 @@ def create_order(
                 customer = existing
                 if email_val and not (existing.email or "").strip():
                     existing.email = email_val
+                _apply_birthday_to_customer(existing, birth_day, birth_month)
             else:
                 customer = models.Customer(
                     name=name,
                     phone=phone,
                     address=address,
                     email=email_val,
+                    birth_day=birth_day,
+                    birth_month=birth_month,
                     creator_id=user.id,
                 )
                 db.add(customer)
@@ -528,6 +586,8 @@ def create_order_json(
     if email_val is not None:
         email_val = str(email_val).strip() or None
 
+    birth_day, birth_month = _coerce_customer_birth_ints(order.customer.birth_day, order.customer.birth_month)
+
     existing = (
         db.query(models.Customer)
         .filter(models.Customer.phone == phone)
@@ -538,12 +598,15 @@ def create_order_json(
         new_customer = existing
         if email_val and not (existing.email or "").strip():
             existing.email = email_val
+        _apply_birthday_to_customer(existing, birth_day, birth_month)
     else:
         new_customer = models.Customer(
             name=order.customer.name,
             phone=phone,
             address=order.customer.address,
             email=email_val,
+            birth_day=birth_day,
+            birth_month=birth_month,
             creator_id=user.id,
         )
         db.add(new_customer)
@@ -658,13 +721,7 @@ def get_orders(
             "image_urls": order.image_urls,
             "customer": None
             if user.role == "factory"
-            else {
-                "id": customer.id,
-                "name": customer.name,
-                "phone": customer.phone,
-                "address": customer.address,
-                "email": customer.email,
-            },
+            else _customer_public_payload(customer),
             "items": [
                 {
                     "id": item.id,
@@ -815,13 +872,7 @@ def get_order(
 
     cust_payload = None
     if not factory and customer is not None:
-        cust_payload = {
-            "id": customer.id,
-            "name": customer.name,
-            "phone": customer.phone,
-            "address": customer.address,
-            "email": customer.email,
-        }
+        cust_payload = _customer_public_payload(customer)
 
     base = {
         "order_id": order.id,
@@ -970,13 +1021,7 @@ def put_order_admin(
         "image_urls": order.image_urls,
         "customer": None
         if user.role == "factory"
-        else {
-            "id": customer.id,
-            "name": customer.name,
-            "phone": customer.phone,
-            "address": customer.address,
-            "email": customer.email,
-        },
+        else _customer_public_payload(customer),
         "items": [
             {
                 "id": item.id,

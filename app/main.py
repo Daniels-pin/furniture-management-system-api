@@ -18,6 +18,8 @@ from app.routes.users import router as users_router
 from app.routes.admin_impersonate import router as admin_impersonate_router
 from app.routes.trash import router as trash_router
 from app.routes.inventory import router as inventory_router
+from app.routes.tools import router as tools_router
+from app.routes.machines import router as machines_router
 
 app = FastAPI() 
 
@@ -31,6 +33,9 @@ frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.stri
 _default_dev_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    # Vite uses the next free port when 5173 is taken (common in multi-repo dev).
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
@@ -91,4 +96,6 @@ app.include_router(proforma_router, tags=["Proforma"])
 app.include_router(quotation_router, tags=["Quotations"])
 app.include_router(waybill_router, tags=["Waybills"])
 app.include_router(inventory_router, tags=["Inventory"])
+app.include_router(tools_router)
+app.include_router(machines_router)
 

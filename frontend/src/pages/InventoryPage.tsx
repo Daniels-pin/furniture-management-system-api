@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import type {
   InventoryFinancialSummary,
   InventoryMaterial,
@@ -647,7 +648,11 @@ export function InventoryPage() {
                         aria-label={`Select ${r.material_name}`}
                       />
                     </td>
-                    <td className="px-3 py-3 align-top font-semibold">{r.material_name}</td>
+                    <td className="px-3 py-3 align-top font-semibold">
+                      <Link className="text-black hover:underline" to={`/inventory/${r.id}`}>
+                        {r.material_name}
+                      </Link>
+                    </td>
                     <td className="px-3 py-3 align-top text-black/70">{r.category || "—"}</td>
                     <td className="px-3 py-3 align-top text-black/70">{r.tracking_mode === "numeric" ? "Numeric" : "Status"}</td>
                     <td className="px-3 py-3 align-top tabular-nums">
@@ -664,6 +669,9 @@ export function InventoryPage() {
                     <td className="px-3 py-3 align-top text-black/60">{r.added_by || "—"}</td>
                     <td className="px-3 py-3 align-top">
                       <div className="flex flex-wrap gap-1">
+                        <Link className="text-xs font-bold text-black/70 hover:underline" to={`/inventory/${r.id}`}>
+                          View
+                        </Link>
                         <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => openEdit(r)}>
                           Edit
                         </button>
@@ -743,6 +751,11 @@ export function InventoryPage() {
           <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-xs text-black/55">
             Payment status is calculated from recorded payments vs. cost. Use <span className="font-semibold text-black/70">Payments</span> on
             each row to log supplier payments.
+          </div>
+          <div className="rounded-xl border border-amber-200/70 bg-amber-50/50 px-3 py-2 text-xs text-amber-950">
+            Extra stock from a <span className="font-semibold">new purchase</span> should be logged on the material&apos;s{" "}
+            <span className="font-semibold">View</span> page (&quot;Log new purchase&quot;) so totals and history stay cumulative—avoid editing
+            quantity here for that case.
           </div>
           <Input
             label="Cost"

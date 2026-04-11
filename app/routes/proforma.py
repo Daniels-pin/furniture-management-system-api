@@ -695,7 +695,7 @@ def convert_proforma_to_invoice(
 def delete_proforma(
     proforma_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin", "showroom"])),
 ):
     p = (
         db.query(models.ProformaInvoice)
@@ -705,11 +705,6 @@ def delete_proforma(
     )
     if not p:
         raise HTTPException(status_code=404, detail="Proforma not found")
-    if p.status == "converted":
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete a proforma that was converted to an order/invoice",
-        )
     pid = p.id
     meta_num = p.proforma_number
     log_activity(

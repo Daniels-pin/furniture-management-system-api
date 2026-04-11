@@ -1,10 +1,9 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useReducer } from "react";
 
 export type ToastKind = "success" | "error" | "info";
 export type Toast = { id: string; kind: ToastKind; message: string };
 
 type ToastContextValue = {
-  toasts: Toast[];
   push(kind: ToastKind, message: string): void;
   remove(id: string): void;
 };
@@ -15,23 +14,33 @@ function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
+type ToastAction =
+  | { type: "add"; id: string; kind: ToastKind; message: string }
+  | { type: "remove"; id: string };
 
-  const value = useMemo<ToastContextValue>(
-    () => ({
-      toasts,
-      push: (kind, message) => {
-        const id = uid();
-        setToasts((t) => [...t, { id, kind, message }]);
-        window.setTimeout(() => {
-          setToasts((t) => t.filter((x) => x.id !== id));
-        }, 3500);
-      },
-      remove: (id) => setToasts((t) => t.filter((x) => x.id !== id))
-    }),
-    [toasts]
-  );
+function toastReducer(state: Toast[], action: ToastAction): Toast[] {
+  if (action.type === "add") {
+    return [...state, { id: action.id, kind: action.kind, message: action.message }];
+  }
+  return state.filter((x) => x.id !== action.id);
+}
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, dispatch] = useReducer(toastReducer, []);
+
+  const push = useCallback((kind: ToastKind, message: string) => {
+    const id = uid();
+    dispatch({ type: "add", id, kind, message });
+    window.setTimeout(() => {
+      dispatch({ type: "remove", id });
+    }, 3500);
+  }, []);
+
+  const remove = useCallback((id: string) => {
+    dispatch({ type: "remove", id });
+  }, []);
+
+  const value = useMemo<ToastContextValue>(() => ({ push, remove }), [push, remove]);
 
   return (
     <ToastContext.Provider value={value}>
@@ -59,9 +68,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useToast() {
+export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
   if (!ctx) throw new Error("useToast must be used within ToastProvider");
   return ctx;
 }
-

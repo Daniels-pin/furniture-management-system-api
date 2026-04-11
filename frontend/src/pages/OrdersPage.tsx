@@ -338,6 +338,8 @@ function CreateOrderModal({
   const [customerPhone, setCustomerPhone] = useState<string>("");
   const [customerAddress, setCustomerAddress] = useState<string>("");
   const [customerEmail, setCustomerEmail] = useState<string>("");
+  const [customerBirthDay, setCustomerBirthDay] = useState<string>("");
+  const [customerBirthMonth, setCustomerBirthMonth] = useState<string>("");
 
   const [items, setItems] = useState<
     Array<{ item_name: string; description: string; quantity: string; amount: string }>
@@ -358,6 +360,8 @@ function CreateOrderModal({
     setCustomerPhone("");
     setCustomerAddress("");
     setCustomerEmail("");
+    setCustomerBirthDay("");
+    setCustomerBirthMonth("");
     setItems([{ item_name: "", description: "", quantity: "1", amount: "" }]);
     setDueDate("");
     setImages([]);
@@ -391,6 +395,21 @@ function CreateOrderModal({
     const em = customerEmail.trim();
     if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
       e.customerEmail = "Enter a valid email or leave blank";
+    }
+
+    const bdRaw = customerBirthDay.trim();
+    const bmRaw = customerBirthMonth.trim();
+    if (bdRaw || bmRaw) {
+      const bd = Number(bdRaw);
+      const bm = Number(bmRaw);
+      if (!bdRaw || !bmRaw) {
+        e.customerBirthDay = e.customerBirthDay || "Enter both day and month, or leave both blank";
+        e.customerBirthMonth = e.customerBirthMonth || "Enter both day and month, or leave both blank";
+      } else if (!Number.isFinite(bd) || bd < 1 || bd > 31) {
+        e.customerBirthDay = "Day must be 1–31";
+      } else if (!Number.isFinite(bm) || bm < 1 || bm > 12) {
+        e.customerBirthMonth = "Month must be 1–12";
+      }
     }
 
     const normalizedItems: OrderCreateItem[] = [];
@@ -451,6 +470,10 @@ function CreateOrderModal({
       form.append("customer_phone", customerPhone.trim());
       form.append("customer_address", customerAddress.trim());
       if (customerEmail.trim()) form.append("customer_email", customerEmail.trim());
+      if (customerBirthDay.trim() && customerBirthMonth.trim()) {
+        form.append("customer_birth_day", customerBirthDay.trim());
+        form.append("customer_birth_month", customerBirthMonth.trim());
+      }
 
       const payload = items
         .map((it) => ({
@@ -530,6 +553,22 @@ function CreateOrderModal({
             onChange={(e) => setCustomerEmail(e.target.value)}
             error={fieldError.customerEmail}
             placeholder="customer@example.com"
+          />
+          <Input
+            label="Birth day (optional)"
+            value={customerBirthDay}
+            onChange={(e) => setCustomerBirthDay(e.target.value)}
+            error={fieldError.customerBirthDay}
+            inputMode="numeric"
+            placeholder="1–31"
+          />
+          <Input
+            label="Birth month (optional)"
+            value={customerBirthMonth}
+            onChange={(e) => setCustomerBirthMonth(e.target.value)}
+            error={fieldError.customerBirthMonth}
+            inputMode="numeric"
+            placeholder="1–12"
           />
           <Input
             label="Due date"

@@ -59,7 +59,7 @@ export function QuotationDetailPage() {
     data.status !== "converted" &&
     !data.converted_order_id &&
     !data.converted_proforma_id;
-  const canDelete = auth.role === "admin" && data && data.status !== "converted";
+  const canPresalesDelete = (auth.role === "admin" || auth.role === "showroom") && data;
 
   return (
     <div className="space-y-6">
@@ -195,15 +195,19 @@ export function QuotationDetailPage() {
               View order
             </Button>
           ) : null}
-          {canDelete ? (
+          {canPresalesDelete ? (
             <Button
               variant="secondary"
               className="border-red-600 text-red-700 hover:bg-red-50"
               isLoading={acting}
               onClick={async () => {
+                const extra =
+                  data?.status === "converted"
+                    ? " Any linked order or proforma invoice stays in place; only this quotation record is removed from the active list."
+                    : "";
                 if (
                   !window.confirm(
-                    "Move this quotation to Trash? You can restore it later from the Trash page."
+                    `Move this quotation to Trash? You can restore it later from the Trash page.${extra}`
                   )
                 )
                   return;

@@ -635,6 +635,15 @@ class InventorySupplierFinancialRow(BaseModel):
 class InventoryMovementCreate(BaseModel):
     action: InventoryMovementAction
     quantity_delta: Decimal
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_movement_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     @model_validator(mode="after")
     def quantity_delta_rules(self):
@@ -645,6 +654,37 @@ class InventoryMovementCreate(BaseModel):
         if self.action == "adjusted" and self.quantity_delta == 0:
             raise ValueError("adjusted movement requires a non-zero quantity_delta")
         return self
+
+
+class InventoryStockPurchaseCreate(BaseModel):
+    """Add stock for an existing material (new purchase). Appends an `added` movement and optionally increases cumulative supplier cost."""
+
+    quantity: Decimal = Field(..., gt=0)
+    purchase_amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Amount to add to this material's total supplier cost (cumulative). Omit for stock-only receipts.",
+    )
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_purchase_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
+class InventoryMaterialQtyStats(BaseModel):
+    total_quantity_purchased: Decimal
+    total_quantity_used: Decimal
+    current_quantity: Optional[Decimal] = None
+
+
+class InventoryMaterialDetailResponse(BaseModel):
+    material: InventoryMaterialOut
+    stats: InventoryMaterialQtyStats
 
 
 class InventoryMovementOut(BaseModel):
@@ -685,3 +725,178 @@ class InventoryBulkPatch(BaseModel):
 
 class InventoryUnitsResponse(BaseModel):
     units: List[str]
+
+
+# --- Factory tools & tool tracking ---
+
+
+class FactoryToolOut(BaseModel):
+    id: int
+    name: str
+    notes: Optional[str] = None
+    in_use: bool = False
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FactoryToolCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=500)
+    notes: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class FactoryToolUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=500)
+    notes: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name_opt(cls, v: object) -> object:
+        if v is None:
+            return v
+        s = str(v).strip()
+        return s or None
+
+
+class ToolTrackingDaySummary(BaseModel):
+    date: str  # YYYY-MM-DD
+    checkouts: int
+    still_out: int
+
+
+class ToolTrackingDaysPage(BaseModel):
+    items: List[ToolTrackingDaySummary]
+    page: int
+    per_page: int
+    total_days: int
+
+
+class ToolTrackingRecordOut(BaseModel):
+    id: int
+    tool_id: int
+    tool_name: str
+    checkout_at: datetime
+    returned_at: Optional[datetime] = None
+    borrower_name: Optional[str] = None
+    notes: Optional[str] = None
+    checked_out_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FactoryToolDetailResponse(BaseModel):
+    tool: FactoryToolOut
+    records: List[ToolTrackingRecordOut]
+    current_record_id: Optional[int] = Field(
+        None,
+        description="Open checkout record id when tool is in use",
+    )
+
+
+class ToolTrackingRecordsPage(BaseModel):
+    date: str
+    status_filter: Literal["all", "returned", "in_use"]
+    items: List[ToolTrackingRecordOut]
+    page: int
+    per_page: int
+    total: int
+
+
+class ToolTrackingCheckoutCreate(BaseModel):
+    tool_id: int = Field(..., gt=0)
+    checkout_at: Optional[datetime] = None
+    borrower_name: Optional[str] = Field(None, max_length=500)
+    notes: Optional[str] = Field(None, max_length=4000)
+
+
+class ToolTrackingReturnBody(BaseModel):
+    returned_at: Optional[datetime] = None
+
+
+# --- Factory machines ---
+
+
+MachineStatus = Literal["available", "in_use", "maintenance"]
+MachineActivityKind = Literal["usage_start", "usage_end", "status_change", "note"]
+
+
+class FactoryMachineOut(BaseModel):
+    id: int
+    machine_name: str
+    category: Optional[str] = None
+    serial_number: Optional[str] = None
+    location: Optional[str] = None
+    status: MachineStatus
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FactoryMachineCreate(BaseModel):
+    machine_name: str = Field(..., min_length=1, max_length=500)
+    category: Optional[str] = Field(None, max_length=200)
+    serial_number: Optional[str] = Field(None, max_length=200)
+    location: Optional[str] = Field(None, max_length=500)
+    status: MachineStatus = "available"
+    notes: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("machine_name", mode="before")
+    @classmethod
+    def strip_machine_name(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class FactoryMachineUpdate(BaseModel):
+    machine_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    category: Optional[str] = Field(None, max_length=200)
+    serial_number: Optional[str] = Field(None, max_length=200)
+    location: Optional[str] = Field(None, max_length=500)
+    status: Optional[MachineStatus] = None
+    notes: Optional[str] = Field(None, max_length=4000)
+
+
+class MachineActivityOut(BaseModel):
+    id: int
+    machine_id: int
+    kind: MachineActivityKind
+    message: Optional[str] = None
+    meta: Optional[dict] = None
+    created_at: datetime
+    recorded_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FactoryMachineDetailResponse(BaseModel):
+    machine: FactoryMachineOut
+    activities: List[MachineActivityOut]
+
+
+class MachineActivityCreate(BaseModel):
+    kind: MachineActivityKind
+    message: Optional[str] = Field(None, max_length=4000)
+    new_status: Optional[MachineStatus] = Field(
+        None,
+        description="Required for status_change; optional hint for usage transitions",
+    )
+
+    @model_validator(mode="after")
+    def status_change_requires_new_status(self):
+        if self.kind == "status_change" and self.new_status is None:
+            raise ValueError("new_status is required for status_change")
+        return self
