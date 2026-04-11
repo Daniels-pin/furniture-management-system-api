@@ -111,7 +111,7 @@ export function CustomersPage() {
             <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Customer ID or name…" />
           </div>
 
-          <div className="mt-5 overflow-x-auto">
+          <div className="mt-5 min-w-0 overflow-x-touch">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="text-black/60">
                 <tr className="border-b border-black/10">

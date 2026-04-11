@@ -203,7 +203,7 @@ export function ToolDetailPage() {
       <Card className="!p-4">
         <div className="text-sm font-bold">History</div>
         <p className="mt-1 text-xs text-black/55">Check-outs and returns (newest first).</p>
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-black/10">
+        <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
               <tr>

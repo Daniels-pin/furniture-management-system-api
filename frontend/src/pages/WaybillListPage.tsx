@@ -57,7 +57,7 @@ export function WaybillListPage() {
       </div>
 
       <Card>
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-touch">
           <table className="w-full min-w-[880px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">

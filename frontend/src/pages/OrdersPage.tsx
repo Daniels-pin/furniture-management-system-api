@@ -156,7 +156,7 @@ export function OrdersPage() {
           />
         </div>
 
-        <div className="mt-5 overflow-x-auto">
+        <div className="mt-5 min-w-0 overflow-x-touch">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">

@@ -533,7 +533,7 @@ export function InventoryPage() {
             </div>
             <div className="mt-2 text-xs text-black/45">{financialSummary.material_count} active material(s)</div>
           </Card>
-          <Card className="overflow-x-auto p-0">
+          <Card className="min-w-0 overflow-x-touch p-0">
             <div className="border-b border-black/10 px-4 py-3 text-sm font-semibold text-black/70">By supplier</div>
             {supplierFin.length === 0 ? (
               <div className="p-4 text-sm text-black/50">No supplier cost data yet.</div>
@@ -603,7 +603,7 @@ export function InventoryPage() {
         </Card>
       ) : null}
 
-      <Card className="overflow-x-auto p-0">
+      <Card className="min-w-0 overflow-x-touch p-0">
         {loading ? (
           <div className="p-6 text-sm text-black/60">Loading…</div>
         ) : rows.length === 0 ? (

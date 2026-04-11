@@ -86,7 +86,7 @@ export function ImageLightbox({
             ) : null}
             <button
               type="button"
-              className="rounded-xl px-3 py-1.5 text-sm font-semibold text-white/85 hover:bg-white/10"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-xl px-3 text-sm font-semibold text-white/85 hover:bg-white/10"
               onClick={onClose}
             >
               Close
@@ -106,7 +106,7 @@ export function ImageLightbox({
         </div>
 
         {safeImages.length > 1 ? (
-          <div className="mt-3 flex w-full gap-2 overflow-x-auto pb-1">
+          <div className="mt-3 flex w-full min-w-0 gap-2 overflow-x-touch pb-1">
             {safeImages.map((u, i) => (
               <button
                 key={`${u}-${i}`}

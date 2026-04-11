@@ -113,7 +113,7 @@ export function WaybillDocumentBody({ data }: Props) {
         </section>
 
         <section className="mt-6 print:mt-5">
-          <div className="mt-3 overflow-x-auto print:overflow-visible">
+          <div className="mt-3 min-w-0 overflow-x-touch print:overflow-visible">
             <table className="w-full min-w-[420px] table-fixed border-collapse text-left text-sm print:min-w-0">
               <colgroup>
                 <col className="w-[26%]" />

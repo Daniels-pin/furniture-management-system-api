@@ -12,7 +12,7 @@ export function Input({ label, hint, error, className, ...rest }: Props) {
       {label ? <div className="mb-1 text-sm font-medium">{label}</div> : null}
       <input
         className={[
-          "w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm outline-none transition",
+          "min-h-11 w-full rounded-xl border bg-white px-3 py-2.5 text-base shadow-sm outline-none transition sm:text-sm",
           error ? "border-black/30" : "border-black/15",
           "focus:border-black/40",
           className || ""

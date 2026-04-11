@@ -471,7 +471,7 @@ export function OrderDetailsPage() {
 
             <Card>
               <div className="text-sm font-semibold">Items</div>
-              <div className="mt-4 overflow-x-auto">
+              <div className="mt-4 min-w-0 overflow-x-touch">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="text-black/60">
                     <tr className="border-b border-black/10">

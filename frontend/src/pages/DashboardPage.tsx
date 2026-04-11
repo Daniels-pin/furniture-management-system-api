@@ -50,11 +50,11 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <img
             src={env.logoUrl || "/logo.png"}
             alt={`${APP_NAME} logo`}
-            className="h-[84px] w-auto shrink-0 object-contain md:h-[92px]"
+            className="h-auto max-h-20 w-auto max-w-full shrink-0 object-contain sm:max-h-[84px] md:max-h-[92px]"
           />
           <div className="min-w-0">
             <div className="text-2xl font-bold tracking-tight">Dashboard</div>
@@ -138,7 +138,7 @@ export function DashboardPage() {
         <Card>
           <div className="text-sm font-semibold">Recent Orders</div>
           <div className="mt-1 text-sm text-black/60">Last 5 orders.</div>
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 min-w-0 overflow-x-touch">
             <table className="w-full min-w-[520px] text-left text-sm">
               <thead className="text-black/60">
                 <tr className="border-b border-black/10">

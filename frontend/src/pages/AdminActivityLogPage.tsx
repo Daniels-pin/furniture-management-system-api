@@ -83,7 +83,7 @@ export function AdminActivityLogPage() {
           placeholder="action, user, entity, ID…"
         />
         <div className="mt-2 text-xs text-black/50">Search applies to the current page of results.</div>
-        <div className="mt-5 overflow-x-auto">
+        <div className="mt-5 min-w-0 overflow-x-touch">
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">

@@ -353,7 +353,7 @@ export function EquipmentPage() {
         <div className="mt-3 max-w-md">
           <Input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search name…" />
         </div>
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-black/10">
+        <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
               <tr>
@@ -487,7 +487,7 @@ export function EquipmentPage() {
             </div>
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-2xl border border-black/10">
+          <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
                 <tr>
