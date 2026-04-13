@@ -16,11 +16,14 @@ from app.utils.pricing import TotalsResult, compute_totals
 def subtotal_from_line_items(items: list) -> Decimal | None:
     if not items:
         return None
-    for it in items:
-        if getattr(it, "amount", None) is None:
-            return None
     s = Decimal("0")
     for it in items:
+        lt = (getattr(it, "line_type", None) or "item").lower()
+        if lt == "subheading":
+            continue
+        amt_raw = getattr(it, "amount", None)
+        if amt_raw is None:
+            return None
         amt = Decimal(str(getattr(it, "amount")))
         q = int(getattr(it, "quantity"))
         s += amt * Decimal(q)
