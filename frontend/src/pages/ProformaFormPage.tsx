@@ -97,26 +97,33 @@ export function ProformaFormPage() {
   }
 
   function buildPayload(saveAsDraft: boolean): ProformaPayload {
-    const items = lines.map((ln) => {
+    const items: ProformaPayload["items"] = [];
+    for (const ln of lines) {
+      const name = ln.item_name.trim();
+      // Never send empty rows to the API (prevents validation failures on drafts).
+      if (!name) continue;
+
       if (ln.line_type === "subheading") {
-        return {
-          line_type: "subheading" as const,
-          item_name: ln.item_name.trim(),
+        items.push({
+          line_type: "subheading",
+          item_name: name,
           description: "",
           quantity: 0,
           amount: null
-        };
+        });
+        continue;
       }
+
       const q = Number(ln.quantity);
       const amt = parseMoneyInput(ln.amount);
-      return {
-        line_type: "item" as const,
-        item_name: ln.item_name.trim(),
+      items.push({
+        line_type: "item",
+        item_name: name,
         description: ln.description.trim(),
         quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
         amount: amt !== null && Number.isFinite(amt) && amt >= 0 ? amt : null
-      };
-    });
+      });
+    }
     const dv = parseMoneyInput(discountValue);
     const tx = parseMoneyInput(tax);
     return {
