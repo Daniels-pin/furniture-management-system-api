@@ -124,7 +124,7 @@ export function WaybillDocumentBody({ data }: Props) {
                 <tr className="bg-black/[0.03] text-black">
                   <th className="py-2 pl-3 pr-3 font-semibold">Item</th>
                   <th className="py-2 pr-3 font-semibold">Description</th>
-                  <th className="py-2 px-3 text-right font-semibold">Qty</th>
+                  <th className="py-2 px-2 sm:px-3 text-right font-semibold">Qty</th>
                 </tr>
               </thead>
               <tbody>
@@ -132,7 +132,7 @@ export function WaybillDocumentBody({ data }: Props) {
                   <tr key={it.id} className="border-b border-black/15 print:border-black/40">
                     <td className="align-top py-3 pl-3 pr-3 font-semibold text-black">{it.item_name}</td>
                     <td className="align-top py-3 pr-3 text-black break-words">{it.description ?? "—"}</td>
-                    <td className="align-top whitespace-nowrap py-3 px-3 text-right font-semibold text-black tabular-nums overflow-hidden">
+                    <td className="align-top whitespace-nowrap py-3 px-2 sm:px-3 text-right font-semibold text-black tabular-nums overflow-hidden">
                       {it.quantity}
                     </td>
                   </tr>
