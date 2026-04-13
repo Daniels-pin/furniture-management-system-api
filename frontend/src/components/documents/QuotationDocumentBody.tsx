@@ -97,19 +97,19 @@ export function QuotationDocumentBody({ data, maskCustomer }: Props) {
           <div className="mt-3 min-w-0 overflow-x-touch print:overflow-visible">
             <table className="w-full min-w-[720px] table-fixed border-collapse text-left text-sm print:min-w-0">
               <colgroup>
-                <col className="w-[24%]" />
-                <col className="w-[46%]" />
+                <col className="w-[26%]" />
+                <col className="w-[38%]" />
                 <col className="w-[8%]" />
-                <col className="w-[11%]" />
-                <col className="w-[11%]" />
+                <col className="w-[14%]" />
+                <col className="w-[14%]" />
               </colgroup>
               <thead>
                 <tr className="bg-black/[0.03] text-black">
                   <th className="py-2 pl-3 pr-3 font-semibold">Item</th>
                   <th className="py-2 pr-3 font-semibold">Description</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Qty</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Amount</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Total</th>
+                  <th className="py-2 px-3 text-right font-semibold">Qty</th>
+                  <th className="py-2 px-3 text-right font-semibold">Amount</th>
+                  <th className="py-2 px-3 text-right font-semibold">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -133,9 +133,15 @@ export function QuotationDocumentBody({ data, maskCustomer }: Props) {
                       <td className="py-3 pr-3 text-black align-top whitespace-normal break-words leading-snug">
                         {it.description ?? "—"}
                       </td>
-                      <td className="py-3 pr-3 text-right font-semibold text-black align-top">{it.quantity}</td>
-                      <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(unitNum)}</td>
-                      <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(line)}</td>
+                      <td className="py-3 px-3 text-right font-semibold text-black align-top tabular-nums whitespace-nowrap overflow-hidden">
+                        {it.quantity}
+                      </td>
+                      <td className="py-3 px-3 text-right font-semibold text-black tabular-nums whitespace-nowrap overflow-hidden">
+                        {formatMoney(unitNum)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-semibold text-black tabular-nums whitespace-nowrap overflow-hidden">
+                        {formatMoney(line)}
+                      </td>
                     </tr>
                   );
                 })}
