@@ -734,12 +734,13 @@ function EditOrderModal({
     (initial as any).discount_value != null ? String((initial as any).discount_value) : ""
   );
   const [items, setItems] = useState<
-    Array<{ item_name: string; description: string; quantity: string; amount: string }>
+    Array<{ line_type: "item" | "subheading"; item_name: string; description: string; quantity: string; amount: string }>
   >(
     initial.items.map((it) => ({
+      line_type: ((it as any).line_type ?? "item") as any,
       item_name: it.item_name,
       description: it.description ?? "",
-      quantity: String(it.quantity),
+      quantity: String(it.quantity ?? ""),
       amount: it.amount != null && it.amount !== "" ? String(it.amount) : ""
     }))
   );
@@ -757,9 +758,10 @@ function EditOrderModal({
     setDiscountValue((initial as any).discount_value != null ? String((initial as any).discount_value) : "");
     setItems(
       initial.items.map((it) => ({
+        line_type: ((it as any).line_type ?? "item") as any,
         item_name: it.item_name,
         description: it.description ?? "",
-        quantity: String(it.quantity),
+        quantity: String(it.quantity ?? ""),
         amount: it.amount != null && it.amount !== "" ? String(it.amount) : ""
       }))
     );
@@ -770,6 +772,12 @@ function EditOrderModal({
     const e: Record<string, string> = {};
     const payload: OrderCreateItem[] = [];
     items.forEach((it, idx) => {
+      if (it.line_type === "subheading") {
+        const name = it.item_name.trim();
+        if (!name) e[`n${idx}`] = "Subheading required";
+        if (name) payload.push({ line_type: "subheading", item_name: name, description: "", quantity: 0, amount: null });
+        return;
+      }
       const name = it.item_name.trim();
       const desc = it.description.trim();
       const qty = Number(it.quantity);
@@ -781,7 +789,7 @@ function EditOrderModal({
         e[`a${idx}`] = isValidThousandsCommaNumber(it.amount) ? "Amount required (≥ 0)" : "Invalid comma formatting";
       }
       if (name && desc && Number.isFinite(qty) && qty > 0 && amt !== null && Number.isFinite(amt) && amt >= 0) {
-        payload.push({ item_name: name, description: desc, quantity: qty, amount: amt });
+        payload.push({ line_type: "item", item_name: name, description: desc, quantity: qty, amount: amt });
       }
     });
     if (payload.length === 0) e.items = "At least one valid item required";
@@ -874,7 +882,13 @@ function EditOrderModal({
           <div className="text-sm font-semibold">Items</div>
           <div className="mt-2 space-y-3">
             {items.map((it, idx) => (
-              <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_88px_120px_auto] md:items-end">
+              <div
+                key={idx}
+                className={[
+                  "grid grid-cols-1 gap-2 md:items-end",
+                  it.line_type === "subheading" ? "md:grid-cols-[1fr_auto]" : "md:grid-cols-[1fr_1fr_88px_120px_auto]"
+                ].join(" ")}
+              >
                 <Input
                   label={idx === 0 ? "Item name" : undefined}
                   value={it.item_name}
@@ -883,6 +897,7 @@ function EditOrderModal({
                   }
                   error={err[`n${idx}`]}
                 />
+                {it.line_type !== "subheading" ? (
                 <label className="block">
                   {idx === 0 ? <div className="mb-1 text-sm font-medium">Description</div> : null}
                   <textarea
@@ -897,6 +912,8 @@ function EditOrderModal({
                   />
                   {err[`d${idx}`] ? <div className="mt-1 text-xs text-black/70">{err[`d${idx}`]}</div> : null}
                 </label>
+                ) : null}
+                {it.line_type !== "subheading" ? (
                 <Input
                   label={idx === 0 ? "Qty" : undefined}
                   value={it.quantity}
@@ -906,6 +923,8 @@ function EditOrderModal({
                   inputMode="numeric"
                   error={err[`q${idx}`]}
                 />
+                ) : null}
+                {it.line_type !== "subheading" ? (
                 <Input
                   label={idx === 0 ? "Amount" : undefined}
                   value={it.amount}
@@ -916,6 +935,7 @@ function EditOrderModal({
                   placeholder="0.00"
                   error={err[`a${idx}`]}
                 />
+                ) : null}
                 <Button
                   type="button"
                   variant="ghost"
@@ -929,15 +949,26 @@ function EditOrderModal({
           </div>
           {err.items ? <div className="mt-2 text-xs text-black/70">{err.items}</div> : null}
           <div className="mt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() =>
-                setItems((xs) => [...xs, { item_name: "", description: "", quantity: "1", amount: "" }])
-              }
-            >
-              Add item
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  setItems((xs) => [...xs, { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }])
+                }
+              >
+                Add item
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  setItems((xs) => [...xs, { line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" }])
+                }
+              >
+                Add subheading
+              </Button>
+            </div>
           </div>
         </div>
 

@@ -91,26 +91,45 @@ export function InvoiceDocumentBody({ data, maskCustomer }: Props) {
 
         <section className="mt-6 print:mt-5">
           <div className="mt-3 min-w-0 overflow-x-touch print:overflow-visible">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm print:min-w-0">
+            <table className="w-full min-w-[720px] table-fixed border-collapse text-left text-sm print:min-w-0">
+              <colgroup>
+                <col className="w-[24%]" />
+                <col className="w-[46%]" />
+                <col className="w-[8%]" />
+                <col className="w-[11%]" />
+                <col className="w-[11%]" />
+              </colgroup>
               <thead>
                 <tr className="bg-black/[0.03] text-black">
                   <th className="py-2 pl-3 pr-3 font-semibold">Item</th>
                   <th className="py-2 pr-3 font-semibold">Description</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Quantity</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Qty</th>
                   <th className="py-2 pr-3 text-right font-semibold">Amount</th>
                   <th className="py-2 pr-3 text-right font-semibold">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((it) => {
+                  const lt = (it as any).line_type ?? "item";
+                  if (lt === "subheading") {
+                    return (
+                      <tr key={it.id} className="border-b border-black/15 bg-black/[0.02] print:border-black/40">
+                        <td colSpan={5} className="py-2.5 pl-3 pr-3 font-bold tracking-[0.08em] text-black uppercase">
+                          {it.item_name}
+                        </td>
+                      </tr>
+                    );
+                  }
                   const unitNum = parseMoneyNumber(it.amount);
                   const qtyNum = Number(it.quantity);
                   const line = unitNum !== null && Number.isFinite(qtyNum) ? unitNum * qtyNum : null;
                   return (
                     <tr key={it.id} className="border-b border-black/15 print:border-black/40">
-                      <td className="py-3 pl-3 pr-3 font-semibold text-black">{it.item_name}</td>
-                      <td className="py-3 pr-3 text-black">{it.description ?? "—"}</td>
-                      <td className="py-3 pr-3 text-right font-semibold text-black">{it.quantity}</td>
+                      <td className="py-3 pl-3 pr-3 font-semibold text-black align-top">{it.item_name}</td>
+                      <td className="py-3 pr-3 text-black align-top whitespace-normal break-words leading-snug">
+                        {it.description ?? "—"}
+                      </td>
+                      <td className="py-3 pr-3 text-right font-semibold text-black align-top">{it.quantity}</td>
                       <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(unitNum)}</td>
                       <td className="py-3 pr-3 text-right font-semibold text-black">{formatMoney(line)}</td>
                     </tr>

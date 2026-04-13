@@ -54,7 +54,11 @@ def _money(v: object) -> str:
     if v is None or v == "":
         return "—"
     try:
-        return f"{Decimal(str(v)).quantize(TWOPLACES):,}"
+        d = Decimal(str(v)).quantize(TWOPLACES)
+        s = f"{d:,.2f}"
+        if s.endswith(".00"):
+            return s[:-3]
+        return s.rstrip("0").rstrip(".")
     except Exception:
         return escape(str(v))
 
@@ -80,6 +84,7 @@ def _proforma_to_detail(db: Session, p: models.ProformaInvoice) -> dict:
         "items": [
             {
                 "id": it.id,
+                "line_type": getattr(it, "line_type", "item") or "item",
                 "item_name": it.item_name,
                 "description": it.description,
                 "quantity": it.quantity,
@@ -134,6 +139,18 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
 
     rows = []
     for it in sorted(p.items or [], key=lambda x: x.id):
+        line_type = getattr(it, "line_type", "item") or "item"
+        if line_type == "subheading":
+            rows.append(
+                f"""
+            <tr>
+              <td colspan="5" style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:900;color:#111;letter-spacing:0.06em;text-transform:uppercase;background:#fafafa">
+                {escape(it.item_name or '')}
+              </td>
+            </tr>
+            """
+            )
+            continue
         unit = it.amount
         line_total = None
         if unit is not None and it.quantity is not None:
@@ -145,8 +162,8 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
             f"""
             <tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111;white-space:normal;word-break:break-word;overflow-wrap:anywhere;line-height:1.25">{escape((it.description or '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(unit))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(line_total))}</td>
             </tr>
@@ -200,12 +217,19 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
             </div>
 
             <div style="margin-top:14px;border:1px solid #d9d9d9">
-              <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+                <colgroup>
+                  <col style="width:24%"/>
+                  <col style="width:46%"/>
+                  <col style="width:8%"/>
+                  <col style="width:11%"/>
+                  <col style="width:11%"/>
+                </colgroup>
                 <thead>
                   <tr style="background:#f3f3f3;color:#111">
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
-                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Qty</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Total</th>
                   </tr>
@@ -308,13 +332,15 @@ def create_proforma(
     db.flush()
 
     for it in payload.items:
+        lt = getattr(it, "line_type", "item") or "item"
         db.add(
             models.ProformaItem(
                 proforma_id=p.id,
+                line_type=lt,
                 item_name=it.item_name.strip(),
                 description=(it.description or "").strip() or None,
-                quantity=it.quantity,
-                amount=it.amount,
+                quantity=(it.quantity or 0) if lt != "subheading" else 0,
+                amount=it.amount if lt != "subheading" else None,
             )
         )
     db.flush()
@@ -395,13 +421,15 @@ def update_proforma(
 
     db.query(models.ProformaItem).filter(models.ProformaItem.proforma_id == p.id).delete()
     for it in payload.items:
+        lt = getattr(it, "line_type", "item") or "item"
         db.add(
             models.ProformaItem(
                 proforma_id=p.id,
+                line_type=lt,
                 item_name=it.item_name.strip(),
                 description=(it.description or "").strip() or None,
-                quantity=it.quantity,
-                amount=it.amount,
+                quantity=(it.quantity or 0) if lt != "subheading" else 0,
+                amount=it.amount if lt != "subheading" else None,
             )
         )
     db.flush()

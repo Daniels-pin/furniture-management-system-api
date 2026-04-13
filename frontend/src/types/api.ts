@@ -50,17 +50,19 @@ export type CustomerCreate = {
 export type OrderStatus = "pending" | "in_progress" | "completed" | "delivered";
 
 export type OrderCreateItem = {
+  line_type?: "item" | "subheading";
   item_name: string;
   description: string;
-  quantity: number;
+  quantity?: number;
   amount?: string | number | null;
 };
 
 export type OrderItem = {
   id: number;
+  line_type?: "item" | "subheading";
   item_name: string;
   description?: string | null;
-  quantity: number;
+  quantity?: number;
   amount?: string | number | null;
 };
 
@@ -145,9 +147,10 @@ export type InvoiceDetail = InvoiceListItem & {
 
 export type ProformaItem = {
   id: number;
+  line_type?: "item" | "subheading";
   item_name: string;
   description?: string | null;
-  quantity: number;
+  quantity?: number;
   amount?: string | number | null;
 };
 
@@ -192,7 +195,13 @@ export type ProformaPayload = {
   address: string;
   email?: string | null;
   due_date?: string | null;
-  items: Array<{ item_name: string; description: string; quantity: number; amount?: number | null }>;
+  items: Array<{
+    line_type?: "item" | "subheading";
+    item_name: string;
+    description: string;
+    quantity?: number;
+    amount?: number | null;
+  }>;
   discount_type?: "fixed" | "percentage" | null;
   discount_value?: number | null;
   tax?: number | null;

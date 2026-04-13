@@ -35,7 +35,8 @@ function coerceMoneyNumber(value: unknown): number | null {
 export function formatMoney(value: unknown): string {
   const n = coerceMoneyNumber(value);
   if (n === null) return "—";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Compact: drop trailing ".00" while keeping up to 2 decimals.
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 /** Parse API money (number or decimal string); null if missing/invalid. */

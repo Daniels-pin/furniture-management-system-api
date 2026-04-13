@@ -119,6 +119,8 @@ class OrderItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"))
+    # "item" (default) or "subheading" (section title row in documents)
+    line_type = Column(String, nullable=False, server_default="item")
     item_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     quantity = Column(Integer)
@@ -171,6 +173,8 @@ class ProformaItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     proforma_id = Column(Integer, ForeignKey("proforma_invoices.id", ondelete="CASCADE"), nullable=False)
+    # "item" (default) or "subheading" (section title row in documents)
+    line_type = Column(String, nullable=False, server_default="item")
     item_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False)
@@ -224,6 +228,8 @@ class QuotationItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     quotation_id = Column(Integer, ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    # "item" (default) or "subheading" (section title row in documents)
+    line_type = Column(String, nullable=False, server_default="item")
     item_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False)

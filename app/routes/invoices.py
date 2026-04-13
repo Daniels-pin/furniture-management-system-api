@@ -44,7 +44,11 @@ def _money(v: object) -> str:
     if v is None or v == "":
         return "—"
     try:
-        return f"{Decimal(str(v)).quantize(TWOPLACES):,}"
+        d = Decimal(str(v)).quantize(TWOPLACES)
+        s = f"{d:,.2f}"
+        if s.endswith(".00"):
+            return s[:-3]
+        return s.rstrip("0").rstrip(".")
     except Exception:
         return escape(str(v))
 
@@ -80,6 +84,18 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     units = display_unit_amounts(order, items)
     rows = []
     for i, it in enumerate(items):
+        line_type = getattr(it, "line_type", "item") or "item"
+        if line_type == "subheading":
+            rows.append(
+                f"""
+            <tr>
+              <td colspan="5" style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:900;color:#111;letter-spacing:0.06em;text-transform:uppercase;background:#fafafa">
+                {escape(it.item_name or '')}
+              </td>
+            </tr>
+            """
+            )
+            continue
         unit = units[i] if i < len(units) else None
         line_total = None
         if unit is not None and it.quantity is not None:
@@ -91,7 +107,7 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
             f"""
             <tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111;white-space:normal;word-break:break-word;overflow-wrap:anywhere;line-height:1.25">{escape((it.description or '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(unit))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_money(line_total))}</td>
@@ -153,12 +169,19 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
             </div>
 
             <div style="margin-top:14px;border:1px solid #d9d9d9">
-              <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+                <colgroup>
+                  <col style="width:24%"/>
+                  <col style="width:46%"/>
+                  <col style="width:8%"/>
+                  <col style="width:11%"/>
+                  <col style="width:11%"/>
+                </colgroup>
                 <thead>
                   <tr style="background:#f3f3f3;color:#111">
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
-                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Qty</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Total</th>
                   </tr>

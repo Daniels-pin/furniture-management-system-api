@@ -149,6 +149,7 @@ def _build_order_response(
     for i, it in enumerate(items):
         row = {
             "id": it.id,
+            "line_type": getattr(it, "line_type", "item") or "item",
             "item_name": it.item_name,
             "description": it.description,
             "quantity": it.quantity,
@@ -241,7 +242,11 @@ def _doc_money(v: object) -> str:
     if v is None or v == "":
         return "—"
     try:
-        return f"{Decimal(str(v)).quantize(TWOPLACES):,}"
+        d = Decimal(str(v)).quantize(TWOPLACES)
+        s = f"{d:,.2f}"
+        if s.endswith(".00"):
+            return s[:-3]
+        return s.rstrip("0").rstrip(".")
     except Exception:
         return escape(str(v))
 
@@ -274,6 +279,18 @@ def _render_order_document_html(
     units = display_unit_amounts(order, items)
     rows = []
     for i, it in enumerate(items):
+        line_type = getattr(it, "line_type", "item") or "item"
+        if line_type == "subheading":
+            rows.append(
+                f"""
+            <tr>
+              <td colspan="5" style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:900;color:#111;letter-spacing:0.06em;text-transform:uppercase;background:#fafafa">
+                {escape(it.item_name or '')}
+              </td>
+            </tr>
+            """
+            )
+            continue
         unit = units[i] if i < len(units) else None
         line_total = None
         if unit is not None and it.quantity is not None:
@@ -285,7 +302,7 @@ def _render_order_document_html(
             f"""
             <tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-weight:600;color:#111">{escape(it.item_name or '')}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111">{escape((it.description or '—'))}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;color:#111;white-space:normal;word-break:break-word;overflow-wrap:anywhere;line-height:1.25">{escape((it.description or '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(str(it.quantity if it.quantity is not None else '—'))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_doc_money(unit))}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;text-align:right;color:#111">{escape(_doc_money(line_total))}</td>
@@ -344,12 +361,19 @@ def _render_order_document_html(
             </div>
 
             <div style="margin-top:14px;border:1px solid #d9d9d9">
-              <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+                <colgroup>
+                  <col style="width:24%"/>
+                  <col style="width:46%"/>
+                  <col style="width:8%"/>
+                  <col style="width:11%"/>
+                  <col style="width:11%"/>
+                </colgroup>
                 <thead>
                   <tr style="background:#f3f3f3;color:#111">
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Item</th>
                     <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Description</th>
-                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Quantity</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Qty</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Amount</th>
                     <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d9d9d9;font-weight:800">Total</th>
                   </tr>
@@ -527,12 +551,14 @@ def create_order(
 
             created_items: list[models.OrderItem] = []
             for it in items_payload:
+                lt = getattr(it, "line_type", "item") or "item"
                 oi = models.OrderItem(
                     order_id=new_order.id,
+                    line_type=lt,
                     item_name=it.item_name,
                     description=it.description,
-                    quantity=it.quantity,
-                    amount=it.amount,
+                    quantity=(it.quantity or 0) if lt != "subheading" else 0,
+                    amount=it.amount if lt != "subheading" else None,
                 )
                 db.add(oi)
                 created_items.append(oi)
@@ -635,12 +661,14 @@ def create_order_json(
 
     items = []
     for item in order.items:
+        lt = getattr(item, "line_type", "item") or "item"
         order_item = models.OrderItem(
             order_id=new_order.id,
+            line_type=lt,
             item_name=item.item_name,
             description=item.description,
-            quantity=item.quantity,
-            amount=getattr(item, "amount", None),
+            quantity=(item.quantity or 0) if lt != "subheading" else 0,
+            amount=getattr(item, "amount", None) if lt != "subheading" else None,
         )
         db.add(order_item)
         items.append(order_item)
@@ -971,15 +999,19 @@ def put_order_admin(
 
     db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete()
     for idx, item in enumerate(payload.items):
+        lt = getattr(item, "line_type", "item") or "item"
         amt = getattr(item, "amount", None)
         if amt is None and idx < len(old_items):
             amt = old_items[idx].amount
+        if lt == "subheading":
+            amt = None
         db.add(
             models.OrderItem(
                 order_id=order_id,
+                line_type=lt,
                 item_name=item.item_name,
                 description=item.description,
-                quantity=item.quantity,
+                quantity=(item.quantity or 0) if lt != "subheading" else 0,
                 amount=amt,
             )
         )

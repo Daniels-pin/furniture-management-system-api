@@ -5,11 +5,25 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from enum import Enum
 
+DocumentLineType = Literal["item", "subheading"]
+
+
 class OrderItemCreate(BaseModel):
+    line_type: DocumentLineType = "item"
     item_name: str = Field(..., min_length=1)
-    description: str = Field(..., min_length=1)
-    quantity: int = Field(..., gt=0)
+    description: str = ""
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_line(self):
+        if self.line_type == "subheading":
+            # Section rows have no qty/amount requirements.
+            return self
+        q = int(self.quantity) if self.quantity is not None else 0
+        if q <= 0:
+            raise ValueError("quantity must be > 0")
+        return self
 
 class CustomerCreate(BaseModel):
     name: str = Field(..., min_length=1)
@@ -111,9 +125,10 @@ class ProductNameResponse(BaseModel):
 
 class OrderItemResponse(BaseModel):
     id: int
+    line_type: DocumentLineType = "item"
     item_name: str
     description: Optional[str]
-    quantity: int
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = None
 
     class Config:
@@ -263,10 +278,20 @@ class OrdersAlertsResponse(BaseModel):
 
 
 class ProformaItemIn(BaseModel):
+    line_type: DocumentLineType = "item"
     item_name: str = Field(..., min_length=1)
     description: str = ""
-    quantity: int = Field(..., gt=0)
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_line(self):
+        if self.line_type == "subheading":
+            return self
+        q = int(self.quantity) if self.quantity is not None else 0
+        if q <= 0:
+            raise ValueError("quantity must be > 0")
+        return self
 
 
 class ProformaCreate(BaseModel):
@@ -303,9 +328,10 @@ class ProformaUpdate(BaseModel):
 
 class ProformaItemOut(BaseModel):
     id: int
+    line_type: DocumentLineType = "item"
     item_name: str
     description: Optional[str] = None
-    quantity: int
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = None
 
     class Config:
@@ -357,10 +383,20 @@ class ProformaDetailResponse(BaseModel):
 
 
 class QuotationItemIn(BaseModel):
+    line_type: DocumentLineType = "item"
     item_name: str = Field(..., min_length=1)
     description: str = ""
-    quantity: int = Field(..., gt=0)
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_line(self):
+        if self.line_type == "subheading":
+            return self
+        q = int(self.quantity) if self.quantity is not None else 0
+        if q <= 0:
+            raise ValueError("quantity must be > 0")
+        return self
 
 
 class QuotationCreate(BaseModel):
@@ -397,9 +433,10 @@ class QuotationUpdate(BaseModel):
 
 class QuotationItemOut(BaseModel):
     id: int
+    line_type: DocumentLineType = "item"
     item_name: str
     description: Optional[str] = None
-    quantity: int
+    quantity: Optional[int] = None
     amount: Optional[Decimal] = None
 
     class Config:

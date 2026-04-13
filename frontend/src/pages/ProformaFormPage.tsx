@@ -9,7 +9,7 @@ import { Input } from "../components/ui/Input";
 import type { ProformaPayload } from "../types/api";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
-type Line = { item_name: string; description: string; quantity: string; amount: string };
+type Line = { line_type: "item" | "subheading"; item_name: string; description: string; quantity: string; amount: string };
 
 function isoToDateInput(iso?: string | null) {
   if (!iso) return "";
@@ -35,7 +35,7 @@ export function ProformaFormPage() {
   const [discountValue, setDiscountValue] = useState("");
   const [tax, setTax] = useState("");
   const [lines, setLines] = useState<Line[]>([
-    { item_name: "", description: "", quantity: "1", amount: "" }
+    { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }
   ]);
   const [saving, setSaving] = useState(false);
 
@@ -64,6 +64,7 @@ export function ProformaFormPage() {
         if (d.items?.length) {
           setLines(
             d.items.map((it) => ({
+              line_type: ((it as any).line_type ?? "item") as any,
               item_name: it.item_name ?? "",
               description: (it.description as string) ?? "",
               quantity: String(it.quantity ?? 1),
@@ -84,7 +85,11 @@ export function ProformaFormPage() {
   }, [editId, isEdit, nav, toast]);
 
   function addLine() {
-    setLines((xs) => [...xs, { item_name: "", description: "", quantity: "1", amount: "" }]);
+    setLines((xs) => [...xs, { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }]);
+  }
+
+  function addSubheading() {
+    setLines((xs) => [...xs, { line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" }]);
   }
 
   function removeLine(i: number) {
@@ -93,9 +98,19 @@ export function ProformaFormPage() {
 
   function buildPayload(saveAsDraft: boolean): ProformaPayload {
     const items = lines.map((ln) => {
+      if (ln.line_type === "subheading") {
+        return {
+          line_type: "subheading" as const,
+          item_name: ln.item_name.trim(),
+          description: "",
+          quantity: 0,
+          amount: null
+        };
+      }
       const q = Number(ln.quantity);
       const amt = parseMoneyInput(ln.amount);
       return {
+        line_type: "item" as const,
         item_name: ln.item_name.trim(),
         description: ln.description.trim(),
         quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
@@ -129,6 +144,7 @@ export function ProformaFormPage() {
       return;
     }
     for (const ln of named) {
+      if (ln.line_type === "subheading") continue;
       const amt = parseMoneyInput(ln.amount);
       if (ln.amount.trim() === "" || amt === null || !Number.isFinite(amt) || amt < 0) {
         toast.push("error", "Enter a valid amount (≥ 0) for each line item.");
@@ -201,12 +217,13 @@ export function ProformaFormPage() {
                 key={i}
                 className="grid grid-cols-1 gap-2 rounded-2xl border border-black/10 p-3 md:grid-cols-12 md:items-end"
               >
-                <div className="md:col-span-3">
+                <div className={ln.line_type === "subheading" ? "md:col-span-11" : "md:col-span-3"}>
                   <Input label="Item" value={ln.item_name} onChange={(e) => {
                     const v = e.target.value;
                     setLines((xs) => xs.map((x, j) => (j === i ? { ...x, item_name: v } : x)));
                   }} />
                 </div>
+                {ln.line_type !== "subheading" ? (
                 <div className="md:col-span-4">
                   <Input
                     label="Description"
@@ -217,6 +234,8 @@ export function ProformaFormPage() {
                     }}
                   />
                 </div>
+                ) : null}
+                {ln.line_type !== "subheading" ? (
                 <div className="md:col-span-2">
                   <Input
                     label="Qty"
@@ -228,6 +247,8 @@ export function ProformaFormPage() {
                     }}
                   />
                 </div>
+                ) : null}
+                {ln.line_type !== "subheading" ? (
                 <div className="md:col-span-2">
                   <Input
                     label="Amount (unit)"
@@ -239,6 +260,7 @@ export function ProformaFormPage() {
                     }}
                   />
                 </div>
+                ) : null}
                 <div className="md:col-span-1 flex justify-end pb-2">
                   <Button type="button" variant="ghost" onClick={() => removeLine(i)}>
                     Remove
@@ -247,9 +269,14 @@ export function ProformaFormPage() {
               </div>
             ))}
           </div>
-          <Button type="button" variant="secondary" className="mt-2" onClick={addLine}>
-            Add line
-          </Button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" onClick={addLine}>
+              Add line
+            </Button>
+            <Button type="button" variant="secondary" onClick={addSubheading}>
+              Add subheading
+            </Button>
+          </div>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 border-t border-black/10 pt-6 md:grid-cols-3">
