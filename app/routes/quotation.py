@@ -685,9 +685,11 @@ def convert_quotation_to_proforma(
     db.add(pf)
     db.flush()
     for qi in sorted(q.items or [], key=lambda x: x.id):
+        lt = (getattr(qi, "line_type", None) or "item").lower()
         db.add(
             models.ProformaItem(
                 proforma_id=pf.id,
+                line_type=lt,
                 item_name=qi.item_name,
                 description=qi.description,
                 quantity=qi.quantity,

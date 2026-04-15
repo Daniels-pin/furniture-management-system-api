@@ -155,9 +155,11 @@ def create_order_and_invoice_from_presales_items(
     db.add(new_order)
     db.flush()
     for it in items:
+        lt = (getattr(it, "line_type", None) or "item").lower()
         db.add(
             models.OrderItem(
                 order_id=new_order.id,
+                line_type=lt,
                 item_name=it.item_name,
                 description=it.description,
                 quantity=it.quantity,

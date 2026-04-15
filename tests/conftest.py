@@ -94,6 +94,16 @@ def client():
 
 
 @pytest.fixture
+def db_session():
+    """Direct DB access for tests (same engine as client override)."""
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture
 def admin_token(client):
     r = client.post(
         "/auth/login",

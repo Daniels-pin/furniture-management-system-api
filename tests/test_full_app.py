@@ -390,6 +390,43 @@ def test_create_order_json_rejects_partial_birthday(client, admin_token):
     assert response.status_code == 422
 
 
+def test_convert_quotation_to_proforma_subheading_totals(client, admin_token):
+    """Subheading lines must keep line_type so totals are not wiped (regression)."""
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    phone = f"085{uuid.uuid4().hex[:8]}"
+    q = client.post(
+        "/quotations",
+        json={
+            "customer_name": "Subhead Quote",
+            "phone": phone,
+            "address": "Street",
+            "items": [
+                {"line_type": "subheading", "item_name": "SECTION A", "description": "", "quantity": 0},
+                {"item_name": "Chair", "description": "Wood", "quantity": 2, "amount": "150.00"},
+            ],
+            "save_as_draft": False,
+            "tax": "10",
+        },
+        headers=headers,
+    )
+    assert q.status_code == 200, q.text
+    qbody = q.json()
+    assert qbody.get("grand_total") is not None
+
+    qid = qbody["id"]
+    conv = client.post(f"/quotations/{qid}/convert-to-proforma", headers=headers)
+    assert conv.status_code == 200, conv.text
+    pid = conv.json()["proforma_id"]
+
+    pf = client.get(f"/proforma/{pid}", headers=headers)
+    assert pf.status_code == 200, pf.text
+    body = pf.json()
+    assert body.get("subtotal") is not None
+    assert body.get("grand_total") is not None
+    assert Decimal(str(body["subtotal"])) == Decimal("300.00")
+    assert Decimal(str(body["grand_total"])) == Decimal("330.00")
+
+
 def test_delete_converted_quotation(client, admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     phone = f"083{uuid.uuid4().hex[:8]}"

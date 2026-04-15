@@ -1,4 +1,8 @@
+import asyncio
+import contextlib
+import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +25,42 @@ from app.routes.inventory import router as inventory_router
 from app.routes.tools import router as tools_router
 from app.routes.machines import router as machines_router
 
-app = FastAPI() 
+logger = logging.getLogger(__name__)
+
+# Activity log (action_logs) retention: purge rows older than 30 days, checked every 24h.
+_ACTION_LOG_CLEANUP_INTERVAL_SEC = 86_400
+
+
+async def _action_log_cleanup_worker() -> None:
+    from app.database import SessionLocal
+    from app.utils.action_log_cleanup import purge_action_logs_older_than
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                removed = purge_action_logs_older_than(db)
+                if removed:
+                    logger.info("Deleted %s activity log rows older than 30 days", removed)
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("Activity log retention cleanup failed")
+        await asyncio.sleep(_ACTION_LOG_CLEANUP_INTERVAL_SEC)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_action_log_cleanup_worker(), name="action_log_retention")
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(lifespan=lifespan) 
 
 frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 frontend_origins = [o.strip() for o in frontend_origins_env.split(",") if o.strip()]
