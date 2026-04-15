@@ -478,6 +478,20 @@ def delete_invoice(
     now = datetime.utcnow()
     inv.deleted_at = now
     inv.deleted_by_id = user.id
+
+    # If this invoice originated from a quotation conversion, clear the pointer so the quotation can be reconverted.
+    for q in (
+        db.query(models.Quotation)
+        .filter(models.Quotation.converted_order_id == oid)
+        .filter(models.Quotation.deleted_at.is_(None))
+        .all()
+    ):
+        q.converted_order_id = None
+        if q.status == "converted":
+            q.status = "finalized"
+        q.updated_at = now
+        q.updated_by = user.id
+
     db.commit()
     return {"message": "Invoice moved to Trash", "order_id": oid}
 

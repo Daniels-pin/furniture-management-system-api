@@ -743,7 +743,22 @@ def delete_proforma(
         actor_user=user,
         meta={"proforma_number": meta_num, "soft_delete": True},
     )
-    p.deleted_at = datetime.utcnow()
+    now = datetime.utcnow()
+    p.deleted_at = now
     p.deleted_by_id = user.id
+
+    # If this proforma came from a quotation, clear the quotation pointer so it can be reconverted.
+    for q in (
+        db.query(models.Quotation)
+        .filter(models.Quotation.converted_proforma_id == pid)
+        .filter(models.Quotation.deleted_at.is_(None))
+        .all()
+    ):
+        q.converted_proforma_id = None
+        if q.status == "converted":
+            q.status = "finalized"
+        q.updated_at = now
+        q.updated_by = user.id
+
     db.commit()
     return {"message": "Proforma moved to Trash"}

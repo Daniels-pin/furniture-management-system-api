@@ -454,6 +454,41 @@ def test_delete_converted_quotation(client, admin_token):
     assert missing.status_code == 404
 
 
+def test_deleted_proforma_resets_quotation_conversion_state(client, admin_token):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    phone = f"086{uuid.uuid4().hex[:8]}"
+    q = client.post(
+        "/quotations",
+        json={
+            "customer_name": "Quote Reconvert",
+            "phone": phone,
+            "address": "Street",
+            "items": [{"item_name": "Item", "description": "Desc", "quantity": 1, "amount": "100.00"}],
+            "save_as_draft": False,
+        },
+        headers=headers,
+    )
+    assert q.status_code == 200, q.text
+    qid = q.json()["id"]
+
+    conv1 = client.post(f"/quotations/{qid}/convert-to-proforma", headers=headers)
+    assert conv1.status_code == 200, conv1.text
+    pid = conv1.json()["proforma_id"]
+
+    dele = client.delete(f"/proforma/{pid}", headers=headers)
+    assert dele.status_code == 200, dele.text
+
+    # Quotation should no longer be "converted" and should be convertible again.
+    q2 = client.get(f"/quotations/{qid}", headers=headers)
+    assert q2.status_code == 200, q2.text
+    body = q2.json()
+    assert body["status"] != "converted"
+    assert body.get("converted_proforma_id") in (None, 0, "")
+
+    conv2 = client.post(f"/quotations/{qid}/convert-to-proforma", headers=headers)
+    assert conv2.status_code == 200, conv2.text
+
+
 def test_showroom_can_delete_converted_proforma(client, showroom_token):
     headers = {"Authorization": f"Bearer {showroom_token}"}
     phone = f"084{uuid.uuid4().hex[:8]}"

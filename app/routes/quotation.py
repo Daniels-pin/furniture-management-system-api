@@ -19,7 +19,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_quotation_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
-from app.db.alive import customer_alive, quotation_alive
+from app.db.alive import customer_alive, invoice_alive, order_alive, proforma_alive, quotation_alive
 from app.schemas import (
     ConvertPresalesToInvoiceRequest,
     QuotationCreate,
@@ -76,6 +76,57 @@ def _user_label(db: Session, user_id: int | None) -> str | None:
         return None
     u = db.query(models.User).filter(models.User.id == user_id).first()
     return username_from_email(getattr(u, "email", None)) if u else None
+
+
+def _reset_quotation_conversion_if_link_missing(db: Session, q: models.Quotation, *, actor_user_id: int | None) -> bool:
+    """
+    Quotations store conversion pointers; if the linked proforma/order/invoice is deleted,
+    clear the pointer(s) and revert status so the user can convert again.
+    """
+    changed = False
+    now = datetime.utcnow()
+
+    if getattr(q, "converted_proforma_id", None) is not None:
+        pf = (
+            db.query(models.ProformaInvoice)
+            .filter(models.ProformaInvoice.id == q.converted_proforma_id)
+            .filter(proforma_alive())
+            .first()
+        )
+        if pf is None:
+            q.converted_proforma_id = None
+            changed = True
+
+    if getattr(q, "converted_order_id", None) is not None:
+        order = (
+            db.query(models.Order)
+            .filter(models.Order.id == q.converted_order_id)
+            .filter(order_alive())
+            .first()
+        )
+        inv_ok = False
+        if order is not None:
+            inv_ok = (
+                db.query(models.Invoice)
+                .filter(models.Invoice.order_id == order.id)
+                .filter(invoice_alive())
+                .first()
+                is not None
+            )
+        if order is None or not inv_ok:
+            q.converted_order_id = None
+            changed = True
+
+    if changed:
+        if q.status == "converted":
+            # Only finalized quotations are allowed to convert; revert to finalized.
+            q.status = "finalized"
+        q.updated_at = now
+        if actor_user_id is not None:
+            q.updated_by = actor_user_id
+        db.commit()
+        db.refresh(q)
+    return changed
 
 
 def _quotation_to_detail(db: Session, p: models.Quotation) -> dict:
@@ -391,6 +442,7 @@ def get_quotation(
     )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    _reset_quotation_conversion_if_link_missing(db, p, actor_user_id=getattr(user, "id", None))
     return _quotation_to_detail(db, p)
 
 
@@ -664,6 +716,8 @@ def convert_quotation_to_proforma(
     )
     if not q:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    # If the previously converted document was deleted, clear pointers so this can be reconverted.
+    _reset_quotation_conversion_if_link_missing(db, q, actor_user_id=getattr(user, "id", None))
     if q.status == "converted" or q.converted_proforma_id is not None or q.converted_order_id is not None:
         raise HTTPException(status_code=400, detail="Already converted")
 
@@ -739,6 +793,7 @@ def convert_quotation_to_invoice(
     )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    _reset_quotation_conversion_if_link_missing(db, p, actor_user_id=getattr(user, "id", None))
     if p.converted_order_id is not None:
         raise HTTPException(status_code=400, detail="Already converted")
     if p.status == "converted":
