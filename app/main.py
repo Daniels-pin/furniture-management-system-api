@@ -24,6 +24,7 @@ from app.routes.trash import router as trash_router
 from app.routes.inventory import router as inventory_router
 from app.routes.tools import router as tools_router
 from app.routes.machines import router as machines_router
+from app.routes.employees import router as employees_router
 
 logger = logging.getLogger(__name__)
 
@@ -137,4 +138,5 @@ app.include_router(waybill_router, tags=["Waybills"])
 app.include_router(inventory_router, tags=["Inventory"])
 app.include_router(tools_router)
 app.include_router(machines_router)
+app.include_router(employees_router)
 

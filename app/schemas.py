@@ -937,3 +937,175 @@ class MachineActivityCreate(BaseModel):
         if self.kind == "status_change" and self.new_status is None:
             raise ValueError("new_status is required for status_change")
         return self
+
+
+# --- Employees (HR / payroll) ---
+
+
+class EmployeeDocumentItem(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    url: str = Field(..., min_length=1, max_length=2000)
+    label: Optional[str] = Field(None, max_length=500)
+    uploaded_at: Optional[str] = None
+
+
+class EmployeeLatenessEntryOut(BaseModel):
+    id: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeePenaltyOut(BaseModel):
+    id: int
+    description: str
+    amount: Decimal
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeBonusOut(BaseModel):
+    id: int
+    description: str
+    amount: Decimal
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeSalaryBreakdown(BaseModel):
+    base_salary: Decimal
+    lateness_count: int
+    lateness_deduction: Decimal
+    lateness_rate_naira: Decimal
+    penalties_total: Decimal
+    bonuses_total: Decimal
+    total_deductions: Decimal
+    final_payable: Decimal
+
+
+class SalaryPeriodOut(BaseModel):
+    id: int
+    year: int
+    month: int
+    label: str
+    is_active: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class PayrollPeriodsNavOut(BaseModel):
+    """Months that exist in the archive (have data) plus the active payroll month."""
+
+    active_period: Optional[SalaryPeriodOut] = None
+    periods: List[SalaryPeriodOut] = []
+
+
+class EmployeePaymentOut(BaseModel):
+    status: Literal["paid", "unpaid"]
+    payment_date: Optional[datetime] = None
+    payment_reference: Optional[str] = None
+
+
+class EmployeeOut(BaseModel):
+    id: int
+    full_name: str
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    account_number: Optional[str] = None
+    notes: Optional[str] = None
+    base_salary: Decimal
+    documents: Optional[List[dict]] = None
+    user_id: Optional[int] = None
+    linked_username: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    period: SalaryPeriodOut
+    payment: EmployeePaymentOut
+    lateness_entries: List[EmployeeLatenessEntryOut] = []
+    penalties: List[EmployeePenaltyOut] = []
+    bonuses: List[EmployeeBonusOut] = []
+    salary: EmployeeSalaryBreakdown
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeListItemOut(BaseModel):
+    id: int
+    full_name: str
+    phone: Optional[str] = None
+    account_number: Optional[str] = None
+    base_salary: Decimal
+    user_id: Optional[int] = None
+    period: SalaryPeriodOut
+    payment: EmployeePaymentOut
+    salary: EmployeeSalaryBreakdown
+
+
+class PayrollSummaryOut(BaseModel):
+    period: SalaryPeriodOut
+    employee_count: int
+    total_base_salary: Decimal
+    total_lateness_deductions: Decimal
+    total_penalties: Decimal
+    total_bonuses: Decimal
+    total_deductions: Decimal
+    net_payroll: Decimal
+
+
+class EmployeeCreate(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=500)
+    address: Optional[str] = Field(None, max_length=4000)
+    phone: Optional[str] = Field(None, max_length=100)
+    account_number: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = Field(None, max_length=8000)
+    base_salary: Decimal = Field(default=Decimal("0"), ge=0)
+    user_id: Optional[int] = Field(None, description="Link to existing app user (optional)")
+
+
+class EmployeeAdminUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    address: Optional[str] = Field(None, max_length=4000)
+    phone: Optional[str] = Field(None, max_length=100)
+    account_number: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = Field(None, max_length=8000)
+    base_salary: Optional[Decimal] = Field(None, ge=0)
+    user_id: Optional[int] = None
+
+
+class EmployeeSelfUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    address: Optional[str] = Field(None, max_length=4000)
+    phone: Optional[str] = Field(None, max_length=100)
+    account_number: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = Field(None, max_length=8000)
+
+
+class EmployeePenaltyCreate(BaseModel):
+    description: str = Field(..., min_length=1, max_length=2000)
+    amount: Decimal = Field(..., ge=0)
+    confirm_financial_edit: bool = False
+
+
+class EmployeeBonusCreate(BaseModel):
+    description: str = Field(..., min_length=1, max_length=2000)
+    amount: Decimal = Field(..., ge=0)
+    confirm_financial_edit: bool = False
+
+
+class EmployeeLatenessCreate(BaseModel):
+    note: Optional[str] = Field(None, max_length=2000)
+    confirm_financial_edit: bool = False
+
+
+class EmployeePaymentUpdate(BaseModel):
+    payment_status: Literal["paid", "unpaid"]
+    payment_date: Optional[datetime] = None
+    payment_reference: Optional[str] = Field(None, max_length=500)

@@ -1,7 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, Numeric
+from sqlalchemy import Boolean, Column, Integer, String, Float, Numeric, Text, UniqueConstraint
 from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from datetime import datetime
 from sqlalchemy import JSON
 
@@ -410,3 +410,127 @@ class MachineActivity(Base):
 
     machine = relationship("FactoryMachine", back_populates="activities")
     created_by_user = relationship("User", foreign_keys=[created_by_id])
+
+
+class SalaryPeriod(Base):
+    """Calendar month bucket for payroll (lateness, penalties, bonuses, payment status)."""
+
+    __tablename__ = "salary_periods"
+
+    id = Column(Integer, primary_key=True, index=True)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    label = Column(String(64), nullable=False)
+    # Exactly one period should be active: the current editable payroll month.
+    is_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("year", "month", name="uq_salary_periods_year_month"),)
+
+
+class Employee(Base):
+    """HR / payroll employee record (separate from app User; optional link via user_id)."""
+
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, nullable=False)
+    address = Column(Text, nullable=True)
+    phone = Column(String, nullable=True)
+    account_number = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    base_salary = Column(Numeric(14, 2), nullable=False, default=0)
+    # JSON: [{ "id": str, "url": str, "label": str | null, "uploaded_at": str }]
+    documents = Column(JSON, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref=backref("employee_record", uselist=False))
+    lateness_entries = relationship(
+        "EmployeeLatenessEntry",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeLatenessEntry.id",
+    )
+    penalties = relationship(
+        "EmployeePenalty",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeePenalty.id",
+    )
+    bonuses = relationship(
+        "EmployeeBonus",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeBonus.id",
+    )
+    period_payrolls = relationship(
+        "EmployeePeriodPayroll",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+    )
+
+
+class EmployeePeriodPayroll(Base):
+    """Per-employee, per-month payment state (prevents double-pay; optional audit)."""
+
+    __tablename__ = "employee_period_payroll"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_status = Column(String(16), nullable=False, default="unpaid")
+    payment_date = Column(DateTime, nullable=True)
+    payment_reference = Column(String(500), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("employee_id", "period_id", name="uq_employee_period_payroll_emp_period"),)
+
+    employee = relationship("Employee", back_populates="period_payrolls")
+    period = relationship("SalaryPeriod")
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class EmployeeLatenessEntry(Base):
+    """One lateness instance; deduction = count × ₦500 (constant in application code)."""
+
+    __tablename__ = "employee_lateness_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", back_populates="lateness_entries")
+    period = relationship("SalaryPeriod")
+
+
+class EmployeePenalty(Base):
+    __tablename__ = "employee_penalties"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    description = Column(String, nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", back_populates="penalties")
+    period = relationship("SalaryPeriod")
+
+
+class EmployeeBonus(Base):
+    __tablename__ = "employee_bonuses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    description = Column(String, nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", back_populates="bonuses")
+    period = relationship("SalaryPeriod")

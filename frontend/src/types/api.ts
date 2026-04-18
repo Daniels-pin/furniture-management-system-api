@@ -456,3 +456,134 @@ export type FactoryToolDetail = {
   current_record_id?: number | null;
 };
 
+/** HR / payroll (admin); amounts often arrive as numeric strings from the API */
+export type EmployeeSalaryBreakdown = {
+  base_salary: string | number;
+  lateness_count: number;
+  lateness_deduction: string | number;
+  lateness_rate_naira: string | number;
+  penalties_total: string | number;
+  bonuses_total: string | number;
+  total_deductions: string | number;
+  final_payable: string | number;
+};
+
+export type SalaryPeriod = {
+  id: number;
+  year: number;
+  month: number;
+  label: string;
+  /** Only one month is editable; archived months are view-only for payroll. */
+  is_active: boolean;
+};
+
+export type PayrollPeriodsNav = {
+  active_period: SalaryPeriod | null;
+  periods: SalaryPeriod[];
+};
+
+export type EmployeePayment = {
+  status: "paid" | "unpaid";
+  payment_date?: string | null;
+  payment_reference?: string | null;
+};
+
+export type PayrollSummary = {
+  period: SalaryPeriod;
+  employee_count: number;
+  total_base_salary: string | number;
+  total_lateness_deductions: string | number;
+  total_penalties: string | number;
+  total_bonuses: string | number;
+  total_deductions: string | number;
+  net_payroll: string | number;
+};
+
+export type EmployeeDocumentItem = {
+  id: string;
+  url: string;
+  label?: string | null;
+  uploaded_at?: string | null;
+};
+
+export type EmployeeLatenessEntry = {
+  id: number;
+  note?: string | null;
+  created_at: string;
+};
+
+export type EmployeePenalty = {
+  id: number;
+  description: string;
+  amount: string | number;
+  created_at: string;
+};
+
+export type EmployeeBonus = {
+  id: number;
+  description: string;
+  amount: string | number;
+  created_at: string;
+};
+
+export type EmployeeDetail = {
+  id: number;
+  full_name: string;
+  address?: string | null;
+  phone?: string | null;
+  account_number?: string | null;
+  notes?: string | null;
+  base_salary: string | number;
+  documents?: EmployeeDocumentItem[] | null;
+  user_id?: number | null;
+  linked_username?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  period: SalaryPeriod;
+  payment: EmployeePayment;
+  lateness_entries: EmployeeLatenessEntry[];
+  penalties: EmployeePenalty[];
+  bonuses: EmployeeBonus[];
+  salary: EmployeeSalaryBreakdown;
+};
+
+export type EmployeeListItem = {
+  id: number;
+  full_name: string;
+  phone?: string | null;
+  account_number?: string | null;
+  base_salary: string | number;
+  user_id?: number | null;
+  period: SalaryPeriod;
+  payment: EmployeePayment;
+  salary: EmployeeSalaryBreakdown;
+};
+
+export type EmployeeCreatePayload = {
+  full_name: string;
+  address?: string | null;
+  phone?: string | null;
+  account_number?: string | null;
+  notes?: string | null;
+  base_salary: number;
+  user_id?: number | null;
+};
+
+export type EmployeeAdminUpdatePayload = {
+  full_name?: string;
+  address?: string | null;
+  phone?: string | null;
+  account_number?: string | null;
+  notes?: string | null;
+  base_salary?: number;
+  user_id?: number | null;
+};
+
+export type EmployeeSelfUpdatePayload = {
+  full_name?: string;
+  address?: string | null;
+  phone?: string | null;
+  account_number?: string | null;
+  notes?: string | null;
+};
+

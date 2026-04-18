@@ -97,19 +97,19 @@ export function QuotationDocumentBody({ data, maskCustomer }: Props) {
           <div className="mt-3 min-w-0 overflow-x-touch print:overflow-visible">
             <table className="w-full min-w-[640px] sm:min-w-[720px] table-fixed border-collapse text-left text-sm print:min-w-0">
               <colgroup>
+                <col className="w-[24%]" />
                 <col className="w-[26%]" />
-                <col className="w-[38%]" />
-                <col className="w-[8%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
+                <col className="w-[10%]" />
+                <col className="w-[20%]" />
+                <col className="w-[20%]" />
               </colgroup>
               <thead>
                 <tr className="bg-black/[0.03] text-black">
-                  <th className="py-2 pl-3 pr-3 font-semibold">Item</th>
-                  <th className="py-2 pr-3 font-semibold">Description</th>
-                  <th className="py-2 px-2 sm:px-3 text-right font-semibold">Qty</th>
-                  <th className="py-2 px-2 sm:px-3 text-right font-semibold">Amount</th>
-                  <th className="py-2 px-2 sm:px-3 text-right font-semibold">Total</th>
+                  <th className="border-b border-black/10 py-2 pl-3 pr-2 font-semibold">Item</th>
+                  <th className="border-b border-l border-black/10 py-2 px-2 font-semibold">Description</th>
+                  <th className="border-b border-l border-black/10 py-2 px-2 text-right font-semibold">Qty</th>
+                  <th className="border-b border-l border-black/10 py-2 px-2 text-right font-semibold">Amount</th>
+                  <th className="border-b border-l border-black/10 py-2 px-2 text-right font-semibold">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,7 +118,10 @@ export function QuotationDocumentBody({ data, maskCustomer }: Props) {
                   if (lt === "subheading") {
                     return (
                       <tr key={it.id} className="border-b border-black/15 bg-black/[0.02] print:border-black/40">
-                        <td colSpan={5} className="py-2.5 pl-3 pr-3 font-bold tracking-[0.08em] text-black uppercase">
+                        <td
+                          colSpan={5}
+                          className="py-2.5 pl-3 pr-3 font-bold uppercase tracking-[0.08em] text-black print:border-black/40"
+                        >
                           {it.item_name}
                         </td>
                       </tr>
@@ -129,17 +132,19 @@ export function QuotationDocumentBody({ data, maskCustomer }: Props) {
                   const line = unitNum !== null && Number.isFinite(qtyNum) ? unitNum * qtyNum : null;
                   return (
                     <tr key={it.id} className="border-b border-black/15 print:border-black/40">
-                      <td className="py-3 pl-3 pr-3 font-semibold text-black align-top">{it.item_name}</td>
-                      <td className="py-3 pr-3 text-black align-top whitespace-normal break-words leading-snug">
+                      <td className="border-b border-black/15 py-3 pl-3 pr-2 align-top font-semibold text-black print:border-black/40">
+                        {it.item_name}
+                      </td>
+                      <td className="max-w-0 border-b border-l border-black/10 border-black/15 py-3 px-2 align-top break-words leading-snug text-black whitespace-normal print:border-black/40">
                         {it.description ?? "—"}
                       </td>
-                      <td className="py-3 px-2 sm:px-3 text-right font-semibold text-black align-top tabular-nums whitespace-nowrap overflow-hidden">
+                      <td className="border-b border-l border-black/10 border-black/15 py-3 px-2 text-right align-top font-semibold text-black tabular-nums whitespace-nowrap print:border-black/40">
                         {it.quantity}
                       </td>
-                      <td className="py-3 px-2 sm:px-3 text-right font-semibold text-black tabular-nums whitespace-nowrap overflow-hidden">
+                      <td className="border-b border-l border-black/10 border-black/15 py-3 px-2 text-right font-semibold text-black tabular-nums whitespace-nowrap print:border-black/40">
                         {formatMoney(unitNum)}
                       </td>
-                      <td className="py-3 px-2 sm:px-3 text-right font-semibold text-black tabular-nums whitespace-nowrap overflow-hidden">
+                      <td className="border-b border-l border-black/10 border-black/15 py-3 px-2 text-right font-semibold text-black tabular-nums whitespace-nowrap print:border-black/40">
                         {formatMoney(line)}
                       </td>
                     </tr>

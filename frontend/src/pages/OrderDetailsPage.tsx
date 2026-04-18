@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -83,6 +83,7 @@ export function OrderDetailsPage() {
 
   const canEditOrder = auth.role === "admin" || auth.role === "showroom";
   const canIssueInvoice = auth.role === "admin" || auth.role === "showroom";
+  const canSeeItemPricing = auth.role === "admin" || auth.role === "showroom";
 
   async function runIssueInvoice(orderId: number, orderEditedBeforeInvoice: boolean) {
     setIssuingInvoice(true);
@@ -472,16 +473,33 @@ export function OrderDetailsPage() {
             <Card>
               <div className="text-sm font-semibold">Items</div>
               <div className="mt-4 min-w-0 overflow-x-touch">
-                <table className="w-full min-w-[720px] text-left text-sm">
+                <table className="w-full min-w-[720px] table-fixed border-collapse text-left text-sm">
+                  <colgroup>
+                    {canSeeItemPricing ? (
+                      <>
+                        <col className="w-[24%]" />
+                        <col className="w-[26%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[20%]" />
+                        <col className="w-[20%]" />
+                      </>
+                    ) : (
+                      <>
+                        <col className="w-[28%]" />
+                        <col className="w-[44%]" />
+                        <col className="w-[28%]" />
+                      </>
+                    )}
+                  </colgroup>
                   <thead className="text-black/60">
-                    <tr className="border-b border-black/10">
-                      <th className="py-3 pr-4 font-semibold">Item name</th>
-                      <th className="py-3 pr-4 font-semibold">Description</th>
-                      <th className="py-3 pr-0 text-right font-semibold">Qty</th>
-                      {auth.role === "admin" || auth.role === "showroom" ? (
+                    <tr>
+                      <th className="border-b border-black/10 py-3 pl-3 pr-2 text-left font-semibold">Item name</th>
+                      <th className="border-b border-l border-black/10 py-3 px-2 text-left font-semibold">Description</th>
+                      <th className="border-b border-l border-black/10 py-3 px-2 text-right font-semibold">Qty</th>
+                      {canSeeItemPricing ? (
                         <>
-                          <th className="py-3 pr-0 text-right font-semibold">Amount</th>
-                          <th className="py-3 pr-0 text-right font-semibold">Total</th>
+                          <th className="border-b border-l border-black/10 py-3 px-2 text-right font-semibold">Amount</th>
+                          <th className="border-b border-l border-black/10 py-3 px-2 text-right font-semibold">Total</th>
                         </>
                       ) : null}
                     </tr>
@@ -489,30 +507,47 @@ export function OrderDetailsPage() {
                   <tbody>
                     {data.items.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={auth.role === "admin" || auth.role === "showroom" ? 5 : 3}
-                          className="py-6 text-black/60"
-                        >
+                        <td colSpan={canSeeItemPricing ? 5 : 3} className="py-6 text-black/60">
                           No items.
                         </td>
                       </tr>
                     ) : (
                       data.items.map((it) => {
-                        const unit =
-                          auth.role === "admin" || auth.role === "showroom" ? parseMoneyNumber(it.amount) : null;
-                        const qty =
-                          typeof it.quantity === "number" ? it.quantity : Number(it.quantity);
-                        const line =
-                          unit !== null && Number.isFinite(qty) ? unit * qty : null;
+                        const lt = (it as any).line_type ?? "item";
+                        if (lt === "subheading") {
+                          return (
+                            <tr key={it.id} className="border-b border-black/10 bg-black/[0.02]">
+                              <td
+                                colSpan={canSeeItemPricing ? 5 : 3}
+                                className="py-2.5 pl-3 pr-3 text-xs font-bold uppercase tracking-[0.08em] text-black"
+                              >
+                                {it.item_name}
+                              </td>
+                            </tr>
+                          );
+                        }
+                        const unit = canSeeItemPricing ? parseMoneyNumber(it.amount) : null;
+                        const qty = typeof it.quantity === "number" ? it.quantity : Number(it.quantity);
+                        const line = unit !== null && Number.isFinite(qty) ? unit * qty : null;
                         return (
                           <tr key={it.id} className="border-b border-black/5">
-                            <td className="py-3 pr-4 font-semibold">{it.item_name}</td>
-                            <td className="py-3 pr-4 text-black/70">{it.description ?? "—"}</td>
-                            <td className="py-3 pr-0 text-right font-semibold">{it.quantity}</td>
-                            {auth.role === "admin" || auth.role === "showroom" ? (
+                            <td className="border-b border-black/5 py-3 pl-3 pr-2 align-top font-semibold">
+                              {it.item_name}
+                            </td>
+                            <td className="max-w-0 border-b border-l border-black/10 border-black/5 py-3 px-2 align-top break-words leading-snug text-black/70 whitespace-normal">
+                              {it.description ?? "—"}
+                            </td>
+                            <td className="border-b border-l border-black/10 border-black/5 py-3 px-2 text-right align-top font-semibold tabular-nums whitespace-nowrap">
+                              {it.quantity}
+                            </td>
+                            {canSeeItemPricing ? (
                               <>
-                                <td className="py-3 pr-0 text-right font-semibold">{formatMoney(unit)}</td>
-                                <td className="py-3 pr-0 text-right font-semibold">{formatMoney(line)}</td>
+                                <td className="border-b border-l border-black/10 border-black/5 py-3 px-2 text-right font-semibold tabular-nums whitespace-nowrap">
+                                  {formatMoney(unit)}
+                                </td>
+                                <td className="border-b border-l border-black/10 border-black/5 py-3 px-2 text-right font-semibold tabular-nums whitespace-nowrap">
+                                  {formatMoney(line)}
+                                </td>
                               </>
                             ) : null}
                           </tr>
@@ -733,10 +768,30 @@ function EditOrderModal({
   const [discountValue, setDiscountValue] = useState(
     (initial as any).discount_value != null ? String((initial as any).discount_value) : ""
   );
-  const [items, setItems] = useState<
-    Array<{ line_type: "item" | "subheading"; item_name: string; description: string; quantity: string; amount: string }>
-  >(
+  type OrderLineEdit = {
+    key: string;
+    line_type: "item" | "subheading";
+    item_name: string;
+    description: string;
+    quantity: string;
+    amount: string;
+  };
+  function newItemRow(): OrderLineEdit {
+    return {
+      key: crypto.randomUUID(),
+      line_type: "item",
+      item_name: "",
+      description: "",
+      quantity: "1",
+      amount: ""
+    };
+  }
+  function newSubheadingRow(): OrderLineEdit {
+    return { key: crypto.randomUUID(), line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" };
+  }
+  const [items, setItems] = useState<OrderLineEdit[]>(
     initial.items.map((it) => ({
+      key: crypto.randomUUID(),
       line_type: ((it as any).line_type ?? "item") as any,
       item_name: it.item_name,
       description: it.description ?? "",
@@ -758,6 +813,7 @@ function EditOrderModal({
     setDiscountValue((initial as any).discount_value != null ? String((initial as any).discount_value) : "");
     setItems(
       initial.items.map((it) => ({
+        key: crypto.randomUUID(),
         line_type: ((it as any).line_type ?? "item") as any,
         item_name: it.item_name,
         description: it.description ?? "",
@@ -882,90 +938,89 @@ function EditOrderModal({
           <div className="text-sm font-semibold">Items</div>
           <div className="mt-2 space-y-3">
             {items.map((it, idx) => (
-              <div
-                key={idx}
-                className={[
-                  "grid grid-cols-1 gap-2 md:items-end",
-                  it.line_type === "subheading" ? "md:grid-cols-[1fr_auto]" : "md:grid-cols-[1fr_1fr_88px_120px_auto]"
-                ].join(" ")}
-              >
-                <Input
-                  label={idx === 0 ? "Item name" : undefined}
-                  value={it.item_name}
-                  onChange={(e) =>
-                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, item_name: e.target.value } : x)))
-                  }
-                  error={err[`n${idx}`]}
-                />
-                {it.line_type !== "subheading" ? (
-                <label className="block">
-                  {idx === 0 ? <div className="mb-1 text-sm font-medium">Description</div> : null}
-                  <textarea
-                    className={[
-                      "min-h-[72px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-black/40",
-                      err[`d${idx}`] ? "border-black/30" : ""
-                    ].join(" ")}
-                    value={it.description}
-                    onChange={(e) =>
-                      setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))
-                    }
-                  />
-                  {err[`d${idx}`] ? <div className="mt-1 text-xs text-black/70">{err[`d${idx}`]}</div> : null}
-                </label>
-                ) : null}
-                {it.line_type !== "subheading" ? (
-                <Input
-                  label={idx === 0 ? "Qty" : undefined}
-                  value={it.quantity}
-                  onChange={(e) =>
-                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, quantity: e.target.value } : x)))
-                  }
-                  inputMode="numeric"
-                  error={err[`q${idx}`]}
-                />
-                ) : null}
-                {it.line_type !== "subheading" ? (
-                <Input
-                  label={idx === 0 ? "Amount" : undefined}
-                  value={it.amount}
-                  onChange={(e) =>
-                    setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, amount: e.target.value } : x)))
-                  }
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  error={err[`a${idx}`]}
-                />
-                ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={items.length <= 1}
-                  onClick={() => setItems((xs) => xs.filter((_, i) => i !== idx))}
+              <Fragment key={it.key}>
+                <div
+                  className={[
+                    "grid grid-cols-1 gap-2 md:items-end",
+                    it.line_type === "subheading" ? "md:grid-cols-[1fr_auto]" : "md:grid-cols-[1fr_1fr_88px_120px_auto]"
+                  ].join(" ")}
                 >
-                  Remove
-                </Button>
-              </div>
+                  <Input
+                    label={idx === 0 ? "Item name" : undefined}
+                    value={it.item_name}
+                    onChange={(e) =>
+                      setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, item_name: e.target.value } : x)))
+                    }
+                    error={err[`n${idx}`]}
+                  />
+                  {it.line_type !== "subheading" ? (
+                    <label className="block">
+                      {idx === 0 ? <div className="mb-1 text-sm font-medium">Description</div> : null}
+                      <textarea
+                        className={[
+                          "min-h-[72px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-black/40",
+                          err[`d${idx}`] ? "border-black/30" : ""
+                        ].join(" ")}
+                        value={it.description}
+                        onChange={(e) =>
+                          setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))
+                        }
+                      />
+                      {err[`d${idx}`] ? <div className="mt-1 text-xs text-black/70">{err[`d${idx}`]}</div> : null}
+                    </label>
+                  ) : null}
+                  {it.line_type !== "subheading" ? (
+                    <Input
+                      label={idx === 0 ? "Qty" : undefined}
+                      value={it.quantity}
+                      onChange={(e) =>
+                        setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, quantity: e.target.value } : x)))
+                      }
+                      inputMode="numeric"
+                      error={err[`q${idx}`]}
+                    />
+                  ) : null}
+                  {it.line_type !== "subheading" ? (
+                    <Input
+                      label={idx === 0 ? "Amount" : undefined}
+                      value={it.amount}
+                      onChange={(e) =>
+                        setItems((xs) => xs.map((x, i) => (i === idx ? { ...x, amount: e.target.value } : x)))
+                      }
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      error={err[`a${idx}`]}
+                    />
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={items.length <= 1}
+                    onClick={() => setItems((xs) => xs.filter((_, i) => i !== idx))}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                {it.line_type === "subheading" ? (
+                  <div className="-mt-1 flex flex-wrap gap-2 pl-0.5">
+                    <Button type="button" variant="secondary" onClick={() => setItems((xs) => {
+                      const row = newItemRow();
+                      return [...xs.slice(0, idx + 1), row, ...xs.slice(idx + 1)];
+                    })}>
+                      Add line
+                    </Button>
+                  </div>
+                ) : null}
+              </Fragment>
             ))}
           </div>
           {err.items ? <div className="mt-2 text-xs text-black/70">{err.items}</div> : null}
           <div className="mt-2">
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() =>
-                  setItems((xs) => [...xs, { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }])
-                }
-              >
+              <Button type="button" variant="secondary" onClick={() => setItems((xs) => [...xs, newItemRow()])}>
                 Add item
               </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() =>
-                  setItems((xs) => [...xs, { line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" }])
-                }
-              >
+              <Button type="button" variant="secondary" onClick={() => setItems((xs) => [...xs, newSubheadingRow()])}>
                 Add subheading
               </Button>
             </div>

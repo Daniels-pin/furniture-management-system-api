@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { quotationApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
@@ -9,7 +9,22 @@ import { Input } from "../components/ui/Input";
 import type { QuotationPayload } from "../types/api";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
-type Line = { line_type: "item" | "subheading"; item_name: string; description: string; quantity: string; amount: string };
+type Line = {
+  key: string;
+  line_type: "item" | "subheading";
+  item_name: string;
+  description: string;
+  quantity: string;
+  amount: string;
+};
+
+function newItemLine(): Line {
+  return { key: crypto.randomUUID(), line_type: "item", item_name: "", description: "", quantity: "1", amount: "" };
+}
+
+function newSubheadingLine(): Line {
+  return { key: crypto.randomUUID(), line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" };
+}
 
 function isoToDateInput(iso?: string | null) {
   if (!iso) return "";
@@ -34,9 +49,7 @@ export function QuotationFormPage() {
   const [discountType, setDiscountType] = useState<"" | "fixed" | "percentage">("");
   const [discountValue, setDiscountValue] = useState("");
   const [tax, setTax] = useState("");
-  const [lines, setLines] = useState<Line[]>([
-    { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }
-  ]);
+  const [lines, setLines] = useState<Line[]>([newItemLine()]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -64,6 +77,7 @@ export function QuotationFormPage() {
         if (d.items?.length) {
           setLines(
             d.items.map((it) => ({
+              key: crypto.randomUUID(),
               line_type: ((it as any).line_type ?? "item") as any,
               item_name: it.item_name ?? "",
               description: (it.description as string) ?? "",
@@ -85,11 +99,15 @@ export function QuotationFormPage() {
   }, [editId, isEdit, nav, toast]);
 
   function addLine() {
-    setLines((xs) => [...xs, { line_type: "item", item_name: "", description: "", quantity: "1", amount: "" }]);
+    setLines((xs) => [...xs, newItemLine()]);
+  }
+
+  function addLineAfter(index: number) {
+    setLines((xs) => [...xs.slice(0, index + 1), newItemLine(), ...xs.slice(index + 1)]);
   }
 
   function addSubheading() {
-    setLines((xs) => [...xs, { line_type: "subheading", item_name: "", description: "", quantity: "", amount: "" }]);
+    setLines((xs) => [...xs, newSubheadingLine()]);
   }
 
   function removeLine(i: number) {
@@ -220,60 +238,70 @@ export function QuotationFormPage() {
           <div className="text-sm font-semibold text-black">Line items</div>
           <div className="mt-3 space-y-3">
             {lines.map((ln, i) => (
-              <div
-                key={i}
-                className="grid grid-cols-1 gap-2 rounded-2xl border border-black/10 p-3 md:grid-cols-12 md:items-end"
-              >
-                <div className={ln.line_type === "subheading" ? "md:col-span-11" : "md:col-span-3"}>
-                  <Input label="Item" value={ln.item_name} onChange={(e) => {
-                    const v = e.target.value;
-                    setLines((xs) => xs.map((x, j) => (j === i ? { ...x, item_name: v } : x)));
-                  }} />
+              <Fragment key={ln.key}>
+                <div className="grid grid-cols-1 gap-2 rounded-2xl border border-black/10 p-3 md:grid-cols-12 md:items-end">
+                  <div className={ln.line_type === "subheading" ? "md:col-span-11" : "md:col-span-3"}>
+                    <Input
+                      label="Item"
+                      value={ln.item_name}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setLines((xs) => xs.map((x, j) => (j === i ? { ...x, item_name: v } : x)));
+                      }}
+                    />
+                  </div>
+                  {ln.line_type !== "subheading" ? (
+                    <div className="md:col-span-4">
+                      <Input
+                        label="Description"
+                        value={ln.description}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLines((xs) => xs.map((x, j) => (j === i ? { ...x, description: v } : x)));
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {ln.line_type !== "subheading" ? (
+                    <div className="md:col-span-2">
+                      <Input
+                        label="Qty"
+                        inputMode="numeric"
+                        value={ln.quantity}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLines((xs) => xs.map((x, j) => (j === i ? { ...x, quantity: v } : x)));
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {ln.line_type !== "subheading" ? (
+                    <div className="md:col-span-2">
+                      <Input
+                        label="Amount (unit)"
+                        inputMode="decimal"
+                        value={ln.amount}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLines((xs) => xs.map((x, j) => (j === i ? { ...x, amount: v } : x)));
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="md:col-span-1 flex justify-end pb-2">
+                    <Button type="button" variant="ghost" onClick={() => removeLine(i)}>
+                      Remove
+                    </Button>
+                  </div>
                 </div>
-                {ln.line_type !== "subheading" ? (
-                <div className="md:col-span-4">
-                  <Input
-                    label="Description"
-                    value={ln.description}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setLines((xs) => xs.map((x, j) => (j === i ? { ...x, description: v } : x)));
-                    }}
-                  />
-                </div>
+                {ln.line_type === "subheading" ? (
+                  <div className="flex flex-wrap gap-2 pl-1">
+                    <Button type="button" variant="secondary" onClick={() => addLineAfter(i)}>
+                      Add line
+                    </Button>
+                  </div>
                 ) : null}
-                {ln.line_type !== "subheading" ? (
-                <div className="md:col-span-2">
-                  <Input
-                    label="Qty"
-                    inputMode="numeric"
-                    value={ln.quantity}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setLines((xs) => xs.map((x, j) => (j === i ? { ...x, quantity: v } : x)));
-                    }}
-                  />
-                </div>
-                ) : null}
-                {ln.line_type !== "subheading" ? (
-                <div className="md:col-span-2">
-                  <Input
-                    label="Amount (unit)"
-                    inputMode="decimal"
-                    value={ln.amount}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setLines((xs) => xs.map((x, j) => (j === i ? { ...x, amount: v } : x)));
-                    }}
-                  />
-                </div>
-                ) : null}
-                <div className="md:col-span-1 flex justify-end pb-2">
-                  <Button type="button" variant="ghost" onClick={() => removeLine(i)}>
-                    Remove
-                  </Button>
-                </div>
-              </div>
+              </Fragment>
             ))}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">

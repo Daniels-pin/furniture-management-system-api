@@ -49,3 +49,28 @@ def upload_images(files: list[UploadFile]) -> list[str]:
     for f in files:
         urls.append(upload_image(f))
     return urls
+
+
+def upload_asset(file: UploadFile, *, folder: str = "employees_docs") -> str:
+    """
+    Upload a generic file (PDF, image, etc.) and return the secure URL.
+    """
+    try:
+        _configure_cloudinary()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        result = cloudinary.uploader.upload(
+            file.file,
+            folder=folder,
+            resource_type="auto",
+        )
+        secure_url = result.get("secure_url")
+        if not secure_url:
+            raise HTTPException(status_code=502, detail="Upload failed")
+        return secure_url
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="Upload failed")

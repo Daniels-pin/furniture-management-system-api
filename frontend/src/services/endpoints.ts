@@ -39,7 +39,16 @@ import type {
   FactoryMachineDetail,
   FactoryToolDetail,
   MachineActivity,
-  MachineStatus
+  MachineStatus,
+  EmployeeBonus,
+  EmployeeCreatePayload,
+  EmployeeDetail,
+  EmployeeListItem,
+  EmployeeAdminUpdatePayload,
+  EmployeeSelfUpdatePayload,
+  PayrollPeriodsNav,
+  PayrollSummary,
+  SalaryPeriod
 } from "../types/api";
 
 export const authApi = {
@@ -768,6 +777,126 @@ export const machinesApi = {
   },
   async postActivity(machineId: number, body: { kind: MachineActivity["kind"]; message?: string | null; new_status?: MachineStatus }) {
     const { data } = await api.post<MachineActivity>(`/machines/${machineId}/activities`, body);
+    return data;
+  }
+};
+
+export type EmployeePeriodParams = { period_year?: number; period_month?: number };
+
+export const employeesApi = {
+  async payrollPeriodsNav() {
+    const { data } = await api.get<PayrollPeriodsNav>("/employees/periods");
+    return data;
+  },
+  async startNextPayrollMonth() {
+    const { data } = await api.post<PayrollPeriodsNav>("/employees/periods/start-next-month");
+    return data;
+  },
+  async payrollSummary(params?: EmployeePeriodParams) {
+    const { data } = await api.get<PayrollSummary>("/employees/payroll/summary", { params });
+    return data;
+  },
+  async list(params?: EmployeePeriodParams) {
+    const { data } = await api.get<EmployeeListItem[]>("/employees", { params });
+    return data;
+  },
+  async exportCsv(params?: EmployeePeriodParams) {
+    const res = await api.get("/employees/export", { responseType: "blob", params });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = "employees_payroll_export.csv";
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  async getMe() {
+    const { data } = await api.get<EmployeeDetail>("/employees/me");
+    return data;
+  },
+  async patchMe(body: EmployeeSelfUpdatePayload) {
+    const { data } = await api.patch<EmployeeDetail>("/employees/me", body);
+    return data;
+  },
+  async get(employeeId: number, params?: EmployeePeriodParams) {
+    const { data } = await api.get<EmployeeDetail>(`/employees/${employeeId}`, { params });
+    return data;
+  },
+  async create(body: EmployeeCreatePayload) {
+    const { data } = await api.post<EmployeeDetail>("/employees", body);
+    return data;
+  },
+  async update(employeeId: number, body: EmployeeAdminUpdatePayload, params?: EmployeePeriodParams) {
+    const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}`, body, { params });
+    return data;
+  },
+  async updatePayment(
+    employeeId: number,
+    body: { payment_status: "paid" | "unpaid"; payment_date?: string | null; payment_reference?: string | null },
+    period: { period_year: number; period_month: number }
+  ) {
+    const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}/payment`, body, {
+      params: period
+    });
+    return data;
+  },
+  async remove(employeeId: number) {
+    const { data } = await api.delete<{ message: string }>(`/employees/${employeeId}`);
+    return data;
+  },
+  async addLateness(
+    employeeId: number,
+    body: { note?: string | null; confirm_financial_edit?: boolean },
+    params?: EmployeePeriodParams
+  ) {
+    const { data } = await api.post<EmployeeDetail>(`/employees/${employeeId}/lateness`, body, { params });
+    return data;
+  },
+  async deleteLateness(employeeId: number, entryId: number, params?: EmployeePeriodParams & { confirm_financial_edit?: boolean }) {
+    const { data } = await api.delete<EmployeeDetail>(`/employees/${employeeId}/lateness/${entryId}`, { params });
+    return data;
+  },
+  async addPenalty(
+    employeeId: number,
+    body: { description: string; amount: number; confirm_financial_edit?: boolean },
+    params?: EmployeePeriodParams
+  ) {
+    const { data } = await api.post<EmployeeDetail>(`/employees/${employeeId}/penalties`, body, { params });
+    return data;
+  },
+  async deletePenalty(employeeId: number, penaltyId: number, params?: EmployeePeriodParams & { confirm_financial_edit?: boolean }) {
+    const { data } = await api.delete<EmployeeDetail>(`/employees/${employeeId}/penalties/${penaltyId}`, { params });
+    return data;
+  },
+  async addBonus(
+    employeeId: number,
+    body: { description: string; amount: number; confirm_financial_edit?: boolean },
+    params?: EmployeePeriodParams
+  ) {
+    const { data } = await api.post<EmployeeDetail>(`/employees/${employeeId}/bonuses`, body, { params });
+    return data;
+  },
+  async deleteBonus(employeeId: number, bonusId: number, params?: EmployeePeriodParams & { confirm_financial_edit?: boolean }) {
+    const { data } = await api.delete<EmployeeDetail>(`/employees/${employeeId}/bonuses/${bonusId}`, { params });
+    return data;
+  },
+  async uploadDocument(employeeId: number, file: File, label?: string, params?: EmployeePeriodParams) {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (label?.trim()) fd.append("label", label.trim());
+    const { data } = await api.post<EmployeeDetail>(`/employees/${employeeId}/documents`, fd, { params });
+    return data;
+  },
+  async deleteDocument(employeeId: number, docId: string, params?: EmployeePeriodParams) {
+    const { data } = await api.delete<EmployeeDetail>(`/employees/${employeeId}/documents/${encodeURIComponent(docId)}`, {
+      params
+    });
     return data;
   }
 };

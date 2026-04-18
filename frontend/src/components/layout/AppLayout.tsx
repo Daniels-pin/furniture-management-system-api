@@ -65,6 +65,11 @@ function AppNavLinks({ onNavigate, variant }: { onNavigate?: () => void; variant
       <NavItem variant={variant} onNavigate={onNavigate} to="/trash" label="Trash" />
       <NavItem variant={variant} onNavigate={onNavigate} to="/account" label="Account" />
       {auth.role === "admin" ? (
+        <NavItem variant={variant} onNavigate={onNavigate} to="/employees" label="Employees" />
+      ) : (
+        <NavItem variant={variant} onNavigate={onNavigate} to="/employee-details" label="Employee Details" />
+      )}
+      {auth.role === "admin" ? (
         <NavItem variant={variant} onNavigate={onNavigate} to="/admin/users" label="Admin Users" />
       ) : null}
       {auth.role === "admin" ? (

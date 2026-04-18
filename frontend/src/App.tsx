@@ -30,6 +30,9 @@ import { QuotationPdfExportPage } from "./pages/pdf-export/QuotationPdfExportPag
 import { ProformaPdfExportPage } from "./pages/pdf-export/ProformaPdfExportPage";
 import { WaybillPdfExportPage } from "./pages/pdf-export/WaybillPdfExportPage";
 import { OrderPdfExportPage } from "./pages/pdf-export/OrderPdfExportPage";
+import { EmployeesPage } from "./pages/EmployeesPage";
+import { EmployeeAdminPage } from "./pages/EmployeeAdminPage";
+import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
 
 function LegacyMachineDetailRedirect() {
   const { machineId } = useParams();
@@ -215,6 +218,23 @@ export default function App() {
           }
         />
         <Route path="account" element={<AccountPage />} />
+        <Route path="employee-details" element={<EmployeeSelfPage />} />
+        <Route
+          path="employees"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <EmployeesPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="employees/:employeeId"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <EmployeeAdminPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="admin/users"
           element={
