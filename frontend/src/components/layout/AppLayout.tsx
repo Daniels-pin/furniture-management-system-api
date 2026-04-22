@@ -6,6 +6,8 @@ import { useToast } from "../../state/toast";
 import { customersApi, inventoryApi, ordersApi } from "../../services/endpoints";
 import { StatusBadge } from "../ui/StatusBadge";
 import { APP_NAME } from "../../config/app";
+import { env } from "../../env";
+import { usePageHeaderState } from "./pageHeader";
 
 function NavItem({
   to,
@@ -41,6 +43,16 @@ function NavItem({
 
 function AppNavLinks({ onNavigate, variant }: { onNavigate?: () => void; variant: "sidebar" | "drawer" }) {
   const auth = useAuth();
+  if (auth.role === "finance") {
+    return (
+      <nav className="space-y-1">
+        <NavItem variant={variant} onNavigate={onNavigate} to="/finance" label="Finance" />
+        <NavItem variant={variant} onNavigate={onNavigate} to="/employees" label="Employees" />
+        <NavItem variant={variant} onNavigate={onNavigate} to="/expenses" label="Petty Cash" />
+        <NavItem variant={variant} onNavigate={onNavigate} to="/account" label="Account" />
+      </nav>
+    );
+  }
   return (
     <nav className="space-y-1">
       <NavItem variant={variant} onNavigate={onNavigate} to="/dashboard" label="Dashboard" />
@@ -64,8 +76,12 @@ function AppNavLinks({ onNavigate, variant }: { onNavigate?: () => void; variant
       ) : null}
       <NavItem variant={variant} onNavigate={onNavigate} to="/trash" label="Trash" />
       <NavItem variant={variant} onNavigate={onNavigate} to="/account" label="Account" />
-      {auth.role === "admin" ? (
-        <NavItem variant={variant} onNavigate={onNavigate} to="/employees" label="Employees" />
+      {auth.role === "admin" ? <NavItem variant={variant} onNavigate={onNavigate} to="/finance" label="Finance" /> : null}
+      {auth.role === "admin" || auth.role === "finance" ? (
+        <>
+          <NavItem variant={variant} onNavigate={onNavigate} to="/employees" label="Employees" />
+          <NavItem variant={variant} onNavigate={onNavigate} to="/expenses" label="Petty Cash" />
+        </>
       ) : (
         <NavItem variant={variant} onNavigate={onNavigate} to="/employee-details" label="Employee Details" />
       )}
@@ -84,6 +100,7 @@ export function AppLayout() {
   const toast = useToast();
   const location = useLocation();
   const nav = useNavigate();
+  const pageHeader = usePageHeaderState();
   const [exitImpLoading, setExitImpLoading] = useState(false);
   const [dueSoon, setDueSoon] = useState<number>(0);
   const [open, setOpen] = useState(false);
@@ -120,6 +137,11 @@ export function AppLayout() {
   }, [drawerOpen]);
 
   useEffect(() => {
+    if (auth.role === "finance") {
+      setDueSoon(0);
+      setAlerts(null);
+      return;
+    }
     let alive = true;
     (async () => {
       try {
@@ -133,10 +155,10 @@ export function AppLayout() {
     return () => {
       alive = false;
     };
-  }, [location.pathname]);
+  }, [location.pathname, auth.role]);
 
   useEffect(() => {
-    if (auth.role === "factory") {
+    if (auth.role === "factory" || auth.role === "finance") {
       setBirthdays(null);
       return;
     }
@@ -201,6 +223,7 @@ export function AppLayout() {
   }, [bOpen]);
 
   async function toggleBell() {
+    if (auth.role === "finance") return;
     const next = !open;
     setOpen(next);
     if (!next) return;
@@ -215,6 +238,7 @@ export function AppLayout() {
   }
 
   async function toggleBirthdays() {
+    if (auth.role === "finance") return;
     const next = !bOpen;
     setBOpen(next);
     if (!next) return;
@@ -228,6 +252,9 @@ export function AppLayout() {
   }
 
   const closeDrawer = () => setDrawerOpen(false);
+
+  const title = pageHeader?.title ?? APP_NAME;
+  const subtitle = pageHeader?.subtitle ?? null;
 
   return (
     <div className="min-h-dvh overflow-x-hidden bg-white">
@@ -276,11 +303,11 @@ export function AppLayout() {
             </span>
           </button>
           <NavLink
-            to="/dashboard"
+            to={auth.role === "finance" ? "/finance" : "/dashboard"}
             onClick={closeDrawer}
             className="min-w-0 flex-1 truncate text-center text-sm font-bold tracking-tight text-black hover:opacity-80"
           >
-            {APP_NAME}
+            {title}
           </NavLink>
           <div className="w-11 shrink-0" aria-hidden />
         </header>
@@ -290,7 +317,7 @@ export function AppLayout() {
             <div className="px-2 pb-3 lg:pb-4">
               <div className="min-w-0">
                 <NavLink
-                  to="/dashboard"
+                  to={auth.role === "finance" ? "/finance" : "/dashboard"}
                   className="block w-full min-w-0 break-words text-sm font-bold leading-snug tracking-tight text-black hover:opacity-80 lg:text-base"
                 >
                   {APP_NAME}
@@ -302,10 +329,10 @@ export function AppLayout() {
 
             <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-3 lg:mt-6">
               <div className="text-xs font-semibold lg:text-sm">
-                {auth.role === "admin" ? "Admin" : auth.role === "factory" ? "Factory" : "Showroom"}
+                {auth.role === "admin" ? "Admin" : auth.role === "finance" ? "Finance" : auth.role === "factory" ? "Factory" : "Showroom"}
               </div>
               <div className="mt-0.5 text-[11px] font-semibold text-black/60 lg:text-xs">
-                Role: {auth.role === "admin" ? "Admin" : auth.role === "factory" ? "Factory" : "Showroom"}
+                Role: {auth.role === "admin" ? "Admin" : auth.role === "finance" ? "Finance" : auth.role === "factory" ? "Factory" : "Showroom"}
               </div>
               <button
                 className="mt-3 min-h-11 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold hover:bg-black/5"
@@ -317,10 +344,26 @@ export function AppLayout() {
           </aside>
 
           <main className="min-w-0">
-            <div className="mb-4 flex items-center justify-end gap-2">
+            <div className="mb-4 flex flex-col gap-3 border-b border-black/10 pb-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <img
+                  src={env.logoUrl || "/logo.png"}
+                  alt={`${APP_NAME} logo`}
+                  className="h-auto max-h-20 w-auto max-w-full shrink-0 object-contain sm:max-h-[84px] md:max-h-[92px]"
+                  draggable={false}
+                  loading="eager"
+                />
+                <div className="min-w-0">
+                  <div className="text-2xl font-bold tracking-tight">{title}</div>
+                  {subtitle ? <div className="mt-1 text-sm text-black/60">{subtitle}</div> : null}
+                  {auth.username && title === "Dashboard" ? (
+                    <div className="mt-1 text-sm font-semibold text-black/70">Signed in as {auth.username}</div>
+                  ) : null}
+                </div>
+              </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <div className="relative" ref={bWrapRef}>
-                  {auth.role === "factory" ? null : (
+                  {auth.role === "factory" || auth.role === "finance" ? null : (
                     <>
                       <button
                         className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
@@ -423,34 +466,36 @@ export function AppLayout() {
                 ) : null}
 
                 <div className="relative" ref={wrapRef}>
-                  <button
-                    className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                    aria-label="Due soon alerts"
-                    type="button"
-                    onClick={() => void toggleBell()}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                      />
-                      <path
-                        d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span
-                      className={[
-                        "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                        showRed ? "bg-red-600 text-white" : "bg-black/10 text-black/70"
-                      ].join(" ")}
+                  {auth.role === "finance" ? null : (
+                    <button
+                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      aria-label="Due soon alerts"
+                      type="button"
+                      onClick={() => void toggleBell()}
                     >
-                      {dueSoon}
-                    </span>
-                  </button>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                        />
+                        <path
+                          d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span
+                        className={[
+                          "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                          showRed ? "bg-red-600 text-white" : "bg-black/10 text-black/70"
+                        ].join(" ")}
+                      >
+                        {dueSoon}
+                      </span>
+                    </button>
+                  )}
 
                   {open ? (
                     <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
@@ -539,10 +584,10 @@ export function AppLayout() {
             </div>
             <div className="shrink-0 border-t border-black/10 bg-black/[0.02] p-4">
               <div className="text-xs font-semibold">
-                {auth.role === "admin" ? "Admin" : auth.role === "factory" ? "Factory" : "Showroom"}
+                {auth.role === "admin" ? "Admin" : auth.role === "finance" ? "Finance" : auth.role === "factory" ? "Factory" : "Showroom"}
               </div>
               <div className="mt-0.5 text-[11px] font-semibold text-black/60">
-                Role: {auth.role === "admin" ? "Admin" : auth.role === "factory" ? "Factory" : "Showroom"}
+                Role: {auth.role === "admin" ? "Admin" : auth.role === "finance" ? "Finance" : auth.role === "factory" ? "Factory" : "Showroom"}
               </div>
               <button
                 type="button"

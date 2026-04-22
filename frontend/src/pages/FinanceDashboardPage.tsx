@@ -1,0 +1,276 @@
+import { useEffect, useState } from "react";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Modal } from "../components/ui/Modal";
+import { employeePaymentsApi } from "../services/endpoints";
+import { getErrorMessage } from "../services/api";
+import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
+import type { PendingEmployeePayments } from "../types/api";
+import { formatMoney } from "../utils/money";
+import { usePageHeader } from "../components/layout/pageHeader";
+
+export function FinanceDashboardPage() {
+  const auth = useAuth();
+  const toast = useToast();
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState<PendingEmployeePayments | null>(null);
+  const [sort, setSort] = useState<"oldest" | "newest" | "amount_desc" | "amount_asc">("oldest");
+  const [search, setSearch] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [overpayConfirm, setOverpayConfirm] = useState(false);
+  const [confirmWithoutReceipt, setConfirmWithoutReceipt] = useState(false);
+
+  async function refresh() {
+    const res = await employeePaymentsApi.pending({
+      search: search.trim() || undefined,
+      sort
+    });
+    setPending(res);
+  }
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        await refresh();
+      } catch (e) {
+        toast.push("error", getErrorMessage(e));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [toast, sort, search]);
+
+  usePageHeader({
+    title: "Finance Dashboard",
+    subtitle: "Pending payments queue and totals."
+  });
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-black/55">Total pending</div>
+            <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(pending?.total_pending_amount ?? 0)}</div>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-semibold text-black/60">
+              Search
+              <input
+                className="mt-1 w-[240px] rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Employee name…"
+              />
+            </label>
+            <label className="text-xs font-semibold text-black/60">
+              Sort
+              <select
+                className="mt-1 rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as any)}
+              >
+                <option value="oldest">Oldest first</option>
+                <option value="newest">Newest first</option>
+                <option value="amount_desc">Highest amount</option>
+                <option value="amount_asc">Lowest amount</option>
+              </select>
+            </label>
+            <Button
+              variant="secondary"
+              isLoading={loading}
+              onClick={() => {
+                setLoading(true);
+                void refresh()
+                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .finally(() => setLoading(false));
+              }}
+            >
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="mt-3 text-sm text-black/60">Loading…</div>
+        ) : !pending || pending.items.length === 0 ? (
+          <div className="mt-3 text-sm text-black/60">No pending payments.</div>
+        ) : (
+          <div className="mt-3 min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left text-sm">
+              <thead className="text-black/60">
+                <tr className="border-b border-black/10">
+                  <th className="py-3 pr-4 font-semibold">Employee</th>
+                  <th className="py-3 pr-4 font-semibold">Kind</th>
+                  <th className="py-3 pr-4 font-semibold">Period</th>
+                  <th className="py-3 pr-4 text-right font-semibold">Amount</th>
+                  <th className="py-3 pr-4 font-semibold">Receipt</th>
+                  <th className="py-3 pr-0 text-right font-semibold"> </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.items.map((it) => (
+                  <tr key={it.transaction.id} className="border-b border-black/5 bg-black/[0.03]">
+                    <td className="py-3 pr-4 font-semibold">{it.employee_name}</td>
+                    <td className="py-3 pr-4">
+                      <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+                        {it.employee_kind === "monthly" ? "Monthly" : "Contract"}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{it.period_label ?? "—"}</td>
+                    <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(it.transaction.amount)}</td>
+                    <td className="py-3 pr-4">
+                      {it.transaction.receipt_url ? (
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-black underline decoration-black/30 underline-offset-2"
+                          onClick={() => setPreviewUrl(it.transaction.receipt_url ?? null)}
+                        >
+                          Preview
+                        </button>
+                      ) : (
+                        <input
+                          type="file"
+                          className="block text-sm"
+                          disabled={busyId === it.transaction.id}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setBusyId(it.transaction.id);
+                            void employeePaymentsApi
+                              .uploadReceipt(it.transaction.id, f)
+                              .then(() => refresh())
+                              .catch((er) => toast.push("error", getErrorMessage(er)))
+                              .finally(() => setBusyId(null));
+                          }}
+                        />
+                      )}
+                    </td>
+                    <td className="py-3 pr-0 text-right">
+                      <Button
+                        variant="secondary"
+                        disabled={
+                          busyId === it.transaction.id || (auth.role === "finance" && !it.transaction.receipt_url)
+                        }
+                        isLoading={busyId === it.transaction.id}
+                        onClick={() => {
+                          if (auth.role === "admin" && it.transaction.receipt_url) {
+                            setBusyId(it.transaction.id);
+                            void employeePaymentsApi
+                              .markPaid(it.transaction.id)
+                              .then(() => refresh())
+                              .then(() => toast.push("success", "Marked paid."))
+                              .catch((er) => toast.push("error", getErrorMessage(er)))
+                              .finally(() => setBusyId(null));
+                            return;
+                          }
+                          setConfirmId(it.transaction.id);
+                          setOverpayConfirm(false);
+                          setConfirmWithoutReceipt(auth.role === "admin" && !it.transaction.receipt_url);
+                        }}
+                      >
+                        Mark paid
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Modal open={previewUrl !== null} title="Receipt preview" onClose={() => setPreviewUrl(null)}>
+        {previewUrl ? (
+          <div className="space-y-3">
+            <div className="overflow-hidden rounded-2xl border border-black/10">
+              <iframe title="Receipt preview" src={previewUrl} className="h-[70dvh] w-full" />
+            </div>
+            <a
+              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open in new tab
+            </a>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal open={confirmId !== null} title="Confirm payment" onClose={() => (busyId ? null : setConfirmId(null))}>
+        {confirmId ? (
+          <div className="space-y-4">
+            <div className="text-sm text-black/70">
+              {confirmWithoutReceipt ? (
+                <>Are you sure you want to proceed without a receipt?</>
+              ) : (
+                <>
+                  Confirm marking this transaction as <span className="font-semibold">Paid</span>?
+                </>
+              )}
+            </div>
+            {overpayConfirm ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                <span className="font-semibold">Overpaid.</span> This payment will make the employee owe the company.
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={overpayConfirm ? "danger" : "secondary"}
+                isLoading={busyId === confirmId}
+                disabled={busyId === confirmId}
+                onClick={() => {
+                  setBusyId(confirmId);
+                  const options =
+                    overpayConfirm || confirmWithoutReceipt
+                      ? {
+                          confirm_overpay: overpayConfirm ? true : undefined,
+                          confirm_without_receipt: confirmWithoutReceipt ? true : undefined
+                        }
+                      : undefined;
+                  void employeePaymentsApi
+                    .markPaid(confirmId, options)
+                    .then(() => refresh())
+                    .then(() => toast.push("success", "Marked paid."))
+                    .then(() => setConfirmId(null))
+                    .catch((er: any) => {
+                      const detail = er?.response?.data?.detail;
+                      if (detail?.code === "OVERPAY_CONFIRM_REQUIRED") {
+                        setOverpayConfirm(true);
+                        return;
+                      }
+                      toast.push("error", getErrorMessage(er));
+                    })
+                    .finally(() => setBusyId(null));
+                }}
+              >
+                {overpayConfirm ? "Confirm overpay" : confirmWithoutReceipt ? "Yes" : "Confirm"}
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busyId === confirmId}
+                onClick={() => {
+                  setConfirmId(null);
+                  setConfirmWithoutReceipt(false);
+                  setOverpayConfirm(false);
+                }}
+              >
+                {confirmWithoutReceipt ? "No" : "Cancel"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+    </div>
+  );
+}
+

@@ -18,7 +18,7 @@ export function RequireAuth({
 
   if (roles && roles.length > 0) {
     if (!auth.role || !roles.includes(auth.role)) {
-      return <Navigate to="/dashboard" replace />;
+      return <Navigate to={auth.role === "finance" ? "/finance" : "/dashboard"} replace />;
     }
   }
 

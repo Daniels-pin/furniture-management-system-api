@@ -1,4 +1,19 @@
-export type Role = "showroom" | "factory" | "admin";
+export type Role = "showroom" | "factory" | "admin" | "finance";
+
+export type DraftModule = "quotation" | "order" | "proforma";
+
+export type DraftSummary = {
+  module: DraftModule;
+  updated_at: string;
+};
+
+export type DraftLatestResponse = { draft: DraftSummary | null };
+
+export type DraftGetResponse<T = any> = {
+  module: DraftModule;
+  data: T;
+  updated_at: string;
+};
 
 export type LoginRequest = { email: string; password: string };
 export type LoginResponse = { access_token: string; token_type: "bearer" | string };
@@ -585,5 +600,93 @@ export type EmployeeSelfUpdatePayload = {
   phone?: string | null;
   account_number?: string | null;
   notes?: string | null;
+};
+
+// --- Contract employees + unified payments ledger ---
+
+export type ContractEmployeeStatus = "active" | "inactive";
+export type EmployeeTxnType = "owed_increase" | "payment" | "reversal";
+export type EmployeeTxnStatus = "pending" | "paid" | "cancelled";
+
+export type EmployeeTransaction = {
+  id: number;
+  created_at: string;
+  paid_at?: string | null;
+  amount: string | number;
+  txn_type: EmployeeTxnType;
+  status: EmployeeTxnStatus;
+  processed_by_role?: string | null;
+  note?: string | null;
+  receipt_url?: string | null;
+  running_balance?: string | number | null;
+  reversal_of_id?: number | null;
+  cancelled_at?: string | null;
+  cancelled_reason?: string | null;
+};
+
+export type ContractEmployeeListItem = {
+  id: number;
+  full_name: string;
+  account_number?: string | null;
+  phone?: string | null;
+  status: ContractEmployeeStatus;
+  total_owed: string | number;
+  total_paid: string | number;
+  balance: string | number;
+};
+
+export type ContractEmployeeDetail = ContractEmployeeListItem & {
+  address?: string | null;
+  transactions: EmployeeTransaction[];
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export type ContractEmployeeCreatePayload = {
+  full_name: string;
+  account_number?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  status: ContractEmployeeStatus;
+};
+
+export type ContractEmployeeUpdatePayload = Partial<ContractEmployeeCreatePayload>;
+
+export type PendingEmployeePaymentItem = {
+  transaction: EmployeeTransaction;
+  employee_kind: "monthly" | "contract";
+  employee_id: number;
+  employee_name: string;
+  account_number?: string | null;
+  phone?: string | null;
+  period_label?: string | null;
+};
+
+export type PendingEmployeePayments = {
+  total_pending_amount: string | number;
+  items: PendingEmployeePaymentItem[];
+};
+
+// --- Expenses / petty cash ---
+
+export type ExpenseEntryType = "expense" | "credit";
+
+export type ExpenseEntry = {
+  id: number;
+  entry_date: string;
+  amount: string | number;
+  entry_type: ExpenseEntryType;
+  note?: string | null;
+  receipt_url?: string | null;
+  processed_by_role?: Role | null;
+  processed_by?: string | null;
+  created_at: string;
+};
+
+export type ExpenseSummary = {
+  total_received: string | number;
+  total_expenses: string | number;
+  balance: string | number;
+  today_total: string | number;
 };
 

@@ -5,6 +5,22 @@ from sqlalchemy.orm import relationship, backref
 from datetime import datetime
 from sqlalchemy import JSON
 
+
+class Draft(Base):
+    __tablename__ = "drafts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Module key (one active draft per module per user).
+    module = Column(String(64), nullable=False, index=True)
+    # JSON payload representing the form state.
+    data = Column(JSON, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "module", name="uq_drafts_user_module"),)
+
 # USERS TABLE
 class User(Base):
     __tablename__ = "users"
@@ -503,9 +519,13 @@ class EmployeeLatenessEntry(Base):
     period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
 
     employee = relationship("Employee", back_populates="lateness_entries")
     period = relationship("SalaryPeriod")
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
 
 class EmployeePenalty(Base):
@@ -517,9 +537,13 @@ class EmployeePenalty(Base):
     description = Column(String, nullable=False)
     amount = Column(Numeric(14, 2), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
 
     employee = relationship("Employee", back_populates="penalties")
     period = relationship("SalaryPeriod")
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
 
 class EmployeeBonus(Base):
@@ -531,6 +555,131 @@ class EmployeeBonus(Base):
     description = Column(String, nullable=False)
     amount = Column(Numeric(14, 2), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
 
     employee = relationship("Employee", back_populates="bonuses")
     period = relationship("SalaryPeriod")
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
+
+# --- Contract employees (non-payroll) + unified ledger ---
+
+
+class ContractEmployee(Base):
+    """Contract/adhoc employees with owed + payment ledger."""
+
+    __tablename__ = "contract_employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, nullable=False)
+    account_number = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    address = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="active")  # active | inactive
+
+    total_owed = Column(Numeric(14, 2), nullable=False, default=0)
+    total_paid = Column(Numeric(14, 2), nullable=False, default=0)
+    # Balance = total_owed - total_paid (positive => company owes employee)
+    balance = Column(Numeric(14, 2), nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    transactions = relationship(
+        "EmployeeTransaction",
+        back_populates="contract_employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeTransaction.id",
+    )
+
+
+class EmployeeTransaction(Base):
+    """Append-only transaction ledger for employee payments and owed increases.
+
+    - `status=pending` records a request awaiting Finance (or Admin) confirmation.
+    - Once `status=paid`, the row is locked (no overwrites; only receipt can be attached before paid).
+    """
+
+    __tablename__ = "employee_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # One of these is set (monthly payroll employee vs contract employee)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=True, index=True)
+    contract_employee_id = Column(
+        Integer, ForeignKey("contract_employees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Optional payroll period link for monthly employees
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    txn_type = Column(String, nullable=False)  # owed_increase | payment
+    amount = Column(Numeric(14, 2), nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending | paid | cancelled
+
+    note = Column(String, nullable=True)
+    receipt_url = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    paid_at = Column(DateTime, nullable=True, index=True)
+
+    cancelled_at = Column(DateTime, nullable=True, index=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    cancelled_reason = Column(String(4000), nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    processed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    processed_by_role = Column(String, nullable=True)  # admin | finance
+
+    # Running balance after applying this txn (contract employees only; set when paid)
+    running_balance = Column(Numeric(14, 2), nullable=True)
+
+    # Reversal system (append-only): a reversal creates a NEW row with reversal_of_id set.
+    # Original transaction remains unchanged.
+    reversal_of_id = Column(Integer, ForeignKey("employee_transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    employee = relationship("Employee")
+    contract_employee = relationship("ContractEmployee", back_populates="transactions")
+    period = relationship("SalaryPeriod")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    processed_by_user = relationship("User", foreign_keys=[processed_by_id])
+    cancelled_by_user = relationship("User", foreign_keys=[cancelled_by_id])
+    reversal_of = relationship("EmployeeTransaction", remote_side=[id], foreign_keys=[reversal_of_id])
+
+
+# --- Financial audit log (append-only, no retention purge) ---
+
+
+class FinancialAuditLog(Base):
+    """Durable audit trail for financial actions (never purged)."""
+
+    __tablename__ = "financial_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String, nullable=False)  # send_to_finance | confirm_payment | reversal | expense_create | owed_increase | ...
+    entity_type = Column(String, nullable=False)  # employee_transaction | contract_employee | expense_entry | ...
+    entity_id = Column(Integer, nullable=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    meta = Column(JSON, nullable=True)
+
+
+# --- Expense / petty cash (separate from employee payments) ---
+
+
+class ExpenseEntry(Base):
+    __tablename__ = "expense_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_date = Column(DateTime, nullable=False, index=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+    entry_type = Column(String, nullable=False)  # expense | credit
+    note = Column(String, nullable=True)
+    receipt_url = Column(String, nullable=True)
+
+    processed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    processed_by_role = Column(String, nullable=True)  # admin | finance
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    processed_by_user = relationship("User", foreign_keys=[processed_by_id])

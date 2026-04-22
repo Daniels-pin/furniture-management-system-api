@@ -16,6 +16,7 @@ from app import models
 from app.auth.auth import get_current_user, normalize_role, require_role
 from app.database import get_db
 from app.utils.cloudinary import upload_asset
+from app.utils.financial_audit import log_financial_action
 from app.schemas import (
     EmployeeAdminUpdate,
     EmployeeBonusCreate,
@@ -31,6 +32,8 @@ from app.schemas import (
     EmployeePenaltyOut,
     EmployeeSalaryBreakdown,
     EmployeeSelfUpdate,
+    EmployeeSendPaymentToFinance,
+    EmployeeTransactionOut,
     PayrollPeriodsNavOut,
     PayrollSummaryOut,
     SalaryPeriodOut,
@@ -226,18 +229,21 @@ def _load_rows_for_period(
     lateness = (
         db.query(models.EmployeeLatenessEntry)
         .filter_by(employee_id=employee_id, period_id=period.id)
+        .filter(models.EmployeeLatenessEntry.voided_at.is_(None))
         .order_by(models.EmployeeLatenessEntry.id)
         .all()
     )
     penalties = (
         db.query(models.EmployeePenalty)
         .filter_by(employee_id=employee_id, period_id=period.id)
+        .filter(models.EmployeePenalty.voided_at.is_(None))
         .order_by(models.EmployeePenalty.id)
         .all()
     )
     bonuses = (
         db.query(models.EmployeeBonus)
         .filter_by(employee_id=employee_id, period_id=period.id)
+        .filter(models.EmployeeBonus.voided_at.is_(None))
         .order_by(models.EmployeeBonus.id)
         .all()
     )
@@ -454,11 +460,17 @@ def list_employees(
     current_user=Depends(require_role(["admin"])),
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
+    search: str = Query("", max_length=200),
+    payment_status: Optional[str] = Query(None, description="paid | unpaid"),
 ):
     period = resolve_period(db, period_year, period_month)
     lateness_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
     payroll_map = _payroll_map_for_period(db, period.id)
-    emps = db.query(models.Employee).order_by(models.Employee.id.desc()).all()
+    q = db.query(models.Employee)
+    s = (search or "").strip()
+    if s:
+        q = q.filter(models.Employee.full_name.ilike(f"%{s}%"))
+    emps = q.order_by(models.Employee.id.desc()).all()
     return [
         _list_item(
             e,
@@ -466,9 +478,10 @@ def list_employees(
             lateness_map.get(e.id, 0),
             pen_map.get(e.id, Decimal("0")),
             bon_map.get(e.id, Decimal("0")),
-            payroll_map.get(e.id),
+            payroll_map.get(e.id) if payment_status is None else (payroll_map.get(e.id) if (payroll_map.get(e.id).payment_status if payroll_map.get(e.id) else "unpaid") == payment_status else None),
         )
         for e in emps
+        if payment_status is None or ((payroll_map.get(e.id).payment_status if payroll_map.get(e.id) else "unpaid") == payment_status)
     ]
 
 
@@ -784,12 +797,68 @@ def delete_lateness_entry(
             models.EmployeeLatenessEntry.id == entry_id,
             models.EmployeeLatenessEntry.employee_id == employee_id,
             models.EmployeeLatenessEntry.period_id == period.id,
+            models.EmployeeLatenessEntry.voided_at.is_(None),
         )
         .first()
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Lateness entry not found")
-    db.delete(row)
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = "void_via_delete_endpoint"
+    log_financial_action(
+        db,
+        action="payroll_lateness_void",
+        entity_type="employee_lateness_entry",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id},
+    )
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp:
+        emp.updated_at = datetime.utcnow()
+    db.commit()
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.post("/{employee_id}/lateness/{entry_id}/void", response_model=EmployeeOut)
+def void_lateness_entry(
+    employee_id: int,
+    entry_id: int,
+    reason: str = Query("", max_length=4000),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    confirm_financial_edit: bool = Query(False),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period = resolve_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
+    row = (
+        db.query(models.EmployeeLatenessEntry)
+        .filter(
+            models.EmployeeLatenessEntry.id == entry_id,
+            models.EmployeeLatenessEntry.employee_id == employee_id,
+            models.EmployeeLatenessEntry.period_id == period.id,
+            models.EmployeeLatenessEntry.voided_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Lateness entry not found")
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = (reason or "").strip() or None
+    log_financial_action(
+        db,
+        action="payroll_lateness_void",
+        entity_type="employee_lateness_entry",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
+    )
     emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if emp:
         emp.updated_at = datetime.utcnow()
@@ -856,12 +925,68 @@ def delete_penalty(
             models.EmployeePenalty.id == penalty_id,
             models.EmployeePenalty.employee_id == employee_id,
             models.EmployeePenalty.period_id == period.id,
+            models.EmployeePenalty.voided_at.is_(None),
         )
         .first()
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Penalty not found")
-    db.delete(row)
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = "void_via_delete_endpoint"
+    log_financial_action(
+        db,
+        action="payroll_penalty_void",
+        entity_type="employee_penalty",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id},
+    )
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp:
+        emp.updated_at = datetime.utcnow()
+    db.commit()
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.post("/{employee_id}/penalties/{penalty_id}/void", response_model=EmployeeOut)
+def void_penalty(
+    employee_id: int,
+    penalty_id: int,
+    reason: str = Query("", max_length=4000),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    confirm_financial_edit: bool = Query(False),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period = resolve_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
+    row = (
+        db.query(models.EmployeePenalty)
+        .filter(
+            models.EmployeePenalty.id == penalty_id,
+            models.EmployeePenalty.employee_id == employee_id,
+            models.EmployeePenalty.period_id == period.id,
+            models.EmployeePenalty.voided_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Penalty not found")
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = (reason or "").strip() or None
+    log_financial_action(
+        db,
+        action="payroll_penalty_void",
+        entity_type="employee_penalty",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
+    )
     emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if emp:
         emp.updated_at = datetime.utcnow()
@@ -928,12 +1053,68 @@ def delete_bonus(
             models.EmployeeBonus.id == bonus_id,
             models.EmployeeBonus.employee_id == employee_id,
             models.EmployeeBonus.period_id == period.id,
+            models.EmployeeBonus.voided_at.is_(None),
         )
         .first()
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Bonus not found")
-    db.delete(row)
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = "void_via_delete_endpoint"
+    log_financial_action(
+        db,
+        action="payroll_bonus_void",
+        entity_type="employee_bonus",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id},
+    )
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp:
+        emp.updated_at = datetime.utcnow()
+    db.commit()
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.post("/{employee_id}/bonuses/{bonus_id}/void", response_model=EmployeeOut)
+def void_bonus(
+    employee_id: int,
+    bonus_id: int,
+    reason: str = Query("", max_length=4000),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    confirm_financial_edit: bool = Query(False),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period = resolve_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
+    row = (
+        db.query(models.EmployeeBonus)
+        .filter(
+            models.EmployeeBonus.id == bonus_id,
+            models.EmployeeBonus.employee_id == employee_id,
+            models.EmployeeBonus.period_id == period.id,
+            models.EmployeeBonus.voided_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    row.voided_at = datetime.utcnow()
+    row.voided_by_id = current_user.id
+    row.void_reason = (reason or "").strip() or None
+    log_financial_action(
+        db,
+        action="payroll_bonus_void",
+        entity_type="employee_bonus",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
+    )
     emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if emp:
         emp.updated_at = datetime.utcnow()
@@ -1007,3 +1188,118 @@ def delete_document(
     period = resolve_period(db, period_year, period_month)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.post("/{employee_id}/payments/send-to-finance", response_model=EmployeeTransactionOut)
+def send_monthly_payment_to_finance(
+    employee_id: int,
+    body: EmployeeSendPaymentToFinance,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+):
+    """Create a pending payment transaction for Finance to confirm.
+
+    This does NOT mark the payroll period paid until confirmed.
+    """
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    period = get_or_create_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+
+    existing = (
+        db.query(models.EmployeeTransaction)
+        .filter(
+            models.EmployeeTransaction.employee_id == employee_id,
+            models.EmployeeTransaction.period_id == period.id,
+            models.EmployeeTransaction.txn_type == "payment",
+            models.EmployeeTransaction.status == "pending",
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="This employee already has a pending payment for this period.")
+
+    # Do not allow send-to-finance if already marked paid.
+    if _period_paid(db, employee_id, period.id):
+        raise HTTPException(status_code=409, detail="This period is already marked paid.")
+
+    txn = models.EmployeeTransaction(
+        employee_id=employee_id,
+        period_id=period.id,
+        txn_type="payment",
+        amount=body.amount,
+        status="pending",
+        note=body.note,
+        created_by_id=current_user.id,
+    )
+    db.add(txn)
+    db.flush()
+    log_financial_action(
+        db,
+        action="send_to_finance",
+        entity_type="employee_transaction",
+        entity_id=txn.id,
+        actor_user=current_user,
+        meta={
+            "employee_kind": "monthly",
+            "employee_id": employee_id,
+            "period_id": period.id,
+            "period_label": period.label,
+            "amount": str(body.amount),
+            "note": body.note,
+        },
+    )
+    db.commit()
+    db.refresh(txn)
+    return EmployeeTransactionOut.model_validate(txn)
+
+
+@router.get("/{employee_id}/transactions", response_model=list[EmployeeTransactionOut])
+def list_employee_transactions(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period_id: Optional[int] = None
+    if period_year is not None or period_month is not None:
+        if period_year is None or period_month is None:
+            raise HTTPException(status_code=400, detail="Provide both period_year and period_month, or neither.")
+        p = get_or_create_period(db, int(period_year), int(period_month))
+        period_id = p.id
+
+    q = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.employee_id == employee_id)
+    if period_id is not None:
+        q = q.filter(models.EmployeeTransaction.period_id == period_id)
+    role = normalize_role(getattr(current_user, "role", None))
+    if role == "finance":
+        q = q.filter(
+            models.EmployeeTransaction.txn_type == "payment",
+            models.EmployeeTransaction.status == "pending",
+        )
+    # For monthly employees, compute a "remaining salary balance" running value within the selected period.
+    # This allows showing a running balance after each transaction even though monthly salaries aren't stored as a ledger.
+    rows = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc()).all()
+    outs: list[EmployeeTransactionOut] = [EmployeeTransactionOut.model_validate(r) for r in rows]
+    if period_id is not None and role != "finance":
+        emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+        period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
+        if emp and period:
+            lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+            base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+            pen = sum((p.amount for p in penalties), Decimal("0"))
+            bon = sum((b.amount for b in bonuses), Decimal("0"))
+            salary = _salary_breakdown(base, len(lateness), pen, bon)
+            due = salary.final_payable
+            paid_total = Decimal("0")
+            for o in outs:
+                if o.txn_type == "payment" and o.status == "paid":
+                    paid_total += Decimal(str(o.amount or 0))
+                o.running_balance = due - paid_total
+    # Return newest-first for UI display, while keeping computed balances.
+    outs.sort(key=lambda x: (x.created_at, x.id), reverse=True)
+    return outs

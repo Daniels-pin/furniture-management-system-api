@@ -6,8 +6,11 @@ import { useToast } from "../state/toast";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { Modal } from "../components/ui/Modal";
 import type { ProformaPayload } from "../types/api";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
+import { consumeDraftRecoveryIntent } from "../state/drafts";
+import { draftsApi } from "../services/endpoints";
 
 type Line = {
   key: string;
@@ -51,6 +54,149 @@ export function ProformaFormPage() {
   const [tax, setTax] = useState("");
   const [lines, setLines] = useState<Line[]>([newItemLine()]);
   const [saving, setSaving] = useState(false);
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const [recoverLoading, setRecoverLoading] = useState(false);
+
+  const localKey = "draft_v1:proforma";
+
+  async function restoreDraft() {
+    setRecoverLoading(true);
+    try {
+      const res = await draftsApi.get<any>("proforma");
+      const d = res?.data || {};
+      setCustomerName(String(d.customerName ?? ""));
+      setPhone(String(d.phone ?? ""));
+      setAddress(String(d.address ?? ""));
+      setEmail(String(d.email ?? ""));
+      setDueDate(String(d.dueDate ?? ""));
+      const dt = d.discountType;
+      setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
+      setDiscountValue(String(d.discountValue ?? ""));
+      setTax(String(d.tax ?? ""));
+      if (Array.isArray(d.lines) && d.lines.length) {
+        setLines(
+          d.lines.map((it: any) => ({
+            key: crypto.randomUUID(),
+            line_type: it?.line_type === "subheading" ? "subheading" : "item",
+            item_name: String(it?.item_name ?? ""),
+            description: String(it?.description ?? ""),
+            quantity: String(it?.quantity ?? "1"),
+            amount: String(it?.amount ?? "")
+          }))
+        );
+      }
+      try {
+        localStorage.setItem(localKey, JSON.stringify(d));
+      } catch {
+        // ignore
+      }
+      toast.push("success", "Draft restored");
+    } catch (e) {
+      try {
+        const raw = localStorage.getItem(localKey);
+        const d = raw ? JSON.parse(raw) : null;
+        if (d) {
+          setCustomerName(String(d.customerName ?? ""));
+          setPhone(String(d.phone ?? ""));
+          setAddress(String(d.address ?? ""));
+          setEmail(String(d.email ?? ""));
+          setDueDate(String(d.dueDate ?? ""));
+          const dt = d.discountType;
+          setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
+          setDiscountValue(String(d.discountValue ?? ""));
+          setTax(String(d.tax ?? ""));
+          if (Array.isArray(d.lines) && d.lines.length) {
+            setLines(
+              d.lines.map((it: any) => ({
+                key: crypto.randomUUID(),
+                line_type: it?.line_type === "subheading" ? "subheading" : "item",
+                item_name: String(it?.item_name ?? ""),
+                description: String(it?.description ?? ""),
+                quantity: String(it?.quantity ?? "1"),
+                amount: String(it?.amount ?? "")
+              }))
+            );
+          }
+          toast.push("success", "Draft restored");
+        } else {
+          throw e;
+        }
+      } catch (e2) {
+        toast.push("error", getErrorMessage(e2));
+      }
+    } finally {
+      setRecoverLoading(false);
+    }
+  }
+
+  async function discardDraft() {
+    setRecoverLoading(true);
+    try {
+      await draftsApi.remove("proforma");
+    } catch {
+      // ignore
+    }
+    try {
+      localStorage.removeItem(localKey);
+    } catch {
+      // ignore
+    }
+    setRecoverLoading(false);
+    toast.push("success", "Draft discarded");
+  }
+
+  useEffect(() => {
+    if (isEdit) return;
+    const intent = consumeDraftRecoveryIntent();
+    if (intent === "proforma") {
+      void restoreDraft();
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const res = await draftsApi.get("proforma");
+        if (!alive) return;
+        if (res?.data) setRecoverOpen(true);
+      } catch {
+        try {
+          const raw = localStorage.getItem(localKey);
+          if (raw) setRecoverOpen(true);
+        } catch {
+          // ignore
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const payload = {
+      customerName,
+      phone,
+      address,
+      email,
+      dueDate,
+      discountType,
+      discountValue,
+      tax,
+      lines
+    };
+    try {
+      localStorage.setItem(localKey, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+    const t = window.setTimeout(() => {
+      void draftsApi.upsert("proforma", payload as any).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, customerName, phone, address, email, dueDate, discountType, discountValue, tax, lines]);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -196,6 +342,18 @@ export function ProformaFormPage() {
         "success",
         isEdit ? (saveAsDraft ? "Draft saved." : "Proforma updated.") : saveAsDraft ? "Draft created." : "Proforma created."
       );
+      if (!isEdit) {
+        try {
+          await draftsApi.remove("proforma");
+        } catch {
+          // ignore
+        }
+        try {
+          localStorage.removeItem(localKey);
+        } catch {
+          // ignore
+        }
+      }
       nav(`/proforma/${out.id}`);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
@@ -214,6 +372,40 @@ export function ProformaFormPage() {
 
   return (
     <div className="space-y-6">
+      <Modal
+        open={recoverOpen}
+        title="Unfinished Proforma"
+        onClose={() => {
+          // force explicit choice
+        }}
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            You have an unfinished <span className="font-semibold">Proforma</span>. Do you want to continue where you left off?
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              isLoading={recoverLoading}
+              onClick={async () => {
+                await discardDraft();
+                setRecoverOpen(false);
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              isLoading={recoverLoading}
+              onClick={async () => {
+                await restoreDraft();
+                setRecoverOpen(false);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      </Modal>
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
         <div>
           <div className="text-2xl font-bold tracking-tight">{isEdit ? "Edit proforma" : "New proforma invoice"}</div>

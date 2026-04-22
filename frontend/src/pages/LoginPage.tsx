@@ -14,14 +14,15 @@ export function LoginPage() {
   const nav = useNavigate();
   const location = useLocation() as any;
 
-  const from = useMemo(() => location?.state?.from?.pathname || "/dashboard", [location]);
+  const defaultHome = useMemo(() => (auth.role === "finance" ? "/finance" : "/dashboard"), [auth.role]);
+  const from = useMemo(() => location?.state?.from?.pathname || defaultHome, [location, defaultHome]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (auth.isAuthed) return <Navigate to="/dashboard" replace />;
+  if (auth.isAuthed) return <Navigate to={defaultHome} replace />;
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

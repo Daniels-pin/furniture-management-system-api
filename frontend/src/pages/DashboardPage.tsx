@@ -7,13 +7,18 @@ import { StatusBadge } from "../components/ui/StatusBadge";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
 import { APP_NAME } from "../config/app";
-import { env } from "../env";
+import { usePageHeader } from "../components/layout/pageHeader";
 
 export function DashboardPage() {
   const toast = useToast();
   const auth = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardApi.get>> | null>(null);
+
+  usePageHeader({
+    title: "Dashboard",
+    subtitle: `Business insights for ${APP_NAME}.`
+  });
 
   const items = useMemo(() => {
     const rows = [
@@ -49,23 +54,6 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <img
-            src={env.logoUrl || "/logo.png"}
-            alt={`${APP_NAME} logo`}
-            className="h-auto max-h-20 w-auto max-w-full shrink-0 object-contain sm:max-h-[84px] md:max-h-[92px]"
-          />
-          <div className="min-w-0">
-            <div className="text-2xl font-bold tracking-tight">Dashboard</div>
-            <div className="mt-1 text-sm text-black/60">Business insights for {APP_NAME}.</div>
-            {auth.username ? (
-              <div className="mt-1 text-sm font-semibold text-black/70">Signed in as {auth.username}</div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
       <div
         className={[
           "grid grid-cols-1 gap-4",

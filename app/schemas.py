@@ -70,6 +70,7 @@ class UserRole(str, Enum):
     showroom = "showroom"
     factory = "factory"
     admin = "admin"
+    finance = "finance"
 
 class UserCreate(BaseModel):
     # Keep existing DB fields, but support "username" for the UI/API.
@@ -1109,3 +1110,149 @@ class EmployeePaymentUpdate(BaseModel):
     payment_status: Literal["paid", "unpaid"]
     payment_date: Optional[datetime] = None
     payment_reference: Optional[str] = Field(None, max_length=500)
+
+
+# --- Contract employees + unified transactions ledger ---
+
+
+ContractEmployeeStatus = Literal["active", "inactive"]
+EmployeeTxnType = Literal["owed_increase", "payment", "reversal"]
+EmployeeTxnStatus = Literal["pending", "paid", "cancelled"]
+
+
+class ContractEmployeeCreate(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=500)
+    account_number: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=4000)
+    status: ContractEmployeeStatus = "active"
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _strip_full_name(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class ContractEmployeeUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    account_number: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=4000)
+    status: Optional[ContractEmployeeStatus] = None
+
+
+class ContractEmployeeListItemOut(BaseModel):
+    id: int
+    full_name: str
+    account_number: Optional[str] = None
+    phone: Optional[str] = None
+    status: ContractEmployeeStatus
+    total_owed: Decimal
+    total_paid: Decimal
+    balance: Decimal
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeTransactionOut(BaseModel):
+    id: int
+    created_at: datetime
+    paid_at: Optional[datetime] = None
+    amount: Decimal
+    txn_type: EmployeeTxnType
+    status: EmployeeTxnStatus
+    processed_by_role: Optional[str] = None
+    note: Optional[str] = None
+    receipt_url: Optional[str] = None
+    running_balance: Optional[Decimal] = None
+    reversal_of_id: Optional[int] = None
+    cancelled_at: Optional[datetime] = None
+    cancelled_reason: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ContractEmployeeOut(ContractEmployeeListItemOut):
+    address: Optional[str] = None
+    transactions: List[EmployeeTransactionOut] = []
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class ContractEmployeeIncreaseOwed(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
+class EmployeeSendPaymentToFinance(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
+class PendingEmployeePaymentItem(BaseModel):
+    transaction: EmployeeTransactionOut
+    employee_kind: Literal["monthly", "contract"]
+    employee_id: int
+    employee_name: str
+    account_number: Optional[str] = None
+    phone: Optional[str] = None
+    period_label: Optional[str] = None
+
+
+class PendingEmployeePaymentsOut(BaseModel):
+    total_pending_amount: Decimal
+    items: List[PendingEmployeePaymentItem]
+
+
+# --- Expense / petty cash ---
+
+ExpenseEntryType = Literal["expense", "credit"]
+
+
+class ExpenseEntryCreate(BaseModel):
+    entry_date: datetime
+    amount: Decimal = Field(..., gt=0)
+    entry_type: ExpenseEntryType
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+class ExpenseEntryOut(BaseModel):
+    id: int
+    entry_date: datetime
+    amount: Decimal
+    entry_type: ExpenseEntryType
+    note: Optional[str] = None
+    receipt_url: Optional[str] = None
+    processed_by_role: Optional[str] = None
+    processed_by: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExpenseSummaryOut(BaseModel):
+    total_received: Decimal
+    total_expenses: Decimal
+    balance: Decimal
+    today_total: Decimal

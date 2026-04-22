@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Order, OrderCreateItem, OrderStatus } from "../types/api";
-import { ordersApi } from "../services/endpoints";
+import { draftsApi, ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
 import { useToast } from "../state/toast";
@@ -13,6 +13,8 @@ import { Select } from "../components/ui/Select";
 import { useNavigate } from "react-router-dom";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
+import { usePageHeader } from "../components/layout/pageHeader";
+import { consumeDraftRecoveryIntent } from "../state/drafts";
 
 function daysRemaining(dueDateIso?: string | null) {
   if (!dueDateIso) return null;
@@ -33,6 +35,11 @@ export function OrdersPage() {
   const toast = useToast();
   const nav = useNavigate();
 
+  usePageHeader({
+    title: "Orders",
+    subtitle: "Track status and due dates."
+  });
+
   const [isLoading, setIsLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [page, setPage] = useState(1);
@@ -46,6 +53,42 @@ export function OrdersPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [draftPromptOpen, setDraftPromptOpen] = useState(false);
+  const [draftPromptLoading, setDraftPromptLoading] = useState(false);
+  const [initialDraft, setInitialDraft] = useState<any | null>(null);
+
+  const localKey = "draft_v1:order";
+
+  async function loadDraft(): Promise<any | null> {
+    try {
+      const res = await draftsApi.get<any>("order");
+      return res?.data ?? null;
+    } catch {
+      try {
+        const raw = localStorage.getItem(localKey);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  async function discardDraft() {
+    setDraftPromptLoading(true);
+    try {
+      await draftsApi.remove("order");
+    } catch {
+      // ignore
+    }
+    try {
+      localStorage.removeItem(localKey);
+    } catch {
+      // ignore
+    }
+    setInitialDraft(null);
+    setDraftPromptLoading(false);
+    toast.push("success", "Draft discarded");
+  }
 
   const canCreate = auth.role === "showroom" || auth.role === "admin";
   function canDeleteOrder(o: Order): boolean {
@@ -100,6 +143,28 @@ export function OrdersPage() {
     setCreateOpen(true);
   }
 
+  // Prompt on module entry if a draft exists.
+  useEffect(() => {
+    const intent = consumeDraftRecoveryIntent();
+    let alive = true;
+    (async () => {
+      const d = await loadDraft();
+      if (!alive) return;
+      if (!d) return;
+      if (intent === "order") {
+        setInitialDraft(d);
+        setCreateOpen(true);
+        return;
+      }
+      setInitialDraft(d);
+      setDraftPromptOpen(true);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function doDelete(orderId: number) {
     // IMPORTANT: NEVER send undefined or null order_id
     if (!Number.isFinite(orderId)) return;
@@ -120,18 +185,52 @@ export function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
-        <div>
-          <div className="text-2xl font-bold tracking-tight">Orders</div>
-          <div className="mt-1 text-sm text-black/60">Track status and due dates.</div>
+      <Modal
+        open={draftPromptOpen}
+        title="Unfinished Order"
+        onClose={() => {
+          // force explicit choice
+        }}
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            You have an unfinished <span className="font-semibold">Order</span>. Do you want to continue where you left off?
+          </div>
+          <div className="text-xs font-semibold text-black/40">
+            Note: selected images can’t be restored and may need to be re-added.
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              isLoading={draftPromptLoading}
+              onClick={async () => {
+                await discardDraft();
+                setDraftPromptOpen(false);
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              isLoading={draftPromptLoading}
+              onClick={async () => {
+                setDraftPromptLoading(true);
+                const d = await loadDraft();
+                setInitialDraft(d);
+                setDraftPromptLoading(false);
+                setDraftPromptOpen(false);
+                setCreateOpen(true);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => void refresh(page)} isLoading={isLoading}>
-            Refresh
-          </Button>
-          {canCreate ? <Button onClick={() => void openCreate()}>Create order</Button> : null}
-        </div>
+      </Modal>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="secondary" onClick={() => void refresh(page)} isLoading={isLoading}>
+          Refresh
+        </Button>
+        {canCreate ? <Button onClick={() => void openCreate()}>Create order</Button> : null}
       </div>
 
       <Card>
@@ -312,6 +411,8 @@ export function OrdersPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         canInputPricing={canInputPricingOnCreate}
+        initialDraft={initialDraft}
+        onDraftCleared={() => setInitialDraft(null)}
         onCreated={async () => {
           setCreateOpen(false);
           await refresh();
@@ -325,14 +426,19 @@ function CreateOrderModal({
   open,
   onClose,
   canInputPricing,
+  initialDraft,
+  onDraftCleared,
   onCreated
 }: {
   open: boolean;
   onClose(): void;
   canInputPricing: boolean;
+  initialDraft?: any | null;
+  onDraftCleared?(): void;
   onCreated(): Promise<void>;
 }) {
   const toast = useToast();
+  const localKey = "draft_v1:order";
 
   const [customerName, setCustomerName] = useState<string>("");
   const [customerPhone, setCustomerPhone] = useState<string>("");
@@ -356,22 +462,74 @@ function CreateOrderModal({
 
   useEffect(() => {
     if (!open) return;
-    setCustomerName("");
-    setCustomerPhone("");
-    setCustomerAddress("");
-    setCustomerEmail("");
-    setCustomerBirthDay("");
-    setCustomerBirthMonth("");
-    setItems([{ item_name: "", description: "", quantity: "1", amount: "" }]);
-    setDueDate("");
-    setImages([]);
-    setAmountPaid("");
-    setDiscountType("");
-    setDiscountValue("");
-    setTax("");
+    const d = initialDraft || null;
+    setCustomerName(String(d?.customerName ?? ""));
+    setCustomerPhone(String(d?.customerPhone ?? ""));
+    setCustomerAddress(String(d?.customerAddress ?? ""));
+    setCustomerEmail(String(d?.customerEmail ?? ""));
+    setCustomerBirthDay(String(d?.customerBirthDay ?? ""));
+    setCustomerBirthMonth(String(d?.customerBirthMonth ?? ""));
+    setItems(
+      Array.isArray(d?.items) && d.items.length
+        ? d.items.map((it: any) => ({
+            item_name: String(it?.item_name ?? ""),
+            description: String(it?.description ?? ""),
+            quantity: String(it?.quantity ?? "1"),
+            amount: String(it?.amount ?? "")
+          }))
+        : [{ item_name: "", description: "", quantity: "1", amount: "" }]
+    );
+    setDueDate(String(d?.dueDate ?? ""));
+    setImages([]); // cannot restore files
+    setAmountPaid(String(d?.amountPaid ?? ""));
+    setDiscountType(d?.discountType === "fixed" || d?.discountType === "percentage" ? d.discountType : "");
+    setDiscountValue(String(d?.discountValue ?? ""));
+    setTax(String(d?.tax ?? ""));
     setFieldError({});
     setIsSubmitting(false);
-  }, [open]);
+  }, [open, initialDraft]);
+
+  // Autosave while modal is open.
+  useEffect(() => {
+    if (!open) return;
+    const payload = {
+      customerName,
+      customerPhone,
+      customerAddress,
+      customerEmail,
+      customerBirthDay,
+      customerBirthMonth,
+      items,
+      dueDate,
+      amountPaid,
+      discountType,
+      discountValue,
+      tax
+    };
+    try {
+      localStorage.setItem(localKey, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+    const t = window.setTimeout(() => {
+      void draftsApi.upsert("order", payload as any).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [
+    open,
+    customerName,
+    customerPhone,
+    customerAddress,
+    customerEmail,
+    customerBirthDay,
+    customerBirthMonth,
+    items,
+    dueDate,
+    amountPaid,
+    discountType,
+    discountValue,
+    tax
+  ]);
 
   const computedSubtotal = useMemo(() => {
     if (!items.length) return 0;
@@ -505,6 +663,18 @@ function CreateOrderModal({
 
       await ordersApi.createMultipart(form);
       toast.push("success", "Order created");
+      // Clear autosaved draft on successful submission.
+      try {
+        await draftsApi.remove("order");
+      } catch {
+        // ignore
+      }
+      try {
+        localStorage.removeItem(localKey);
+      } catch {
+        // ignore
+      }
+      onDraftCleared?.();
       await onCreated();
     } catch (err) {
       toast.push("error", getErrorMessage(err));

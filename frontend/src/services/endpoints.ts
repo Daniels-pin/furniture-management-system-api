@@ -48,7 +48,20 @@ import type {
   EmployeeSelfUpdatePayload,
   PayrollPeriodsNav,
   PayrollSummary,
-  SalaryPeriod
+  SalaryPeriod,
+  ContractEmployeeCreatePayload,
+  ContractEmployeeDetail,
+  ContractEmployeeListItem,
+  ContractEmployeeUpdatePayload,
+  EmployeeTransaction,
+  PendingEmployeePayments
+  ,
+  ExpenseEntry,
+  ExpenseSummary,
+  DraftGetResponse,
+  DraftLatestResponse,
+  DraftModule,
+  DraftSummary
 } from "../types/api";
 
 export const authApi = {
@@ -58,6 +71,31 @@ export const authApi = {
   },
   async changePassword(payload: ChangePasswordRequest) {
     const { data } = await api.post<{ message: string }>("/auth/change-password", payload);
+    return data;
+  }
+};
+
+export const draftsApi = {
+  async latest(params?: { modules?: DraftModule[] }) {
+    const qp: Record<string, any> = {};
+    if (params?.modules?.length) qp.modules = params.modules.join(",");
+    const { data } = await api.get<DraftLatestResponse>("/drafts/latest", { params: qp });
+    return data;
+  },
+  async list() {
+    const { data } = await api.get<{ items: DraftSummary[] }>("/drafts");
+    return data;
+  },
+  async get<T = any>(module: DraftModule) {
+    const { data } = await api.get<DraftGetResponse<T>>(`/drafts/${module}`);
+    return data;
+  },
+  async upsert(module: DraftModule, body: Record<string, unknown>) {
+    const { data } = await api.put<{ module: DraftModule; updated_at: string }>(`/drafts/${module}`, body);
+    return data;
+  },
+  async remove(module: DraftModule) {
+    const { data } = await api.delete<{ message: string }>(`/drafts/${module}`);
     return data;
   }
 };
@@ -898,6 +936,159 @@ export const employeesApi = {
       params
     });
     return data;
+  },
+  async sendPaymentToFinance(
+    employeeId: number,
+    body: { amount: string | number; note?: string | null },
+    period: { period_year: number; period_month: number }
+  ) {
+    const { data } = await api.post<EmployeeTransaction>(`/employees/${employeeId}/payments/send-to-finance`, body, {
+      params: period
+    });
+    return data;
+  },
+  async transactions(employeeId: number, params?: EmployeePeriodParams) {
+    const { data } = await api.get<EmployeeTransaction[]>(`/employees/${employeeId}/transactions`, { params });
+    return data;
+  }
+};
+
+export const contractEmployeesApi = {
+  async list(params?: { search?: string; status?: "active" | "inactive"; overpaid?: boolean }) {
+    const { data } = await api.get<ContractEmployeeListItem[]>("/contract-employees", { params });
+    return data;
+  },
+  async get(employeeId: number) {
+    const { data } = await api.get<ContractEmployeeDetail>(`/contract-employees/${employeeId}`);
+    return data;
+  },
+  async create(body: ContractEmployeeCreatePayload) {
+    const { data } = await api.post<ContractEmployeeDetail>("/contract-employees", body);
+    return data;
+  },
+  async update(employeeId: number, body: ContractEmployeeUpdatePayload) {
+    const { data } = await api.patch<ContractEmployeeDetail>(`/contract-employees/${employeeId}`, body);
+    return data;
+  },
+  async increaseOwed(employeeId: number, body: { amount: string | number; note?: string | null }) {
+    const { data } = await api.post<ContractEmployeeDetail>(`/contract-employees/${employeeId}/owed/increase`, body);
+    return data;
+  },
+  async sendPaymentToFinance(employeeId: number, body: { amount: string | number; note?: string | null }) {
+    const { data } = await api.post<EmployeeTransaction>(`/contract-employees/${employeeId}/payments/send-to-finance`, body);
+    return data;
+  },
+  async remove(employeeId: number) {
+    const { data } = await api.delete<{ action: "deleted" | "inactivated"; message: string }>(`/contract-employees/${employeeId}`);
+    return data;
+  }
+};
+
+export const employeePaymentsApi = {
+  async pending(params?: {
+    search?: string;
+    kind?: "monthly" | "contract";
+    overpaid?: boolean;
+    sort?: "oldest" | "newest" | "amount_desc" | "amount_asc";
+  }) {
+    const { data } = await api.get<PendingEmployeePayments>("/employee-payments/pending", { params });
+    return data;
+  },
+  async uploadReceipt(transactionId: number, file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/receipt`, fd, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async markPaid(
+    transactionId: number,
+    options?: { confirm_without_receipt?: boolean; confirm_overpay?: boolean }
+  ) {
+    const params: Record<string, any> = {};
+    if (options?.confirm_without_receipt === true) params.confirm_without_receipt = true;
+    if (options?.confirm_overpay === true) params.confirm_overpay = true;
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/mark-paid`, undefined, {
+      params: Object.keys(params).length ? params : undefined
+    });
+    return data;
+  },
+  async reverse(transactionId: number, params?: { reason?: string }) {
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/reverse`, undefined, { params });
+    return data;
+  },
+  async cancelPending(transactionId: number) {
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/cancel-pending`);
+    return data;
+  },
+  async exportTransactions(params: { employee_id?: number; contract_employee_id?: number }) {
+    const res = await api.get("/employee-payments/export", { responseType: "blob", params });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = "employee_transactions.csv";
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  async bulkSend(body: {
+    items: Array<{
+      employee_kind: "monthly" | "contract";
+      employee_id: number;
+      period_year?: number;
+      period_month?: number;
+      amount: string | number;
+      note?: string | null;
+    }>;
+  }) {
+    const { data } = await api.post<{ created_transaction_ids: number[]; created: number }>("/employee-payments/bulk-send", body);
+    return data;
+  }
+};
+
+export const expensesApi = {
+  async list(params?: { limit?: number; offset?: number }) {
+    const { data } = await api.get<ExpenseEntry[]>("/expenses", { params });
+    return data;
+  },
+  async summary() {
+    const { data } = await api.get<ExpenseSummary>("/expenses/summary");
+    return data;
+  },
+  async create(body: { entry_date: string; amount: string | number; entry_type: "expense" | "credit"; note?: string | null }) {
+    const { data } = await api.post<ExpenseEntry>("/expenses", body);
+    return data;
+  },
+  async uploadReceipt(entryId: number, file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post<ExpenseEntry>(`/expenses/${entryId}/receipt`, fd, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async exportCsv() {
+    const res = await api.get("/expenses/export", { responseType: "blob" });
+    const blob = res.data as Blob;
+    const cd = res.headers["content-disposition"] as string | undefined;
+    let filename = "petty_cash_expenses.csv";
+    if (cd) {
+      const m = /filename="([^"]+)"/.exec(cd);
+      if (m) filename = m[1];
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 };
 

@@ -4,7 +4,7 @@ import { authStore } from "../state/authStore";
 import { decodeJwt, isJwtExpiredForClient } from "../utils/jwt";
 
 export type ApiErrorShape =
-  | { detail?: string }
+  | { detail?: string | any }
   | { detail?: Array<{ loc?: unknown[]; msg?: string; type?: string }> };
 
 export function getErrorMessage(err: unknown): string {

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { RequireAuth } from "./routes/RequireAuth";
 import { AppLayout } from "./components/layout/AppLayout";
+import { PageHeaderProvider } from "./components/layout/pageHeader";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { OrdersPage } from "./pages/OrdersPage";
@@ -32,11 +33,24 @@ import { WaybillPdfExportPage } from "./pages/pdf-export/WaybillPdfExportPage";
 import { OrderPdfExportPage } from "./pages/pdf-export/OrderPdfExportPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
 import { EmployeeAdminPage } from "./pages/EmployeeAdminPage";
+import { EmployeeLegacyRedirect } from "./pages/EmployeeLegacyRedirect";
 import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
+import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
+import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
+import { ExpensesPage } from "./pages/ExpensesPage";
+import { FinanceDashboardPage } from "./pages/FinanceDashboardPage";
+import { useAuth } from "./state/auth";
+import { DraftRecoveryGate } from "./state/drafts";
 
 function LegacyMachineDetailRedirect() {
   const { machineId } = useParams();
   return <Navigate to={`/equipment/machine/${machineId ?? ""}`} replace />;
+}
+
+function DashboardGate() {
+  const auth = useAuth();
+  if (auth.role === "finance") return <Navigate to="/finance" replace />;
+  return <DashboardPage />;
 }
 
 export default function App() {
@@ -54,14 +68,32 @@ export default function App() {
         path="/"
         element={
           <RequireAuth>
-            <AppLayout />
+            <PageHeaderProvider>
+              <DraftRecoveryGate>
+                <AppLayout />
+              </DraftRecoveryGate>
+            </PageHeaderProvider>
           </RequireAuth>
         }
       >
         <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="orders" element={<OrdersPage />} />
-        <Route path="orders/:orderId" element={<OrderDetailsPage />} />
+        <Route path="dashboard" element={<DashboardGate />} />
+        <Route
+          path="orders"
+          element={
+            <RequireAuth roles={["admin", "showroom", "factory"]}>
+              <OrdersPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="orders/:orderId"
+          element={
+            <RequireAuth roles={["admin", "showroom", "factory"]}>
+              <OrderDetailsPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="invoices"
           element={
@@ -166,7 +198,14 @@ export default function App() {
             </RequireAuth>
           }
         />
-        <Route path="trash" element={<TrashPage />} />
+        <Route
+          path="trash"
+          element={
+            <RequireAuth roles={["admin", "showroom", "factory"]}>
+              <TrashPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="inventory/:materialId"
           element={
@@ -220,10 +259,34 @@ export default function App() {
         <Route path="account" element={<AccountPage />} />
         <Route path="employee-details" element={<EmployeeSelfPage />} />
         <Route
+          path="finance"
+          element={
+            <RequireAuth roles={["finance", "admin"]}>
+              <FinanceDashboardPage />
+            </RequireAuth>
+          }
+        />
+        <Route
           path="employees"
           element={
-            <RequireAuth roles={["admin"]}>
+            <RequireAuth roles={["admin", "finance"]}>
               <EmployeesPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="contract-employees/new"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <ContractEmployeeCreatePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="contract-employees/:contractEmployeeId"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <ContractEmployeeDetailPage />
             </RequireAuth>
           }
         />
@@ -231,7 +294,15 @@ export default function App() {
           path="employees/:employeeId"
           element={
             <RequireAuth roles={["admin"]}>
-              <EmployeeAdminPage />
+              <EmployeeLegacyRedirect />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="expenses"
+          element={
+            <RequireAuth roles={["admin", "finance"]}>
+              <ExpensesPage />
             </RequireAuth>
           }
         />
