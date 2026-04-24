@@ -9,6 +9,8 @@ import { OrderDetailsPage } from "./pages/OrderDetailsPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminActivityLogPage } from "./pages/AdminActivityLogPage";
+import { AdminJobsPage } from "./pages/AdminJobsPage";
+import { AdminJobDetailPage } from "./pages/AdminJobDetailPage";
 import { TrashPage } from "./pages/TrashPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { InventoryMaterialDetailPage } from "./pages/InventoryMaterialDetailPage";
@@ -37,6 +39,7 @@ import { EmployeeLegacyRedirect } from "./pages/EmployeeLegacyRedirect";
 import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
 import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
 import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
+import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboardPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
 import { FinanceDashboardPage } from "./pages/FinanceDashboardPage";
 import { useAuth } from "./state/auth";
@@ -50,6 +53,7 @@ function LegacyMachineDetailRedirect() {
 function DashboardGate() {
   const auth = useAuth();
   if (auth.role === "finance") return <Navigate to="/finance" replace />;
+  if (auth.role === "contract_employee") return <Navigate to="/contract" replace />;
   return <DashboardPage />;
 }
 
@@ -81,7 +85,7 @@ export default function App() {
         <Route
           path="orders"
           element={
-            <RequireAuth roles={["admin", "showroom", "factory"]}>
+            <RequireAuth roles={["admin", "showroom", "factory", "finance"]}>
               <OrdersPage />
             </RequireAuth>
           }
@@ -89,7 +93,7 @@ export default function App() {
         <Route
           path="orders/:orderId"
           element={
-            <RequireAuth roles={["admin", "showroom", "factory"]}>
+            <RequireAuth roles={["admin", "showroom", "factory", "finance"]}>
               <OrderDetailsPage />
             </RequireAuth>
           }
@@ -97,7 +101,7 @@ export default function App() {
         <Route
           path="invoices"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <InvoicesPage />
             </RequireAuth>
           }
@@ -105,7 +109,7 @@ export default function App() {
         <Route
           path="invoices/:invoiceId"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <InvoiceDetailPage />
             </RequireAuth>
           }
@@ -129,7 +133,7 @@ export default function App() {
         <Route
           path="quotations/:quotationId"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <QuotationDetailPage />
             </RequireAuth>
           }
@@ -137,7 +141,7 @@ export default function App() {
         <Route
           path="quotations"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <QuotationListPage />
             </RequireAuth>
           }
@@ -145,7 +149,7 @@ export default function App() {
         <Route
           path="waybills/:waybillId"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <WaybillDetailPage />
             </RequireAuth>
           }
@@ -153,7 +157,7 @@ export default function App() {
         <Route
           path="waybills"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <WaybillListPage />
             </RequireAuth>
           }
@@ -177,7 +181,7 @@ export default function App() {
         <Route
           path="proforma/:proformaId"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <ProformaDetailPage />
             </RequireAuth>
           }
@@ -185,7 +189,7 @@ export default function App() {
         <Route
           path="proforma"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <ProformaListPage />
             </RequireAuth>
           }
@@ -193,7 +197,7 @@ export default function App() {
         <Route
           path="customers"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <CustomersPage />
             </RequireAuth>
           }
@@ -269,15 +273,31 @@ export default function App() {
         <Route
           path="employees"
           element={
-            <RequireAuth roles={["admin", "finance"]}>
+            <RequireAuth roles={["admin", "finance", "factory"]}>
               <EmployeesPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="contract"
+          element={
+            <RequireAuth roles={["contract_employee"]}>
+              <ContractEmployeeDashboardPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="employees/new"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <EmployeeAdminPage />
             </RequireAuth>
           }
         />
         <Route
           path="contract-employees/new"
           element={
-            <RequireAuth roles={["admin"]}>
+            <RequireAuth roles={["admin", "factory"]}>
               <ContractEmployeeCreatePage />
             </RequireAuth>
           }
@@ -311,6 +331,22 @@ export default function App() {
           element={
             <RequireAuth roles={["admin"]}>
               <AdminUsersPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="admin/jobs"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <AdminJobsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="admin/jobs/:jobId"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <AdminJobDetailPage />
             </RequireAuth>
           }
         />

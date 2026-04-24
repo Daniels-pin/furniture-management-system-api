@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -105,6 +107,8 @@ def change_password(
     if not verify_password(body.current_password, user.password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     user.password = hash_password(body.new_password)
+    user.must_change_password = False
+    user.password_changed_at = datetime.utcnow()
     log_activity(
         db,
         action=PASSWORD_CHANGED,

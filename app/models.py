@@ -30,6 +30,9 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String)
     role = Column(String)
+    # Enforce first-login password change (used for contract employees and admin resets).
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    password_changed_at = Column(DateTime, nullable=True)
 
 
 # CUSTOMERS TABLE
@@ -574,10 +577,14 @@ class ContractEmployee(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, nullable=False)
+    bank_name = Column(String, nullable=True)
     account_number = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="active")  # active | inactive
+
+    # Dedicated login for contract employees (optional link to app users).
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
 
     total_owed = Column(Numeric(14, 2), nullable=False, default=0)
     total_paid = Column(Numeric(14, 2), nullable=False, default=0)
@@ -587,12 +594,97 @@ class ContractEmployee(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    user = relationship("User", backref=backref("contract_employee_record", uselist=False))
     transactions = relationship(
         "EmployeeTransaction",
         back_populates="contract_employee",
         cascade="all, delete-orphan",
         order_by="EmployeeTransaction.id",
     )
+    jobs = relationship(
+        "ContractJob",
+        back_populates="contract_employee",
+        cascade="all, delete-orphan",
+        order_by="ContractJob.id",
+    )
+
+
+class ContractJob(Base):
+    """Contract employee job lifecycle with price lock and timeline."""
+
+    __tablename__ = "contract_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contract_employee_id = Column(Integer, ForeignKey("contract_employees.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_role = Column(String, nullable=True)  # admin | contract_employee
+
+    # Human-readable job description (required by API; stored non-null for consistency).
+    description = Column(Text, nullable=False, default="", server_default="")
+
+    # Single image URL (Cloudinary). (If multi-image becomes required, mirror Order.image_urls approach.)
+    image_url = Column(String, nullable=True)
+
+    # Current offer before acceptance (can change via renegotiation). Final price is locked after employee acceptance.
+    price_offer = Column(Numeric(14, 2), nullable=True)
+    # Tracks who last updated `price_offer` (admin | contract_employee). Used for acceptance rules + badges.
+    last_offer_by_role = Column(String, nullable=True, index=True)  # admin | contract_employee
+    offer_updated_at = Column(DateTime, nullable=True, index=True)
+    offer_version = Column(Integer, nullable=False, default=0, server_default="0", index=True)
+
+    # Negotiation and acceptance state:
+    # - negotiation_occurred becomes True once the offer has changed after an initial proposal.
+    # - acceptance timestamps are per party and reset whenever the offer changes.
+    negotiation_occurred = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    admin_accepted_at = Column(DateTime, nullable=True, index=True)
+    employee_accepted_at = Column(DateTime, nullable=True, index=True)
+
+    final_price = Column(Numeric(14, 2), nullable=True)
+    price_accepted_at = Column(DateTime, nullable=True, index=True)
+
+    status = Column(String, nullable=False, default="pending")  # pending | in_progress | completed | cancelled
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=True, index=True)
+    completed_at = Column(DateTime, nullable=True, index=True)
+
+    cancelled_at = Column(DateTime, nullable=True, index=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    cancelled_note = Column(String(4000), nullable=True)
+
+    # Manual admin/portal flag used by the daily reminder modal.
+    # Important: this is informational only and does NOT affect any money calculations.
+    paid_flag = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+
+    contract_employee = relationship("ContractEmployee", back_populates="jobs")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    cancelled_by_user = relationship("User", foreign_keys=[cancelled_by_id])
+    linked_transactions = relationship(
+        "EmployeeTransaction",
+        back_populates="contract_job",
+        order_by="EmployeeTransaction.id",
+    )
+
+
+class Notification(Base):
+    """User notifications (supports 'real-time' polling + persistent badges)."""
+
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # job_assigned | price_updated | job_cancelled | payment_request_submitted | system
+    kind = Column(String(64), nullable=False, index=True)
+    title = Column(String(300), nullable=False)
+    message = Column(String(4000), nullable=True)
+    entity_type = Column(String(64), nullable=True, index=True)  # contract_job | employee_transaction | ...
+    entity_id = Column(Integer, nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    read_at = Column(DateTime, nullable=True, index=True)
+
+    recipient_user = relationship("User", foreign_keys=[recipient_user_id])
 
 
 class EmployeeTransaction(Base):
@@ -610,10 +702,11 @@ class EmployeeTransaction(Base):
     contract_employee_id = Column(
         Integer, ForeignKey("contract_employees.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    contract_job_id = Column(Integer, ForeignKey("contract_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
     # Optional payroll period link for monthly employees
     period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=True, index=True)
 
-    txn_type = Column(String, nullable=False)  # owed_increase | payment
+    txn_type = Column(String, nullable=False)  # owed_increase | owed_decrease | payment | reversal
     amount = Column(Numeric(14, 2), nullable=False)
     status = Column(String, nullable=False, default="pending")  # pending | paid | cancelled
 
@@ -640,11 +733,44 @@ class EmployeeTransaction(Base):
 
     employee = relationship("Employee")
     contract_employee = relationship("ContractEmployee", back_populates="transactions")
+    contract_job = relationship("ContractJob", back_populates="linked_transactions")
     period = relationship("SalaryPeriod")
     created_by_user = relationship("User", foreign_keys=[created_by_id])
     processed_by_user = relationship("User", foreign_keys=[processed_by_id])
     cancelled_by_user = relationship("User", foreign_keys=[cancelled_by_id])
     reversal_of = relationship("EmployeeTransaction", remote_side=[id], foreign_keys=[reversal_of_id])
+
+
+class EmployeePaymentAllocation(Base):
+    """Allocation lines for a payment transaction across contract jobs.
+
+    Required for contract employee payments so every payment is tied to one or more jobs.
+    """
+
+    __tablename__ = "employee_payment_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transaction_id = Column(
+        Integer,
+        ForeignKey("employee_transactions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    contract_job_id = Column(
+        Integer,
+        ForeignKey("contract_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount = Column(Numeric(14, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    transaction = relationship("EmployeeTransaction", backref=backref("allocations", cascade="all, delete-orphan"))
+    contract_job = relationship("ContractJob")
+
+    __table_args__ = (
+        UniqueConstraint("transaction_id", "contract_job_id", name="uq_employee_payment_allocations_txn_job"),
+    )
 
 
 # --- Financial audit log (append-only, no retention purge) ---

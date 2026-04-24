@@ -288,7 +288,7 @@ def list_invoices(
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     lim = max(1, min(int(limit or 20), 100))
     off = max(0, int(offset or 0))
@@ -308,7 +308,7 @@ def list_invoices(
 def get_invoice_by_order(
     order_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     inv = (
         db.query(models.Invoice)

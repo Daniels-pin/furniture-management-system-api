@@ -1,4 +1,4 @@
-export type Role = "showroom" | "factory" | "admin" | "finance";
+export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee";
 
 export type DraftModule = "quotation" | "order" | "proforma";
 
@@ -605,8 +605,13 @@ export type EmployeeSelfUpdatePayload = {
 // --- Contract employees + unified payments ledger ---
 
 export type ContractEmployeeStatus = "active" | "inactive";
-export type EmployeeTxnType = "owed_increase" | "payment" | "reversal";
+export type EmployeeTxnType = "owed_increase" | "owed_decrease" | "payment" | "reversal";
 export type EmployeeTxnStatus = "pending" | "paid" | "cancelled";
+
+export type EmployeePaymentAllocation = {
+  contract_job_id: number;
+  amount: string | number;
+};
 
 export type EmployeeTransaction = {
   id: number;
@@ -622,17 +627,21 @@ export type EmployeeTransaction = {
   reversal_of_id?: number | null;
   cancelled_at?: string | null;
   cancelled_reason?: string | null;
+  allocations?: EmployeePaymentAllocation[] | null;
 };
 
 export type ContractEmployeeListItem = {
   id: number;
   full_name: string;
+  bank_name?: string | null;
   account_number?: string | null;
   phone?: string | null;
   status: ContractEmployeeStatus;
   total_owed: string | number;
   total_paid: string | number;
   balance: string | number;
+  active_jobs_count?: number;
+  pending_requests?: number;
 };
 
 export type ContractEmployeeDetail = ContractEmployeeListItem & {
@@ -643,7 +652,10 @@ export type ContractEmployeeDetail = ContractEmployeeListItem & {
 };
 
 export type ContractEmployeeCreatePayload = {
-  full_name: string;
+  username?: string;
+  password?: string;
+  full_name?: string;
+  bank_name?: string | null;
   account_number?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -651,6 +663,57 @@ export type ContractEmployeeCreatePayload = {
 };
 
 export type ContractEmployeeUpdatePayload = Partial<ContractEmployeeCreatePayload>;
+
+export type ContractEmployeeMe = {
+  id: number;
+  full_name: string;
+  bank_name?: string | null;
+  account_number?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  status: ContractEmployeeStatus;
+  total_owed: string | number;
+  total_paid: string | number;
+  balance: string | number;
+  needs_profile_completion: boolean;
+  needs_password_change?: boolean;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export type ContractJobStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+export type ContractJob = {
+  id: number;
+  contract_employee_id: number;
+  contract_employee_name?: string | null;
+  description: string;
+  image_url?: string | null;
+  price_offer?: string | number | null;
+  last_offer_by_role?: "admin" | "contract_employee" | null;
+  offer_updated_at?: string | null;
+  offer_version?: number;
+  negotiation_occurred?: boolean;
+  admin_accepted_at?: string | null;
+  employee_accepted_at?: string | null;
+  final_price?: string | number | null;
+  amount_paid: string | number;
+  balance?: string | number | null;
+  price_accepted_at?: string | null;
+  status: ContractJobStatus;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  cancelled_note?: string | null;
+  paid_flag: boolean;
+  linked_transactions: EmployeeTransaction[];
+};
+
+export type AdminJobsSummary = {
+  jobs: { total: number; completed: number; pending: number; in_progress: number };
+  financials: { total_paid: string | number; total_owed: string | number; balance: string | number };
+};
 
 export type PendingEmployeePaymentItem = {
   transaction: EmployeeTransaction;
@@ -665,6 +728,50 @@ export type PendingEmployeePaymentItem = {
 export type PendingEmployeePayments = {
   total_pending_amount: string | number;
   items: PendingEmployeePaymentItem[];
+};
+
+export type ContractJobFinanceRow = {
+  id: number;
+  status: ContractJobStatus | string;
+  final_price?: string | number | null;
+  amount_paid: string | number;
+  balance?: string | number | null;
+};
+
+export type ContractEmployeeFinance = {
+  id: number;
+  full_name: string;
+  total_owed: string | number;
+  total_paid: string | number;
+  balance: string | number;
+  pending_payment?: EmployeeTransaction | null;
+  jobs: ContractJobFinanceRow[];
+  transactions: EmployeeTransaction[];
+};
+
+// --- Notifications ---
+
+export type NotificationKind =
+  | "job_assigned"
+  | "price_updated"
+  | "job_cancelled"
+  | "payment_request_submitted"
+  | "system";
+
+export type NotificationItem = {
+  id: number;
+  kind: NotificationKind;
+  title: string;
+  message?: string | null;
+  entity_type?: string | null;
+  entity_id?: number | null;
+  created_at: string;
+  read_at?: string | null;
+};
+
+export type NotificationsPage = {
+  items: NotificationItem[];
+  unread_count: number;
 };
 
 // --- Expenses / petty cash ---

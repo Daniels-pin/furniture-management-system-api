@@ -73,7 +73,9 @@ export function WaybillDetailPage() {
     };
   }, [id, toast]);
 
-  const canDelete = auth.role === "admin";
+  const isReadOnly = auth.role === "finance";
+  const canDelete = auth.role === "admin" && !isReadOnly;
+  const canEdit = (auth.role === "admin" || auth.role === "showroom") && !isReadOnly;
 
   async function saveLogistics() {
     if (!Number.isFinite(id)) return;
@@ -118,114 +120,118 @@ export function WaybillDetailPage() {
           </Button>
           {data ? (
             <>
-              <label className="flex items-center gap-2 text-sm font-semibold text-black/70">
-                <span>Status</span>
-                <select
-                  className="rounded-xl border border-black/15 bg-white px-2 py-2 text-sm font-semibold"
-                  value={statusDraft}
-                  onChange={(e) => setStatusDraft(e.target.value as typeof statusDraft)}
-                >
-                  <option value="pending">Pending</option>
-                  <option value="shipped">Shipped</option>
-                  <option value="delivered">Delivered</option>
-                </select>
-              </label>
-              <Button
-                variant="secondary"
-                isLoading={acting}
-                onClick={async () => {
-                  if (!data || statusDraft === (data.delivery_status || "").toLowerCase()) return;
-                  try {
-                    setActing(true);
-                    const updated = await waybillApi.updateStatus(id, statusDraft);
-                    setData(updated);
-                    const s = (updated.delivery_status || "pending").toLowerCase();
-                    if (s === "shipped" || s === "delivered" || s === "pending") setStatusDraft(s);
-                    toast.push("success", "Status updated.");
-                  } catch (e) {
-                    toast.push("error", getErrorMessage(e));
-                  } finally {
-                    setActing(false);
-                  }
-                }}
-              >
-                Save status
-              </Button>
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    if (!data || !waybillDriverComplete(data)) {
-                      toast.push(
-                        "error",
-                        "Save driver name, phone, and vehicle plate on this waybill before printing."
-                      );
-                      return;
-                    }
-                    try {
-                      if (Number.isFinite(id)) await waybillApi.recordPrint(id);
-                    } catch (e) {
-                      toast.push("error", getErrorMessage(e));
-                      return;
-                    }
-                    window.print();
-                  })();
-                }}
-              >
-                Print
-              </Button>
-              <Button
-                variant="secondary"
-                type="button"
-                isLoading={acting}
-                onClick={() => {
-                  void (async () => {
-                    if (!data || !waybillDriverComplete(data)) {
-                      toast.push(
-                        "error",
-                        "Save driver name, phone, and vehicle plate on this waybill before downloading."
-                      );
-                      return;
-                    }
-                    try {
-                      setActing(true);
-                      await waybillApi.download(id);
-                      toast.push("success", "Download started.");
-                    } catch (e) {
-                      toast.push("error", getErrorMessage(e));
-                    } finally {
-                      setActing(false);
-                    }
-                  })();
-                }}
-              >
-                Download
-              </Button>
-              <Button
-                variant="secondary"
-                isLoading={sending}
-                onClick={async () => {
-                  if (!waybillDriverComplete(data)) {
-                    toast.push(
-                      "error",
-                      "Save driver name, phone, and vehicle plate on this waybill before sending email."
-                    );
-                    return;
-                  }
-                  try {
-                    setSending(true);
-                    const res = await waybillApi.sendEmail(data.id);
-                    toast.push("success", res.message || "Sent");
-                  } catch (e) {
-                    toast.push("error", getErrorMessage(e));
-                  } finally {
-                    setSending(false);
-                  }
-                }}
-              >
-                Send email
-              </Button>
+              {canEdit ? (
+                <>
+                  <label className="flex items-center gap-2 text-sm font-semibold text-black/70">
+                    <span>Status</span>
+                    <select
+                      className="rounded-xl border border-black/15 bg-white px-2 py-2 text-sm font-semibold"
+                      value={statusDraft}
+                      onChange={(e) => setStatusDraft(e.target.value as typeof statusDraft)}
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="shipped">Shipped</option>
+                      <option value="delivered">Delivered</option>
+                    </select>
+                  </label>
+                  <Button
+                    variant="secondary"
+                    isLoading={acting}
+                    onClick={async () => {
+                      if (!data || statusDraft === (data.delivery_status || "").toLowerCase()) return;
+                      try {
+                        setActing(true);
+                        const updated = await waybillApi.updateStatus(id, statusDraft);
+                        setData(updated);
+                        const s = (updated.delivery_status || "pending").toLowerCase();
+                        if (s === "shipped" || s === "delivered" || s === "pending") setStatusDraft(s);
+                        toast.push("success", "Status updated.");
+                      } catch (e) {
+                        toast.push("error", getErrorMessage(e));
+                      } finally {
+                        setActing(false);
+                      }
+                    }}
+                  >
+                    Save status
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        if (!data || !waybillDriverComplete(data)) {
+                          toast.push(
+                            "error",
+                            "Save driver name, phone, and vehicle plate on this waybill before printing."
+                          );
+                          return;
+                        }
+                        try {
+                          if (Number.isFinite(id)) await waybillApi.recordPrint(id);
+                        } catch (e) {
+                          toast.push("error", getErrorMessage(e));
+                          return;
+                        }
+                        window.print();
+                      })();
+                    }}
+                  >
+                    Print
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    isLoading={acting}
+                    onClick={() => {
+                      void (async () => {
+                        if (!data || !waybillDriverComplete(data)) {
+                          toast.push(
+                            "error",
+                            "Save driver name, phone, and vehicle plate on this waybill before downloading."
+                          );
+                          return;
+                        }
+                        try {
+                          setActing(true);
+                          await waybillApi.download(id);
+                          toast.push("success", "Download started.");
+                        } catch (e) {
+                          toast.push("error", getErrorMessage(e));
+                        } finally {
+                          setActing(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Download
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    isLoading={sending}
+                    onClick={async () => {
+                      if (!waybillDriverComplete(data)) {
+                        toast.push(
+                          "error",
+                          "Save driver name, phone, and vehicle plate on this waybill before sending email."
+                        );
+                        return;
+                      }
+                      try {
+                        setSending(true);
+                        const res = await waybillApi.sendEmail(data.id);
+                        toast.push("success", res.message || "Sent");
+                      } catch (e) {
+                        toast.push("error", getErrorMessage(e));
+                      } finally {
+                        setSending(false);
+                      }
+                    }}
+                  >
+                    Send email
+                  </Button>
+                </>
+              ) : null}
               <Button variant="secondary" onClick={() => nav(`/orders/${data.order_id}`)}>
                 View order
               </Button>
@@ -266,7 +272,8 @@ export function WaybillDetailPage() {
         </Card>
       ) : (
         <>
-          <Card className="print:hidden">
+          {canEdit ? (
+            <Card className="print:hidden">
             <div className="text-sm font-semibold">Driver &amp; vehicle</div>
             <div className="mt-1 text-xs text-black/60">
               Required before print, download, or email. You can update these any time.
@@ -281,7 +288,8 @@ export function WaybillDetailPage() {
                 Save logistics
               </Button>
             </div>
-          </Card>
+            </Card>
+          ) : null}
 
         <WaybillDocumentBody data={data} />
         </>

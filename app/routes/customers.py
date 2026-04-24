@@ -95,7 +95,7 @@ def export_customer_contacts(
 def create_customer(
     customer: CustomerCreate,
     db: Session = Depends(get_db),
-    user=Depends(forbid_factory),
+    user=Depends(require_role(["admin", "showroom"])),
 ):
     new_customer = models.Customer(
         name=customer.name,

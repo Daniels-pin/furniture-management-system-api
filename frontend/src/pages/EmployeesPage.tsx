@@ -83,8 +83,37 @@ export function EmployeesPage() {
     subtitle:
       auth.role === "finance"
         ? "Review pending payments, upload receipts, and finalize payments."
+        : auth.role === "factory"
+          ? "Create employee records only. Payroll, payments, and employee lists are restricted."
         : "Monthly payroll and contract employees, with a controlled Admin → Finance workflow."
   });
+
+  if (auth.role === "factory") {
+    return (
+      <div className="space-y-6">
+        <Card>
+          <div className="text-lg font-bold tracking-tight">Employees</div>
+          <p className="mt-2 text-sm text-black/70">
+            Factory can only create employee records. Viewing employee lists, payroll, and payments is restricted.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to="/contract-employees/new"
+              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
+            >
+              Create Contract Employee
+            </Link>
+            <Link
+              to="/employees/new"
+              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+            >
+              Create Monthly Employee
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerKind, drawerId] = useMemo(() => {
@@ -509,16 +538,22 @@ export function EmployeesPage() {
                           )}
                         </td>
                         <td className="py-3 pr-0 text-right">
-                          <Button
-                            variant="secondary"
-                            disabled={pendingBusyId === it.transaction.id || !it.transaction.receipt_url}
-                            isLoading={pendingBusyId === it.transaction.id}
-                            onClick={() => {
-                              setConfirmMarkPaid({ id: it.transaction.id });
-                            }}
-                          >
-                            Mark paid
-                          </Button>
+                          {it.employee_kind === "contract" ? (
+                            <Button variant="secondary" onClick={() => navigate("/finance")}>
+                              Open in Finance
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              disabled={pendingBusyId === it.transaction.id || !it.transaction.receipt_url}
+                              isLoading={pendingBusyId === it.transaction.id}
+                              onClick={() => {
+                                setConfirmMarkPaid({ id: it.transaction.id });
+                              }}
+                            >
+                              Mark paid
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -526,7 +561,7 @@ export function EmployeesPage() {
                 </table>
               </div>
               <div className="text-xs text-black/50">
-                Finance can only finalize pending payments and must upload a receipt first.
+                Finance can only finalize pending payments and must upload a receipt first. Contract payments are finalized from the Finance page (job allocation required).
               </div>
             </div>
           )}
@@ -853,6 +888,8 @@ export function EmployeesPage() {
                       </th>
                       <th className="py-3 pr-4 font-semibold">Name</th>
                       <th className="py-3 pr-4 font-semibold">Status</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Active jobs</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Pending requests</th>
                       <th className="py-3 pr-4 text-right font-semibold">Total owed</th>
                       <th className="py-3 pr-4 text-right font-semibold">Total paid</th>
                       <th className="py-3 pr-4 text-right font-semibold">Balance</th>
@@ -902,6 +939,17 @@ export function EmployeesPage() {
                         <td className="py-3 pr-4">
                           <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
                             {r.status === "active" ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-right tabular-nums">{typeof r.active_jobs_count === "number" ? r.active_jobs_count : 0}</td>
+                        <td className="py-3 pr-4 text-right tabular-nums">
+                          <span
+                            className={[
+                              "inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
+                              (r.pending_requests ?? 0) > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                            ].join(" ")}
+                          >
+                            {typeof r.pending_requests === "number" ? r.pending_requests : 0}
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-right tabular-nums">{formatMoney(r.total_owed)}</td>

@@ -5,18 +5,23 @@ import { Card } from "../components/ui/Card";
 import { contractEmployeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
 
 export function ContractEmployeeCreatePage() {
+  const auth = useAuth();
   const toast = useToast();
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
 
   const backTo = useMemo(() => {
+    if (auth.role === "factory") return "/dashboard";
     const next = searchParams.get("backTo");
     return next && next.startsWith("/") ? next : "/employees?tab=contract";
-  }, [searchParams]);
+  }, [searchParams, auth.role]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [username, setUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [phone, setPhone] = useState("");
@@ -25,14 +30,20 @@ export function ContractEmployeeCreatePage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!fullName.trim()) {
-      toast.push("error", "Name is required.");
+    if (!username.trim()) {
+      toast.push("error", "Username is required.");
+      return;
+    }
+    if (loginPassword.trim().length < 8) {
+      toast.push("error", "Password must be at least 8 characters.");
       return;
     }
     setIsSubmitting(true);
     try {
-      await contractEmployeesApi.create({
-        full_name: fullName.trim(),
+      await contractEmployeesApi.createWithLogin({
+        username: username.trim(),
+        password: loginPassword,
+        full_name: fullName.trim() || "",
         account_number: accountNumber.trim() || null,
         phone: phone.trim() || null,
         address: address.trim() || null,
@@ -62,13 +73,41 @@ export function ContractEmployeeCreatePage() {
 
       <Card>
         <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={submit}>
+          <div className="md:col-span-2 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+            <div className="text-sm font-semibold">Create Login Account</div>
+            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="text-xs font-semibold text-black/60">
+                Username (or email)
+                <input
+                  className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  autoComplete="username"
+                />
+              </label>
+              <label className="text-xs font-semibold text-black/60">
+                Password
+                <input
+                  className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  required
+                  type="password"
+                  autoComplete="new-password"
+                />
+              </label>
+            </div>
+            <div className="mt-2 text-xs text-black/55">
+              Role is automatically set to <span className="font-semibold">Contract Employee</span>.
+            </div>
+          </div>
           <label className="text-xs font-semibold text-black/60">
             Name
             <input
               className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              required
             />
           </label>
           <label className="text-xs font-semibold text-black/60">

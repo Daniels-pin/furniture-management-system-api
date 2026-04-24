@@ -7,6 +7,8 @@ import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
 import { useToast } from "../state/toast";
+import { env } from "../env";
+import { APP_NAME } from "../config/app";
 
 export function LoginPage() {
   const auth = useAuth();
@@ -14,7 +16,11 @@ export function LoginPage() {
   const nav = useNavigate();
   const location = useLocation() as any;
 
-  const defaultHome = useMemo(() => (auth.role === "finance" ? "/finance" : "/dashboard"), [auth.role]);
+  const defaultHome = useMemo(() => {
+    if (auth.role === "finance") return "/finance";
+    if (auth.role === "contract_employee") return "/contract";
+    return "/dashboard";
+  }, [auth.role]);
   const from = useMemo(() => location?.state?.from?.pathname || defaultHome, [location, defaultHome]);
 
   const [email, setEmail] = useState("");
@@ -47,9 +53,18 @@ export function LoginPage() {
     <div className="min-h-dvh bg-white">
       <div className="mx-auto flex min-h-dvh w-full max-w-md items-center px-4 py-10">
         <div className="w-full">
+          <div className="mb-6 flex justify-center">
+            <img
+              src={env.logoUrl || "/logo.png"}
+              alt={`${APP_NAME} logo`}
+              className="h-auto max-h-20 w-auto max-w-full object-contain sm:max-h-[84px]"
+              draggable={false}
+              loading="eager"
+            />
+          </div>
           <div className="mb-6">
             <div className="text-sm font-medium italic tracking-tight text-black/70">
-              No Limits Furniture Nig Ltd
+              {APP_NAME}
             </div>
             <div className="text-3xl font-bold tracking-tight">Sign in</div>
             <div className="mt-1 text-sm text-black/60">Use your admin-created account.</div>

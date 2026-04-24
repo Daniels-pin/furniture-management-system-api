@@ -26,9 +26,12 @@ from app.routes.tools import router as tools_router
 from app.routes.machines import router as machines_router
 from app.routes.employees import router as employees_router
 from app.routes.contract_employees import router as contract_employees_router
+from app.routes.contract_jobs import router as contract_jobs_router
+from app.routes.contract_employee_portal import router as contract_employee_portal_router
 from app.routes.employee_payments import router as employee_payments_router
 from app.routes.expenses import router as expenses_router
 from app.routes.drafts import router as drafts_router
+from app.routes.notifications import router as notifications_router
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +147,10 @@ app.include_router(tools_router)
 app.include_router(machines_router)
 app.include_router(employees_router)
 app.include_router(contract_employees_router)
+app.include_router(contract_jobs_router)
+app.include_router(contract_employee_portal_router)
 app.include_router(employee_payments_router)
 app.include_router(expenses_router)
 app.include_router(drafts_router, tags=["Drafts"])
+app.include_router(notifications_router)
 

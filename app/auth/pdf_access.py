@@ -53,7 +53,7 @@ def require_invoice_reader(
     if verify_pdf_render_token(tok, "invoice", invoice_id):
         return _pdf_actor()
     user = _user_from_login_token(tok, db)
-    if normalize_role(user.role) not in {"admin", "showroom"}:
+    if normalize_role(user.role) not in {"admin", "showroom", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 
@@ -67,7 +67,7 @@ def require_quotation_reader(
     if verify_pdf_render_token(tok, "quotation", quotation_id):
         return _pdf_actor()
     user = _user_from_login_token(tok, db)
-    if normalize_role(user.role) not in {"admin", "showroom"}:
+    if normalize_role(user.role) not in {"admin", "showroom", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 
@@ -81,7 +81,7 @@ def require_proforma_reader(
     if verify_pdf_render_token(tok, "proforma", proforma_id):
         return _pdf_actor()
     user = _user_from_login_token(tok, db)
-    if normalize_role(user.role) not in {"admin", "showroom"}:
+    if normalize_role(user.role) not in {"admin", "showroom", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 
@@ -95,7 +95,7 @@ def require_waybill_reader(
     if verify_pdf_render_token(tok, "waybill", waybill_id):
         return _pdf_actor()
     user = _user_from_login_token(tok, db)
-    if normalize_role(user.role) not in {"admin", "showroom"}:
+    if normalize_role(user.role) not in {"admin", "showroom", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 
@@ -109,6 +109,6 @@ def require_order_reader(
     if verify_pdf_render_token(tok, "order", order_id):
         return _pdf_actor()
     user = _user_from_login_token(tok, db)
-    if normalize_role(user.role) not in {"admin", "showroom", "factory"}:
+    if normalize_role(user.role) not in {"admin", "showroom", "factory", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user

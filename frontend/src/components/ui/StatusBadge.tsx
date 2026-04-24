@@ -2,7 +2,10 @@ import React from "react";
 import type { OrderStatus } from "../../types/api";
 
 function labelFor(status: OrderStatus) {
-  if (status === "in_progress") return "In progress";
+  if (status === "in_progress") return "In Progress";
+  // Standardize for UI: treat delivered as completed.
+  if (status === "delivered") return "Completed";
+  if (status === "completed") return "Completed";
   return status[0].toUpperCase() + status.slice(1);
 }
 
@@ -15,7 +18,7 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
       ? "bg-black/5 text-black/70 ring-black/10"
       : status === "in_progress"
         ? "bg-yellow-100 text-yellow-900 ring-yellow-200"
-        : status === "completed"
+        : status === "completed" || status === "delivered"
           ? "bg-green-100 text-green-900 ring-green-200"
           : "bg-black/5 text-black/70 ring-black/10";
 

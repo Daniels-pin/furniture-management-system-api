@@ -52,14 +52,17 @@ export function QuotationDetailPage() {
     };
   }, [id, toast]);
 
-  const canEdit = data && data.status !== "converted";
-  const canFinalize = data?.status === "draft";
+  const isReadOnly = auth.role === "finance";
+  const canEdit = !isReadOnly && data && data.status !== "converted";
+  const canFinalize = !isReadOnly && data?.status === "draft";
   const canConvert =
+    !isReadOnly &&
     data &&
     data.status !== "converted" &&
     !data.converted_order_id &&
     !data.converted_proforma_id;
-  const canPresalesDelete = (auth.role === "admin" || auth.role === "showroom") && data;
+  const canPresalesDelete = !isReadOnly && (auth.role === "admin" || auth.role === "showroom") && data;
+  const canDocActions = !isReadOnly && Boolean(data);
 
   return (
     <div className="space-y-6">
@@ -102,7 +105,7 @@ export function QuotationDetailPage() {
               Finalize
             </Button>
           ) : null}
-          {data ? (
+          {canDocActions ? (
             <Button
               variant="secondary"
               type="button"
@@ -120,7 +123,7 @@ export function QuotationDetailPage() {
               Print
             </Button>
           ) : null}
-          {data ? (
+          {canDocActions ? (
             <Button
               variant="secondary"
               type="button"
@@ -141,7 +144,7 @@ export function QuotationDetailPage() {
               Download
             </Button>
           ) : null}
-          {data ? (
+          {canDocActions ? (
             <Button
               variant="secondary"
               isLoading={sending}

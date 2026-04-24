@@ -71,13 +71,41 @@ class UserRole(str, Enum):
     factory = "factory"
     admin = "admin"
     finance = "finance"
+    contract_employee = "contract_employee"
 
 class UserCreate(BaseModel):
     # Keep existing DB fields, but support "username" for the UI/API.
     # We map username -> email and name -> username by default for stability.
     username: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8, max_length=128)
     role: UserRole
+
+
+class ContractEmployeeCreateWithLogin(BaseModel):
+    username: str = Field(..., min_length=1, max_length=320, description="Username/email for login (must be unique)")
+    password: str = Field(..., min_length=8, max_length=128)
+    # Optional at creation: completed by employee on first login.
+    full_name: Optional[str] = Field(None, max_length=500)
+    bank_name: Optional[str] = Field(None, max_length=200)
+    account_number: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=4000)
+    status: Literal["active", "inactive"] = "active"
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _strip_username(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+    @field_validator("full_name", "bank_name", "account_number", "phone", "address", mode="before")
+    @classmethod
+    def _strip_optional_profile_fields(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
 class UserResponse(BaseModel):
     id: int
@@ -1116,12 +1144,21 @@ class EmployeePaymentUpdate(BaseModel):
 
 
 ContractEmployeeStatus = Literal["active", "inactive"]
-EmployeeTxnType = Literal["owed_increase", "payment", "reversal"]
+EmployeeTxnType = Literal["owed_increase", "owed_decrease", "payment", "reversal"]
 EmployeeTxnStatus = Literal["pending", "paid", "cancelled"]
+
+
+class EmployeePaymentAllocationOut(BaseModel):
+    contract_job_id: int
+    amount: Decimal
+
+    class Config:
+        from_attributes = True
 
 
 class ContractEmployeeCreate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=500)
+    bank_name: Optional[str] = Field(None, max_length=200)
     account_number: Optional[str] = Field(None, max_length=100)
     phone: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = Field(None, max_length=4000)
@@ -1137,6 +1174,7 @@ class ContractEmployeeCreate(BaseModel):
 
 class ContractEmployeeUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    bank_name: Optional[str] = Field(None, max_length=200)
     account_number: Optional[str] = Field(None, max_length=100)
     phone: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = Field(None, max_length=4000)
@@ -1146,12 +1184,15 @@ class ContractEmployeeUpdate(BaseModel):
 class ContractEmployeeListItemOut(BaseModel):
     id: int
     full_name: str
+    bank_name: Optional[str] = None
     account_number: Optional[str] = None
     phone: Optional[str] = None
     status: ContractEmployeeStatus
     total_owed: Decimal
     total_paid: Decimal
     balance: Decimal
+    active_jobs_count: int = 0
+    pending_requests: int = 0
 
     class Config:
         from_attributes = True
@@ -1171,6 +1212,7 @@ class EmployeeTransactionOut(BaseModel):
     reversal_of_id: Optional[int] = None
     cancelled_at: Optional[datetime] = None
     cancelled_reason: Optional[str] = None
+    allocations: Optional[List[EmployeePaymentAllocationOut]] = None
 
     class Config:
         from_attributes = True
@@ -1183,17 +1225,162 @@ class ContractEmployeeOut(ContractEmployeeListItemOut):
     updated_at: Optional[datetime] = None
 
 
+class ContractEmployeeMeOut(BaseModel):
+    """Contract employee portal profile payload."""
+
+    id: int
+    full_name: str
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    status: ContractEmployeeStatus
+    total_owed: Decimal
+    total_paid: Decimal
+    balance: Decimal
+    needs_profile_completion: bool = False
+    needs_password_change: bool = False
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ContractEmployeeMeUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=500)
+    bank_name: Optional[str] = Field(None, max_length=200)
+    account_number: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=4000)
+
+
+class ContractEmployeeLinkUser(BaseModel):
+    user_id: int = Field(..., gt=0, description="User id with role=contract_employee")
+
+
+# --- Contract jobs ---
+
+ContractJobStatus = Literal["pending", "in_progress", "completed", "cancelled"]
+
+
+class ContractJobCreateAdmin(BaseModel):
+    contract_employee_id: int = Field(..., gt=0)
+    description: str = Field(..., min_length=1, max_length=4000)
+    image_url: Optional[str] = Field(None, max_length=2000)
+    price_offer: Optional[Decimal] = Field(None, gt=0)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _strip_desc(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class ContractJobCreateEmployee(BaseModel):
+    description: str = Field(..., min_length=1, max_length=4000)
+    image_url: Optional[str] = Field(None, max_length=2000)
+    price_offer: Decimal = Field(..., gt=0)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _strip_desc(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class ContractJobOfferUpdate(BaseModel):
+    price_offer: Decimal = Field(..., gt=0)
+
+
+class ContractJobCancelBody(BaseModel):
+    note: str = Field(..., min_length=1, max_length=4000)
+
+
+class ContractJobOut(BaseModel):
+    id: int
+    contract_employee_id: int
+    contract_employee_name: Optional[str] = None
+    description: str
+    image_url: Optional[str] = None
+    price_offer: Optional[Decimal] = None
+    last_offer_by_role: Optional[Literal["admin", "contract_employee"]] = None
+    offer_updated_at: Optional[datetime] = None
+    offer_version: int = 0
+    negotiation_occurred: bool = False
+    admin_accepted_at: Optional[datetime] = None
+    employee_accepted_at: Optional[datetime] = None
+    final_price: Optional[Decimal] = None
+    amount_paid: Decimal = Decimal("0")
+    balance: Optional[Decimal] = None
+    price_accepted_at: Optional[datetime] = None
+    status: ContractJobStatus
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    cancelled_note: Optional[str] = None
+    paid_flag: bool = False
+    linked_transactions: List[EmployeeTransactionOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# --- Notifications ---
+
+NotificationKind = Literal[
+    "job_assigned",
+    "price_updated",
+    "job_cancelled",
+    "payment_request_submitted",
+    "system",
+]
+
+
+class NotificationOut(BaseModel):
+    id: int
+    kind: NotificationKind
+    title: str
+    message: Optional[str] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[int] = None
+    created_at: datetime
+    read_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationsPage(BaseModel):
+    items: List[NotificationOut]
+    unread_count: int
+
+
 class ContractEmployeeIncreaseOwed(BaseModel):
     amount: Decimal = Field(..., gt=0)
-    note: Optional[str] = Field(None, max_length=2000)
+    note: str = Field(..., min_length=1, max_length=2000)
 
     @field_validator("note", mode="before")
     @classmethod
     def _strip_note(cls, v: object) -> object:
         if v is None:
-            return None
-        s = str(v).strip()
-        return s or None
+            return ""
+        return str(v).strip()
+
+
+class ContractEmployeeDecreaseOwed(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    note: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note_req(cls, v: object) -> object:
+        if v is None:
+            return ""
+        return str(v).strip()
 
 
 class EmployeeSendPaymentToFinance(BaseModel):
@@ -1207,6 +1394,35 @@ class EmployeeSendPaymentToFinance(BaseModel):
             return None
         s = str(v).strip()
         return s or None
+
+
+class EmployeePaymentAllocationIn(BaseModel):
+    contract_job_id: int = Field(..., gt=0)
+    amount: Decimal = Field(..., gt=0)
+
+
+class EmployeePaymentMarkPaidIn(BaseModel):
+    amount_override: Optional[Decimal] = Field(None, gt=0, description="Optional adjusted amount to pay.")
+    allocations: List[EmployeePaymentAllocationIn] = Field(..., min_length=1)
+
+
+class ContractJobFinanceRow(BaseModel):
+    id: int
+    status: str
+    final_price: Optional[Decimal] = None
+    amount_paid: Decimal
+    balance: Optional[Decimal] = None
+
+
+class ContractEmployeeFinanceOut(BaseModel):
+    id: int
+    full_name: str
+    total_owed: Decimal
+    total_paid: Decimal
+    balance: Decimal
+    pending_payment: Optional[EmployeeTransactionOut] = None
+    jobs: List[ContractJobFinanceRow] = []
+    transactions: List[EmployeeTransactionOut] = []
 
 
 class PendingEmployeePaymentItem(BaseModel):

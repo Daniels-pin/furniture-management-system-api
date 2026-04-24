@@ -27,6 +27,7 @@ export function CustomersPage() {
   const canSeePrivate = auth.role !== "factory";
   const canDelete = auth.role === "admin";
   const canExport = auth.role === "admin";
+  const canCreate = auth.role === "admin" || auth.role === "showroom";
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -205,7 +206,7 @@ export function CustomersPage() {
           </div>
         </Card>
 
-        {auth.role !== "factory" ? (
+        {auth.role !== "factory" && canCreate ? (
           <CreateCustomerCard
             onCreated={(c) => {
               setCustomers((xs) => [c, ...xs]);

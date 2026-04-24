@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
-import { employeePaymentsApi } from "../services/endpoints";
+import { contractEmployeesApi, employeePaymentsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
@@ -20,6 +20,16 @@ export function FinanceDashboardPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [allocOpen, setAllocOpen] = useState(false);
+  const [allocLoading, setAllocLoading] = useState(false);
+  const [allocTxId, setAllocTxId] = useState<number | null>(null);
+  const [allocEmployeeId, setAllocEmployeeId] = useState<number | null>(null);
+  const [allocEmployeeName, setAllocEmployeeName] = useState<string>("");
+  const [allocAmount, setAllocAmount] = useState<string>("");
+  const [allocJobs, setAllocJobs] = useState<
+    Array<{ id: number; status: string; final_price?: string | number | null; amount_paid: string | number; balance?: string | number | null }>
+  >([]);
+  const [allocLines, setAllocLines] = useState<Record<number, string>>({});
   const [overpayConfirm, setOverpayConfirm] = useState(false);
   const [confirmWithoutReceipt, setConfirmWithoutReceipt] = useState(false);
 
@@ -162,6 +172,24 @@ export function FinanceDashboardPage() {
                         }
                         isLoading={busyId === it.transaction.id}
                         onClick={() => {
+                          if (it.employee_kind === "contract") {
+                            setAllocOpen(true);
+                            setAllocTxId(it.transaction.id);
+                            setAllocEmployeeId(it.employee_id);
+                            setAllocEmployeeName(it.employee_name);
+                            setAllocAmount(String(it.transaction.amount ?? ""));
+                            setOverpayConfirm(false);
+                            setConfirmWithoutReceipt(auth.role === "admin" && !it.transaction.receipt_url);
+                            setAllocLines({});
+                            setAllocJobs([]);
+                            setAllocLoading(true);
+                            void contractEmployeesApi
+                              .finances(it.employee_id)
+                              .then((d) => setAllocJobs(Array.isArray(d?.jobs) ? d.jobs : []))
+                              .catch((er) => toast.push("error", getErrorMessage(er)))
+                              .finally(() => setAllocLoading(false));
+                            return;
+                          }
                           if (auth.role === "admin" && it.transaction.receipt_url) {
                             setBusyId(it.transaction.id);
                             void employeePaymentsApi
@@ -269,6 +297,142 @@ export function FinanceDashboardPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={allocOpen}
+        title={allocEmployeeName ? `Allocate payment — ${allocEmployeeName}` : "Allocate payment"}
+        onClose={() => (busyId || allocLoading ? null : setAllocOpen(false))}
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            Select one or more jobs and allocate amounts. Total allocations must equal the payment amount.
+          </div>
+
+          <label className="text-xs font-semibold text-black/60">
+            Amount to pay (optional adjustment)
+            <input
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              value={allocAmount}
+              onChange={(e) => setAllocAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+            />
+          </label>
+
+          {allocLoading ? (
+            <div className="text-sm text-black/60">Loading jobs…</div>
+          ) : allocJobs.length === 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              No eligible jobs found for allocation.
+            </div>
+          ) : (
+            <div className="min-w-0 overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead className="text-black/60">
+                  <tr className="border-b border-black/10">
+                    <th className="py-2 pr-3 font-semibold">Use</th>
+                    <th className="py-2 pr-3 font-semibold">Job</th>
+                    <th className="py-2 pr-3 font-semibold">Status</th>
+                    <th className="py-2 pr-3 text-right font-semibold">Total</th>
+                    <th className="py-2 pr-3 text-right font-semibold">Paid</th>
+                    <th className="py-2 pr-3 text-right font-semibold">Balance</th>
+                    <th className="py-2 pr-0 text-right font-semibold">Allocate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allocJobs.map((j) => {
+                    const v = allocLines[j.id] ?? "";
+                    const checked = typeof allocLines[j.id] !== "undefined";
+                    return (
+                      <tr key={j.id} className="border-b border-black/5">
+                        <td className="py-2 pr-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = { ...allocLines };
+                              if (e.target.checked) next[j.id] = next[j.id] ?? "";
+                              else delete next[j.id];
+                              setAllocLines(next);
+                            }}
+                          />
+                        </td>
+                        <td className="py-2 pr-3 font-semibold">#{j.id}</td>
+                        <td className="py-2 pr-3 text-xs font-semibold text-black/60">{j.status}</td>
+                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.final_price ?? 0)}</td>
+                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</td>
+                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.balance ?? 0)}</td>
+                        <td className="py-2 pr-0 text-right">
+                          <input
+                            className="w-[140px] rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold text-right"
+                            disabled={!checked}
+                            value={v}
+                            onChange={(e) => setAllocLines({ ...allocLines, [j.id]: e.target.value })}
+                            inputMode="decimal"
+                            placeholder="0"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="secondary"
+              isLoading={busyId === allocTxId}
+              disabled={!allocTxId || busyId === allocTxId || allocLoading}
+              onClick={() => {
+                if (!allocTxId) return;
+                const entries = Object.entries(allocLines)
+                  .map(([jobId, amt]) => ({ contract_job_id: Number(jobId), amount: amt }))
+                  .filter((x) => x.contract_job_id > 0);
+                const cleanedAllocations = entries
+                  .map((x) => ({
+                    contract_job_id: x.contract_job_id,
+                    amount: String(x.amount ?? "").replaceAll(",", "").trim()
+                  }))
+                  .filter((x) => x.amount);
+                setBusyId(allocTxId);
+                void employeePaymentsApi
+                  .markPaid(
+                    allocTxId,
+                    confirmWithoutReceipt || overpayConfirm
+                      ? {
+                          confirm_without_receipt: confirmWithoutReceipt ? true : undefined,
+                          confirm_overpay: overpayConfirm ? true : undefined
+                        }
+                      : undefined,
+                    {
+                      amount_override: allocAmount?.trim() ? allocAmount.replaceAll(",", "").trim() : null,
+                      allocations: cleanedAllocations
+                    }
+                  )
+                  .then(() => refresh())
+                  .then(() => toast.push("success", "Marked paid."))
+                  .then(() => setAllocOpen(false))
+                  .catch((er: any) => {
+                    const detail = er?.response?.data?.detail;
+                    if (detail?.code === "OVERPAY_CONFIRM_REQUIRED") {
+                      setOverpayConfirm(true);
+                      return;
+                    }
+                    toast.push("error", getErrorMessage(er));
+                  })
+                  .finally(() => setBusyId(null));
+              }}
+            >
+              Mark paid
+            </Button>
+            <Button variant="ghost" disabled={busyId === allocTxId || allocLoading} onClick={() => setAllocOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

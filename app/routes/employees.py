@@ -586,7 +586,7 @@ def patch_my_employee(
 def create_employee(
     body: EmployeeCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    current_user=Depends(require_role(["admin", "factory"])),
 ):
     if body.user_id is not None:
         u = db.query(models.User).filter(models.User.id == body.user_id).first()

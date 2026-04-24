@@ -25,6 +25,7 @@ export function InvoiceDetailPage() {
   const [deleting, setDeleting] = useState(false);
 
   const canDeleteInvoice = auth.role === "admin";
+  const canDocActions = auth.role === "admin" || auth.role === "showroom";
 
   useEffect(() => {
     let alive = true;
@@ -65,60 +66,64 @@ export function InvoiceDetailPage() {
           <Button variant="secondary" onClick={() => nav("/invoices")}>
             Back
           </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            onClick={() => {
-              void (async () => {
-                try {
-                  if (Number.isFinite(id)) await invoicesApi.recordPrint(id);
-                } catch {
-                  /* still print; logging is best-effort */
-                }
-                window.print();
-              })();
-            }}
-          >
-            Print invoice
-          </Button>
-          {data ? (
-            <Button
-              variant="secondary"
-              type="button"
-              isLoading={downloading}
-              onClick={async () => {
-                try {
-                  setDownloading(true);
-                  await invoicesApi.download(data.id);
-                  toast.push("success", "Download started.");
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setDownloading(false);
-                }
-              }}
-            >
-              Download PDF
-            </Button>
-          ) : null}
-          {data ? (
-            <Button
-              variant="secondary"
-              isLoading={sending}
-              onClick={async () => {
-                try {
-                  setSending(true);
-                  const res = await invoicesApi.sendEmail(data.id);
-                  toast.push("success", res.message || "Invoice sent");
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setSending(false);
-                }
-              }}
-            >
-              Send to Email
-            </Button>
+          {canDocActions ? (
+            <>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      if (Number.isFinite(id)) await invoicesApi.recordPrint(id);
+                    } catch {
+                      /* still print; logging is best-effort */
+                    }
+                    window.print();
+                  })();
+                }}
+              >
+                Print invoice
+              </Button>
+              {data ? (
+                <Button
+                  variant="secondary"
+                  type="button"
+                  isLoading={downloading}
+                  onClick={async () => {
+                    try {
+                      setDownloading(true);
+                      await invoicesApi.download(data.id);
+                      toast.push("success", "Download started.");
+                    } catch (e) {
+                      toast.push("error", getErrorMessage(e));
+                    } finally {
+                      setDownloading(false);
+                    }
+                  }}
+                >
+                  Download PDF
+                </Button>
+              ) : null}
+              {data ? (
+                <Button
+                  variant="secondary"
+                  isLoading={sending}
+                  onClick={async () => {
+                    try {
+                      setSending(true);
+                      const res = await invoicesApi.sendEmail(data.id);
+                      toast.push("success", res.message || "Invoice sent");
+                    } catch (e) {
+                      toast.push("error", getErrorMessage(e));
+                    } finally {
+                      setSending(false);
+                    }
+                  }}
+                >
+                  Send to Email
+                </Button>
+              ) : null}
+            </>
           ) : null}
           {data ? (
             <Button variant="secondary" onClick={() => nav(`/orders/${data.order_id}`)}>

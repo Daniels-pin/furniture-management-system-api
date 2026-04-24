@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Order, OrderCreateItem, OrderStatus } from "../types/api";
 import { draftsApi, ordersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
@@ -26,8 +27,157 @@ function daysRemaining(dueDateIso?: string | null) {
 }
 
 function statusLabel(s: OrderStatus) {
-  if (s === "in_progress") return "In progress";
+  if (s === "in_progress") return "In Progress";
+  if (s === "completed" || s === "delivered") return "Completed";
   return s[0].toUpperCase() + s.slice(1);
+}
+
+function statusUi(s: OrderStatus): { label: string; pillClass: string; dotClass: string } {
+  const label = statusLabel(s);
+  if (s === "pending") {
+    return {
+      label,
+      pillClass: "bg-black/5 text-black/70 ring-black/10",
+      dotClass: "bg-black/30"
+    };
+  }
+  if (s === "in_progress") {
+    return {
+      label,
+      pillClass: "bg-yellow-100 text-yellow-900 ring-yellow-200",
+      dotClass: "bg-yellow-400"
+    };
+  }
+  // completed + delivered
+  return {
+    label,
+    pillClass: "bg-green-100 text-green-900 ring-green-200",
+    dotClass: "bg-green-500"
+  };
+}
+
+function StatusDropdown({
+  value,
+  onChange
+}: {
+  value: "pending" | "in_progress" | "completed";
+  onChange(next: "pending" | "in_progress" | "completed"): void;
+}) {
+  const ui = statusUi(value);
+  const basePill = "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-inset";
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  function updatePos() {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({
+      top: r.bottom + 8, // 8px gap
+      left: r.left,
+      width: Math.max(220, r.width)
+    });
+  }
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePos();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const btn = btnRef.current;
+      const menu = menuRef.current;
+      const t = e.target as Node | null;
+      if (!btn || !t) return;
+      if (btn.contains(t)) return; // handled by button click
+      if (menu && menu.contains(t)) return; // selecting menu item
+      setOpen(false);
+    };
+    // capture helps when row/table has handlers
+    window.addEventListener("keydown", onKeyDown, { capture: true } as any);
+    window.addEventListener("pointerdown", onPointerDown, { capture: true } as any);
+    window.addEventListener("scroll", updatePos, true);
+    window.addEventListener("resize", updatePos);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, { capture: true } as any);
+      window.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
+      window.removeEventListener("scroll", updatePos, true);
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={[
+          basePill,
+          ui.pillClass,
+          "cursor-pointer select-none shadow-sm hover:opacity-95"
+        ].join(" ")}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => {
+            const next = !v;
+            if (!v && next) updatePos();
+            return next;
+          });
+        }}
+      >
+        <span className={["h-2.5 w-2.5 rounded-full", ui.dotClass].join(" ")} />
+        {ui.label}
+      </button>
+
+      {open && pos
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="fixed z-[1000]"
+              style={{ top: pos.top, left: pos.left, minWidth: pos.width }}
+              role="menu"
+              aria-label="Update order status"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="overflow-hidden rounded-2xl border border-black/10 bg-white p-1 shadow-xl">
+                {(["pending", "in_progress", "completed"] as const).map((s) => {
+                  const opt = statusUi(s);
+                  const active = s === value;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      className={[
+                        "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-semibold",
+                        active ? "bg-black text-white" : "text-black hover:bg-black/5"
+                      ].join(" ")}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onChange(s);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <span className={["h-2.5 w-2.5 rounded-full", opt.dotClass].join(" ")} />
+                        {opt.label}
+                      </span>
+                      {active ? <span className="text-xs font-bold">Selected</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
 }
 
 export function OrdersPage() {
@@ -47,7 +197,7 @@ export function OrdersPage() {
   const limit = 10;
 
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<OrderStatus | "all">("all");
+  const [view, setView] = useState<"open" | "completed">("open");
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -98,12 +248,11 @@ export function OrdersPage() {
     }
     return false;
   }
-  const canSeePricing = auth.role === "admin" || auth.role === "showroom";
+  const canSeePricing = auth.role === "admin" || auth.role === "showroom" || auth.role === "finance";
   const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "admin";
   const canUpdateStatus = auth.role === "admin" || auth.role === "factory";
 
-  const statusParam =
-    status === "pending" || status === "in_progress" || status === "completed" ? status : undefined;
+  const statusParam = view === "completed" ? "completed" : "open";
 
   async function refresh(nextPage?: number) {
     const targetPage = Math.max(1, nextPage ?? page);
@@ -137,7 +286,7 @@ export function OrdersPage() {
     }, 300);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status]);
+  }, [q, view]);
 
   async function openCreate() {
     setCreateOpen(true);
@@ -226,11 +375,33 @@ export function OrdersPage() {
           </div>
         </div>
       </Modal>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={view === "open" ? "primary" : "secondary"}
+            onClick={() => {
+              setView("open");
+              setPage(1);
+            }}
+          >
+            Orders
+          </Button>
+          <Button
+            variant={view === "completed" ? "primary" : "secondary"}
+            onClick={() => {
+              setView("completed");
+              setPage(1);
+            }}
+          >
+            Completed
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
         <Button variant="secondary" onClick={() => void refresh(page)} isLoading={isLoading}>
           Refresh
         </Button>
         {canCreate ? <Button onClick={() => void openCreate()}>Create order</Button> : null}
+      </div>
       </div>
 
       <Card>
@@ -241,18 +412,17 @@ export function OrdersPage() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Order ID, customer, status…"
           />
-          <Select
-            label="Status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as any)}
-            options={[
-              { value: "all", label: "All" },
-              { value: "pending", label: "Pending" },
-              { value: "in_progress", label: "In progress" },
-              { value: "completed", label: "Completed" },
-              { value: "delivered", label: "Delivered" }
-            ]}
-          />
+          <div className="flex items-end justify-between rounded-2xl border border-black/10 bg-black/[0.02] px-4 py-3">
+            <div>
+              <div className="text-xs font-semibold text-black/55">Showing</div>
+              <div className="mt-1 text-sm font-bold">
+                {view === "completed" ? "Completed orders" : "Pending + In Progress"}
+              </div>
+              {view === "completed" ? (
+                <div className="mt-1 text-xs text-black/50">Only completed orders are listed.</div>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 min-w-0 overflow-x-touch">
@@ -282,76 +452,97 @@ export function OrdersPage() {
                   </td>
                 </tr>
               ) : (
-                orders.map((o, idx) => {
-                  const displayNumber = String((page - 1) * limit + idx + 1).padStart(3, "0");
-                  const d = daysRemaining(o.due_date ?? null);
-                  return (
-                    <tr
-                      key={o.id}
-                      className="cursor-pointer border-b border-black/5 transition hover:bg-black/[0.02]"
-                      onClick={() => nav(`/orders/${o.id}`, { state: { displayNumber } })}
-                    >
-                      <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
-                      <td className="py-3 pr-4">{o.customer?.name ?? "—"}</td>
-                      <td className="py-3 pr-4">
-                        {canUpdateStatus ? (
-                          <select
-                            className="w-full min-w-[160px] rounded-xl border border-black/15 bg-white px-2 py-1.5 text-sm shadow-sm"
-                            value={o.status}
-                            onChange={async (e) => {
-                              e.stopPropagation();
-                              const next = e.target.value as "pending" | "in_progress" | "completed";
-                              try {
-                                setOrders((xs) =>
-                                  xs.map((x) => (x.id === o.id ? { ...x, status: next } : x))
-                                );
-                                await ordersApi.updateStatus(o.id, next);
-                                await refresh(page);
-                              } catch (err) {
-                                toast.push("error", getErrorMessage(err));
-                                await refresh(page);
-                              }
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <option value="pending">pending</option>
-                            <option value="in_progress">in_progress</option>
-                            <option value="completed">completed</option>
-                          </select>
-                        ) : (
-                          <StatusBadge status={o.status} />
-                        )}
-                      </td>
-                      <td className="py-3 pr-4">
-                        {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
-                      </td>
-                      <td className="py-3 pr-4">{d === null ? "—" : d}</td>
-                      {canSeePricing ? (
-                        <td className="py-3 pr-4 text-black/70">
-                {o.total != null || o.final_price != null || o.total_price != null
-                  ? `Total: ${formatMoney((o as any).total ?? o.final_price ?? o.total_price)}`
-                            : "—"}
+                (() => {
+                  const pending = orders.filter((o) => o.status === "pending");
+                  const progress = orders.filter((o) => o.status === "in_progress");
+                  const completed = orders.filter((o) => o.status === "completed" || o.status === "delivered");
+
+                  const sections: Array<{ key: string; title: string; rows: Order[] }> =
+                    view === "completed"
+                      ? [{ key: "completed", title: "Completed", rows: completed }]
+                      : [
+                          { key: "pending", title: "Pending", rows: pending },
+                          { key: "in_progress", title: "In Progress", rows: progress }
+                        ];
+
+                  let runningIndex = 0;
+
+                  return sections.flatMap((sec) => {
+                    if (!sec.rows.length) return [];
+                    const header = (
+                      <tr key={`hdr:${sec.key}`} className="bg-black/[0.02]">
+                        <td className="py-2 pr-4 text-xs font-bold uppercase tracking-[0.08em] text-black/60" colSpan={canSeePricing ? 7 : 6}>
+                          {sec.title}
                         </td>
-                      ) : null}
-                      <td className="py-3 pr-0 text-right">
-                        {canDeleteOrder(o) ? (
-                          <Button
-                            variant="ghost"
-                            disabled={deletingId === o.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (typeof o.id === "number") setConfirmDeleteId(o.id);
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        ) : (
-                          <span className="text-black/30">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                      </tr>
+                    );
+                    const rows = sec.rows.map((o) => {
+                      runningIndex += 1;
+                      const displayNumber = String((page - 1) * limit + runningIndex).padStart(3, "0");
+                      const d = daysRemaining(o.due_date ?? null);
+                      return (
+                        <tr
+                          key={o.id}
+                          className="cursor-pointer border-b border-black/5 transition hover:bg-black/[0.02]"
+                          onClick={() => nav(`/orders/${o.id}`, { state: { displayNumber } })}
+                        >
+                          <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
+                          <td className="py-3 pr-4">{o.customer?.name ?? "—"}</td>
+                          <td className="py-3 pr-4">
+                            {canUpdateStatus ? (
+                              <StatusDropdown
+                                value={(o.status === "pending" || o.status === "in_progress" || o.status === "completed"
+                                  ? o.status
+                                  : "completed") as any}
+                                onChange={async (next) => {
+                                  try {
+                                    setOrders((xs) => xs.map((x) => (x.id === o.id ? { ...x, status: next } : x)));
+                                    await ordersApi.updateStatus(o.id, next);
+                                    await refresh(page);
+                                  } catch (err) {
+                                    toast.push("error", getErrorMessage(err));
+                                    await refresh(page);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <StatusBadge status={o.status} />
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
+                          </td>
+                          <td className="py-3 pr-4">{d === null ? "—" : d}</td>
+                          {canSeePricing ? (
+                            <td className="py-3 pr-4 text-black/70">
+                              {o.total != null || o.final_price != null || o.total_price != null
+                                ? `Total: ${formatMoney((o as any).total ?? o.final_price ?? o.total_price)}`
+                                : "—"}
+                            </td>
+                          ) : null}
+                          <td className="py-3 pr-0 text-right">
+                            {canDeleteOrder(o) ? (
+                              <Button
+                                variant="ghost"
+                                disabled={deletingId === o.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (typeof o.id === "number") setConfirmDeleteId(o.id);
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            ) : (
+                              <span className="text-black/30">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    });
+
+                    return [header, ...rows];
+                  });
+                })()
               )}
             </tbody>
           </table>

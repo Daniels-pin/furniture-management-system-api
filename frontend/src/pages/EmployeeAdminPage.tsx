@@ -6,6 +6,7 @@ import { Input } from "../components/ui/Input";
 import { employeesApi, usersApi, type EmployeePeriodParams } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
 import type { EmployeeDetail, PayrollPeriodsNav, User } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
@@ -25,6 +26,7 @@ async function runWithPaidConfirm<T>(fn: (confirmFinancialEdit: boolean) => Prom
 }
 
 export function EmployeeAdminPage() {
+  const auth = useAuth();
   const { employeeId } = useParams();
   const nav = useNavigate();
   const toast = useToast();
@@ -180,7 +182,11 @@ export function EmployeeAdminPage() {
           user_id: userId ? Number(userId) : undefined
         });
         toast.push("success", "Employee created.");
-        nav(`/employees/${created.id}?year=${year}&month=${month}`, { replace: true });
+        if (auth.role === "factory") {
+          nav("/dashboard", { replace: true });
+        } else {
+          nav(`/employees/${created.id}?year=${year}&month=${month}`, { replace: true });
+        }
         return;
       }
       if (!Number.isFinite(idNum)) return;

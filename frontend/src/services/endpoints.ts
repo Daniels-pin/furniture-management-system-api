@@ -53,15 +53,20 @@ import type {
   ContractEmployeeDetail,
   ContractEmployeeListItem,
   ContractEmployeeUpdatePayload,
+  ContractEmployeeMe,
   EmployeeTransaction,
+  ContractJob,
   PendingEmployeePayments
   ,
+  ContractEmployeeFinance,
+  AdminJobsSummary,
   ExpenseEntry,
   ExpenseSummary,
   DraftGetResponse,
   DraftLatestResponse,
   DraftModule,
-  DraftSummary
+  DraftSummary,
+  NotificationsPage
 } from "../types/api";
 
 export const authApi = {
@@ -182,7 +187,7 @@ export const customersApi = {
 export const ordersApi = {
   async list(params?: {
     search?: string;
-    status?: "pending" | "in_progress" | "completed";
+    status?: "pending" | "in_progress" | "completed" | "open";
     page?: number;
     limit?: number;
   }) {
@@ -966,12 +971,24 @@ export const contractEmployeesApi = {
     const { data } = await api.post<ContractEmployeeDetail>("/contract-employees", body);
     return data;
   },
+  async createWithLogin(body: ContractEmployeeCreatePayload & { username: string; password: string }) {
+    const { data } = await api.post<ContractEmployeeDetail>("/contract-employees/create-with-login", body);
+    return data;
+  },
   async update(employeeId: number, body: ContractEmployeeUpdatePayload) {
     const { data } = await api.patch<ContractEmployeeDetail>(`/contract-employees/${employeeId}`, body);
     return data;
   },
-  async increaseOwed(employeeId: number, body: { amount: string | number; note?: string | null }) {
+  async increaseOwed(employeeId: number, body: { amount: string | number; note: string }) {
     const { data } = await api.post<ContractEmployeeDetail>(`/contract-employees/${employeeId}/owed/increase`, body);
+    return data;
+  },
+  async decreaseOwed(employeeId: number, body: { amount: string | number; note: string }) {
+    const { data } = await api.post<ContractEmployeeDetail>(`/contract-employees/${employeeId}/owed/decrease`, body);
+    return data;
+  },
+  async finances(employeeId: number) {
+    const { data } = await api.get<ContractEmployeeFinance>(`/contract-employees/${employeeId}/finances`);
     return data;
   },
   async sendPaymentToFinance(employeeId: number, body: { amount: string | number; note?: string | null }) {
@@ -980,6 +997,129 @@ export const contractEmployeesApi = {
   },
   async remove(employeeId: number) {
     const { data } = await api.delete<{ action: "deleted" | "inactivated"; message: string }>(`/contract-employees/${employeeId}`);
+    return data;
+  }
+};
+
+export const contractEmployeeAdminSecurityApi = {
+  async resetPassword(employeeId: number, body: { new_password: string; force_change_on_next_login?: boolean }) {
+    const { data } = await api.post<{ message: string }>(`/contract-employees/${employeeId}/reset-password`, body);
+    return data;
+  }
+};
+
+export const contractEmployeePortalApi = {
+  async me() {
+    const { data } = await api.get<ContractEmployeeMe>("/contract-employee/me");
+    return data;
+  },
+  async patchMe(body: Partial<Pick<ContractEmployeeMe, "full_name" | "bank_name" | "account_number" | "phone" | "address">>) {
+    const { data } = await api.patch<ContractEmployeeMe>("/contract-employee/me", body);
+    return data;
+  },
+  async requestPayment(body: { amount: string | number; note?: string | null }) {
+    const { data } = await api.post<EmployeeTransaction>("/contract-employee/payments/request", body);
+    return data;
+  },
+  async unpaidCompletedJobs() {
+    const { data } = await api.get<{ items: Array<{ id: number; completed_at?: string | null; final_price?: string | null }> }>(
+      "/contract-employee/jobs/unpaid-completed"
+    );
+    return data;
+  }
+};
+
+export const contractJobsApi = {
+  async listAdmin(params?: { employee_id?: number; status?: ContractJob["status"] }) {
+    const { data } = await api.get<ContractJob[]>("/contract-jobs", { params });
+    return data;
+  },
+  async summaryAdmin() {
+    const { data } = await api.get<AdminJobsSummary>("/contract-jobs/summary");
+    return data;
+  },
+  async get(jobId: number) {
+    const { data } = await api.get<ContractJob>(`/contract-jobs/${jobId}`);
+    return data;
+  },
+  async createAdmin(body: {
+    contract_employee_id: number;
+    description: string;
+    image_url?: string | null;
+    price_offer?: string | number | null;
+  }) {
+    const { data } = await api.post<ContractJob>("/contract-jobs", body);
+    return data;
+  },
+  async uploadImage(file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post<{ image_url: string }>("/contract-jobs/upload-image", fd, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async adminSetOffer(jobId: number, body: { price_offer: string | number }) {
+    const { data } = await api.patch<ContractJob>(`/contract-jobs/${jobId}/offer`, body);
+    return data;
+  },
+  async adminAcceptOffer(jobId: number) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/admin/accept-offer`);
+    return data;
+  },
+  async pendingNegotiationsCount() {
+    const { data } = await api.get<{ count: number }>("/contract-jobs/pending-negotiations-count");
+    return data;
+  },
+  async listMe(params?: { status?: ContractJob["status"] }) {
+    const { data } = await api.get<ContractJob[]>("/contract-jobs/me", { params });
+    return data;
+  },
+  async createMe(body: { description: string; image_url?: string | null; price_offer: string | number }) {
+    const { data } = await api.post<ContractJob>("/contract-jobs/me", body);
+    return data;
+  },
+  async setPrice(jobId: number, body: { price_offer: string | number }) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/set-price`, body);
+    return data;
+  },
+  async acceptPrice(jobId: number) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/accept-price`);
+    return data;
+  },
+  async start(jobId: number) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/start`);
+    return data;
+  },
+  async complete(jobId: number) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/complete`);
+    return data;
+  },
+  async cancel(jobId: number, body: { note: string }) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/cancel`, body);
+    return data;
+  },
+  async markPaidFlag(jobId: number) {
+    const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/mark-paid-flag`);
+    return data;
+  }
+};
+
+export const notificationsApi = {
+  async my(params?: { unread_only?: boolean; after_id?: number; limit?: number }) {
+    const { data } = await api.get<NotificationsPage>("/notifications/me", { params });
+    return data;
+  },
+  async markRead(notificationId: number) {
+    const { data } = await api.post(`/notifications/${notificationId}/read`);
+    return data as any;
+  },
+  async markAllRead() {
+    const { data } = await api.post<{ updated: number }>("/notifications/mark-all-read");
+    return data;
+  },
+  async markJobAssignedRead() {
+    const { data } = await api.post<{ updated: number }>("/notifications/job-assigned/mark-read");
     return data;
   }
 };
@@ -1004,12 +1144,17 @@ export const employeePaymentsApi = {
   },
   async markPaid(
     transactionId: number,
-    options?: { confirm_without_receipt?: boolean; confirm_overpay?: boolean }
+    options?: { confirm_without_receipt?: boolean; confirm_overpay?: boolean },
+    body?: {
+      amount_override?: string | number | null;
+      allocations?: Array<{ contract_job_id: number; amount: string | number }>;
+    }
   ) {
     const params: Record<string, any> = {};
     if (options?.confirm_without_receipt === true) params.confirm_without_receipt = true;
     if (options?.confirm_overpay === true) params.confirm_overpay = true;
-    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/mark-paid`, undefined, {
+    const payload = body ? { ...body } : undefined;
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/mark-paid`, payload, {
       params: Object.keys(params).length ? params : undefined
     });
     return data;

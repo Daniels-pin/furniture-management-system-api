@@ -240,7 +240,7 @@ def list_waybills(
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     lim, off = _paginate_params(limit, offset)
     q = (

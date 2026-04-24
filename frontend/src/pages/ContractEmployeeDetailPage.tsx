@@ -1,28 +1,61 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Modal } from "../components/ui/Modal";
-import { contractEmployeesApi, employeePaymentsApi } from "../services/endpoints";
+import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi, employeePaymentsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
-import type { ContractEmployeeDetail } from "../types/api";
+import type { ContractEmployeeDetail, ContractJob } from "../types/api";
+
+function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
+  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset";
+  const cls =
+    status === "pending"
+      ? "bg-black/5 text-black/70 ring-black/10"
+      : status === "in_progress"
+        ? "bg-yellow-100 text-yellow-900 ring-yellow-200"
+        : status === "completed"
+          ? "bg-green-100 text-green-900 ring-green-200"
+          : status === "cancelled"
+            ? "bg-red-100 text-red-900 ring-red-200"
+            : "bg-black/5 text-black/70 ring-black/10";
+  const label =
+    status === "in_progress"
+      ? "In Progress"
+      : status === "cancelled"
+        ? "Cancelled"
+        : status[0].toUpperCase() + status.slice(1);
+  return <span className={[base, cls].join(" ")}>{label}</span>;
+}
 
 export function ContractEmployeeDetailPage() {
   const auth = useAuth();
   const toast = useToast();
   const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { contractEmployeeId } = useParams();
   const id = Number(contractEmployeeId);
+  const tab = (searchParams.get("tab") || "finances") as "jobs" | "finances";
+  const selectedJobId = Number(searchParams.get("jobId") || "");
 
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<ContractEmployeeDetail | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobs, setJobs] = useState<ContractJob[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignDesc, setAssignDesc] = useState("");
+  const [assignPrice, setAssignPrice] = useState("");
+  const [assignImageFile, setAssignImageFile] = useState<File | null>(null);
+  const [assigning, setAssigning] = useState(false);
 
   const [owedAmt, setOwedAmt] = useState("");
   const [owedNote, setOwedNote] = useState("");
+  const [owedDecAmt, setOwedDecAmt] = useState("");
+  const [owedDecNote, setOwedDecNote] = useState("");
   const [payAmt, setPayAmt] = useState("");
   const [payNote, setPayNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,6 +70,11 @@ export function ContractEmployeeDetailPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPw, setResetPw] = useState("");
+  const [resetForce, setResetForce] = useState(true);
+  const [resetting, setResetting] = useState(false);
+
   const backTo = "/employees?tab=contract";
 
   useEffect(() => {
@@ -49,9 +87,10 @@ export function ContractEmployeeDetailPage() {
     (async () => {
       setLoading(true);
       try {
-        const d = await contractEmployeesApi.get(id);
+        const [d, j] = await Promise.all([contractEmployeesApi.get(id), contractJobsApi.listAdmin({ employee_id: id })]);
         if (!alive) return;
         setDetail(d);
+        setJobs(j);
       } catch (err) {
         toast.push("error", getErrorMessage(err));
         if (!alive) return;
@@ -66,15 +105,46 @@ export function ContractEmployeeDetailPage() {
   }, [id, toast]);
 
   const title = useMemo(() => detail?.full_name ?? "Contract employee", [detail?.full_name]);
+  const inProgressJobs = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
+  const completedJobs = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
+  const selectedJob = useMemo(
+    () => (Number.isFinite(selectedJobId) ? jobs.find((j) => j.id === selectedJobId) ?? null : null),
+    [jobs, selectedJobId]
+  );
+
+  function setTab(next: "jobs" | "finances") {
+    const sp = new URLSearchParams(searchParams);
+    sp.set("tab", next);
+    if (next !== "jobs") sp.delete("jobId");
+    setSearchParams(sp, { replace: true });
+  }
+
+  async function refreshJobs() {
+    if (!Number.isFinite(id)) return;
+    setJobsLoading(true);
+    try {
+      const j = await contractJobsApi.listAdmin({ employee_id: id });
+      setJobs(j);
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setJobsLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div className="min-w-0">
           <div className="text-2xl font-bold tracking-tight truncate">{title}</div>
-          <div className="mt-1 text-sm text-black/60">Contract employee profile and transactions.</div>
+          <div className="mt-1 text-sm text-black/60">Contract employee details, jobs, and finances.</div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {auth.role === "admin" ? (
+            <Button variant="secondary" disabled={!detail} onClick={() => setResetOpen(true)}>
+              Reset Password
+            </Button>
+          ) : null}
           {auth.role === "admin" ? (
             <Button
               variant="danger"
@@ -105,6 +175,51 @@ export function ContractEmployeeDetailPage() {
         </Card>
       ) : (
         <>
+          <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setTab("jobs")}
+              className={[
+                "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                tab === "jobs" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+              ].join(" ")}
+            >
+              Jobs
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("finances")}
+              className={[
+                "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                tab === "finances" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+              ].join(" ")}
+            >
+              Finances
+            </button>
+          </div>
+
+          <Card className="!p-4">
+            <div className="text-xs font-semibold text-black/55">Employee</div>
+            <div className="mt-2 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                <div className="text-xs font-semibold text-black/60">Name</div>
+                <div className="mt-1 font-bold">{detail.full_name}</div>
+              </div>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                <div className="text-xs font-semibold text-black/60">Phone</div>
+                <div className="mt-1 font-bold">{detail.phone ?? "—"}</div>
+              </div>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                <div className="text-xs font-semibold text-black/60">Bank</div>
+                <div className="mt-1 font-bold">{(detail as any).bank_name ?? "—"}</div>
+              </div>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                <div className="text-xs font-semibold text-black/60">Account</div>
+                <div className="mt-1 font-mono text-xs font-bold">{detail.account_number ?? "—"}</div>
+              </div>
+            </div>
+          </Card>
+
           <Card className="!p-4">
             <div className="text-xs font-semibold text-black/55">Financial summary</div>
             <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
@@ -124,111 +239,407 @@ export function ContractEmployeeDetailPage() {
             <div className="mt-2 text-xs text-black/50">Balance \(=\) owed − paid. Positive means the company owes the employee.</div>
           </Card>
 
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card className="!p-4">
-              <div className="text-sm font-semibold text-black">Increase total owed</div>
-              <div className="mt-3 grid grid-cols-1 gap-2">
-                <label className="text-xs font-semibold text-black/60">
-                  Amount (NGN)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                    value={owedAmt}
-                    onChange={(e) => setOwedAmt(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="0"
-                  />
-                </label>
-                <label className="text-xs font-semibold text-black/60">
-                  Note (optional)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                    value={owedNote}
-                    onChange={(e) => setOwedNote(e.target.value)}
-                  />
-                </label>
-                <Button
-                  variant="secondary"
-                  isLoading={busy}
-                  onClick={() => {
-                    const amt = parseMoneyInput(owedAmt);
-                    if (owedAmt.trim() && !isValidThousandsCommaNumber(owedAmt)) {
-                      toast.push("error", "Fix comma formatting in amount.");
-                      return;
-                    }
-                    if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                      toast.push("error", "Enter a valid amount (> 0).");
-                      return;
-                    }
-                    setBusy(true);
-                    void contractEmployeesApi
-                      .increaseOwed(detail.id, { amount: amt, note: owedNote.trim() || null })
-                      .then((d) => {
-                        setDetail(d);
-                        setOwedAmt("");
-                        setOwedNote("");
-                        toast.push("success", "Owed increased.");
-                      })
-                      .catch((e) => toast.push("error", getErrorMessage(e)))
-                      .finally(() => setBusy(false));
-                  }}
-                >
-                  Increase owed
-                </Button>
-              </div>
-            </Card>
+          {tab === "jobs" ? (
+            <>
+              <Card className="!p-4">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="text-sm font-semibold text-black">Job preview</div>
+                  <div className="flex flex-wrap gap-2">
+                    {auth.role === "admin" ? (
+                      <Button onClick={() => setAssignOpen(true)}>Assign Job</Button>
+                    ) : null}
+                    <Button variant="secondary" isLoading={jobsLoading} onClick={() => void refreshJobs()}>
+                      Refresh
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold text-black/55">In progress</div>
+                    {inProgressJobs.length === 0 ? (
+                      <div className="mt-2 text-sm text-black/60">No jobs in progress.</div>
+                    ) : (
+                      <ul className="mt-2 divide-y divide-black/10 rounded-2xl border border-black/10">
+                        {inProgressJobs.slice(0, 6).map((j) => (
+                          <li key={j.id} className="px-3 py-2 text-sm">
+                            <button
+                              type="button"
+                              className="w-full text-left"
+                              onClick={() => {
+                                const sp = new URLSearchParams(searchParams);
+                                sp.set("tab", "jobs");
+                                sp.set("jobId", String(j.id));
+                                setSearchParams(sp);
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="font-semibold">Job #{j.id}</div>
+                                <JobStatusBadge status={j.status} />
+                              </div>
+                              <div className="mt-1 text-xs text-black/60">
+                                {j.description ? `Desc: ${j.description}` : ""}
+                                {j.description ? " • " : ""}
+                                Price: {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-black/55">Completed</div>
+                    {completedJobs.length === 0 ? (
+                      <div className="mt-2 text-sm text-black/60">No completed jobs yet.</div>
+                    ) : (
+                      <ul className="mt-2 divide-y divide-black/10 rounded-2xl border border-black/10">
+                        {completedJobs.slice(0, 6).map((j) => (
+                          <li key={j.id} className="px-3 py-2 text-sm">
+                            <button
+                              type="button"
+                              className="w-full text-left"
+                              onClick={() => {
+                                const sp = new URLSearchParams(searchParams);
+                                sp.set("tab", "jobs");
+                                sp.set("jobId", String(j.id));
+                                setSearchParams(sp);
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="font-semibold">Job #{j.id}</div>
+                                <JobStatusBadge status={j.status} />
+                              </div>
+                              <div className="mt-1 text-xs text-black/60">
+                                {j.description ? `Desc: ${j.description}` : ""}
+                                {j.description ? " • " : ""}
+                                Price: {j.final_price ? formatMoney(j.final_price) : "—"}
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </Card>
 
-            <Card className="!p-4">
-              <div className="text-sm font-semibold text-black">Send payment to Finance</div>
-              <div className="mt-3 grid grid-cols-1 gap-2">
-                <label className="text-xs font-semibold text-black/60">
-                  Amount (NGN)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                    value={payAmt}
-                    onChange={(e) => setPayAmt(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="0"
-                  />
-                </label>
-                <label className="text-xs font-semibold text-black/60">
-                  Note (optional)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                    value={payNote}
-                    onChange={(e) => setPayNote(e.target.value)}
-                  />
-                </label>
-                <Button
-                  isLoading={busy}
-                  onClick={() => {
-                    const amt = parseMoneyInput(payAmt);
-                    if (payAmt.trim() && !isValidThousandsCommaNumber(payAmt)) {
-                      toast.push("error", "Fix comma formatting in amount.");
-                      return;
-                    }
-                    if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                      toast.push("error", "Enter a valid amount (> 0).");
-                      return;
-                    }
-                    setBusy(true);
-                    void contractEmployeesApi
-                      .sendPaymentToFinance(detail.id, { amount: amt, note: payNote.trim() || null })
-                      .then(() => contractEmployeesApi.get(detail.id))
-                      .then((d) => {
-                        setDetail(d);
-                        setPayAmt("");
-                        setPayNote("");
-                        toast.push("success", "Sent to Finance.");
-                      })
-                      .catch((e) => toast.push("error", getErrorMessage(e)))
-                      .finally(() => setBusy(false));
-                  }}
-                >
-                  Send to Finance
-                </Button>
+              <Card className="!p-4">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="text-sm font-semibold text-black">
+                    {selectedJob ? `Job #${selectedJob.id}` : "Select a job"}
+                  </div>
+                </div>
+                {!selectedJob ? (
+                  <div className="mt-2 text-sm text-black/60">Click a job from the preview list to open it here.</div>
+                ) : (
+                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+                      <div className="text-xs font-semibold text-black/55">Description</div>
+                      <div className="mt-1 text-sm font-semibold text-black/80 whitespace-pre-wrap break-words">
+                        {selectedJob.description || "—"}
+                      </div>
+                      <div className="text-xs font-semibold text-black/55">Image</div>
+                      {selectedJob.image_url ? (
+                        <a
+                          className="mt-2 inline-block text-sm font-semibold text-black underline decoration-black/30 underline-offset-2"
+                          href={selectedJob.image_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Preview image
+                        </a>
+                      ) : (
+                        <div className="mt-2 text-sm text-black/60">—</div>
+                      )}
+                      <div className="mt-3 text-xs font-semibold text-black/55">Status</div>
+                      <div className="mt-1">
+                        <JobStatusBadge status={selectedJob.status} />
+                      </div>
+                      <div className="mt-3 text-xs font-semibold text-black/55">Timeline</div>
+                      <div className="mt-1 text-xs text-black/60">
+                        Created: {new Date(selectedJob.created_at).toLocaleString()}
+                        {selectedJob.price_accepted_at ? ` • Accepted: ${new Date(selectedJob.price_accepted_at).toLocaleString()}` : ""}
+                        {selectedJob.started_at ? ` • Started: ${new Date(selectedJob.started_at).toLocaleString()}` : ""}
+                        {selectedJob.completed_at ? ` • Completed: ${new Date(selectedJob.completed_at).toLocaleString()}` : ""}
+                        {selectedJob.paid_flag ? " • Paid" : ""}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+                      <div className="text-xs font-semibold text-black/55">Price</div>
+                      <div className="mt-1 text-sm font-bold tabular-nums">
+                        {selectedJob.final_price
+                          ? formatMoney(selectedJob.final_price)
+                          : selectedJob.price_offer
+                            ? formatMoney(selectedJob.price_offer)
+                            : "—"}
+                      </div>
+                      {!selectedJob.price_accepted_at ? (
+                        <div className="mt-3">
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              const raw = prompt("Set offer (NGN) — employee will accept to lock") || "";
+                              if (!raw.trim()) return;
+                              if (raw.trim() && !isValidThousandsCommaNumber(raw)) {
+                                toast.push("error", "Fix comma formatting in amount.");
+                                return;
+                              }
+                              const amt = parseMoneyInput(raw);
+                              if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                                toast.push("error", "Enter a valid amount (> 0).");
+                                return;
+                              }
+                              void contractJobsApi
+                                .adminSetOffer(selectedJob.id, { price_offer: amt })
+                                .then(() => refreshJobs())
+                                .then(() => toast.push("success", "Offer updated."))
+                                .catch((e) => toast.push("error", getErrorMessage(e)));
+                            }}
+                          >
+                            Renegotiate (set offer)
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-xs text-black/55">Price is locked (employee accepted).</div>
+                      )}
+                      {selectedJob.status !== "cancelled" ? (
+                        <div className="mt-3">
+                          <Button
+                            variant="danger"
+                            onClick={() => {
+                              const note = prompt("Cancellation note (required)") || "";
+                              if (!note.trim()) return;
+                              void contractJobsApi
+                                .cancel(selectedJob.id, { note: note.trim() })
+                                .then(() => Promise.all([refreshJobs(), contractEmployeesApi.get(detail.id).then(setDetail)]))
+                                .then(() => toast.push("success", "Job cancelled."))
+                                .catch((e) => toast.push("error", getErrorMessage(e)));
+                            }}
+                          >
+                            Cancel job
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                <Card className="!p-4">
+                  <div className="text-sm font-semibold text-black">Increase total owed</div>
+                  <div className="mt-2 text-xs text-black/55">Requires a note/reason. Creates a transaction record.</div>
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    <label className="text-xs font-semibold text-black/60">
+                      Amount (NGN)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={owedAmt}
+                        onChange={(e) => setOwedAmt(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="0"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-black/60">
+                      Note / reason (required)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={owedNote}
+                        onChange={(e) => setOwedNote(e.target.value)}
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      isLoading={busy}
+                      onClick={() => {
+                        const amt = parseMoneyInput(owedAmt);
+                        if (owedAmt.trim() && !isValidThousandsCommaNumber(owedAmt)) {
+                          toast.push("error", "Fix comma formatting in amount.");
+                          return;
+                        }
+                        if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                          toast.push("error", "Enter a valid amount (> 0).");
+                          return;
+                        }
+                        if (!owedNote.trim()) {
+                          toast.push("error", "Note is required.");
+                          return;
+                        }
+                        setBusy(true);
+                        void contractEmployeesApi
+                          .increaseOwed(detail.id, { amount: amt, note: owedNote.trim() })
+                          .then((d) => {
+                            setDetail(d);
+                            setOwedAmt("");
+                            setOwedNote("");
+                            toast.push("success", "Owed increased.");
+                          })
+                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Increase owed
+                    </Button>
+                  </div>
+                </Card>
+
+                <Card className="!p-4">
+                  <div className="text-sm font-semibold text-black">Decrease total owed</div>
+                  <div className="mt-2 text-xs text-black/55">Requires a note/reason. Creates a transaction record.</div>
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    <label className="text-xs font-semibold text-black/60">
+                      Amount (NGN)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={owedDecAmt}
+                        onChange={(e) => setOwedDecAmt(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="0"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-black/60">
+                      Note / reason (required)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={owedDecNote}
+                        onChange={(e) => setOwedDecNote(e.target.value)}
+                        placeholder="Reason…"
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      isLoading={busy}
+                      onClick={() => {
+                        const amt = parseMoneyInput(owedDecAmt);
+                        if (owedDecAmt.trim() && !isValidThousandsCommaNumber(owedDecAmt)) {
+                          toast.push("error", "Fix comma formatting in amount.");
+                          return;
+                        }
+                        if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                          toast.push("error", "Enter a valid amount (> 0).");
+                          return;
+                        }
+                        if (!owedDecNote.trim()) {
+                          toast.push("error", "Note is required.");
+                          return;
+                        }
+                        setBusy(true);
+                        void contractEmployeesApi
+                          .decreaseOwed(detail.id, { amount: amt, note: owedDecNote.trim() })
+                          .then((d) => {
+                            setDetail(d);
+                            setOwedDecAmt("");
+                            setOwedDecNote("");
+                            toast.push("success", "Owed decreased.");
+                          })
+                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Decrease owed
+                    </Button>
+                  </div>
+                </Card>
+
+                <Card className="!p-4">
+                  <div className="text-sm font-semibold text-black">Send payment to Finance</div>
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    <label className="text-xs font-semibold text-black/60">
+                      Amount (NGN)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={payAmt}
+                        onChange={(e) => setPayAmt(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="0"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-black/60">
+                      Note (optional)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={payNote}
+                        onChange={(e) => setPayNote(e.target.value)}
+                      />
+                    </label>
+                    <Button
+                      isLoading={busy}
+                      onClick={() => {
+                        const amt = parseMoneyInput(payAmt);
+                        if (payAmt.trim() && !isValidThousandsCommaNumber(payAmt)) {
+                          toast.push("error", "Fix comma formatting in amount.");
+                          return;
+                        }
+                        if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                          toast.push("error", "Enter a valid amount (> 0).");
+                          return;
+                        }
+                        setBusy(true);
+                        void contractEmployeesApi
+                          .sendPaymentToFinance(detail.id, { amount: amt, note: payNote.trim() || null })
+                          .then(() => contractEmployeesApi.get(detail.id))
+                          .then((d) => {
+                            setDetail(d);
+                            setPayAmt("");
+                            setPayNote("");
+                            toast.push("success", "Sent to Finance.");
+                          })
+                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Send to Finance
+                    </Button>
+                  </div>
+                </Card>
               </div>
-            </Card>
-          </div>
+
+              <Card className="!p-4">
+                <div className="text-sm font-semibold text-black">Job earnings breakdown</div>
+                <div className="mt-2 text-xs text-black/55">Totals are computed from job prices and allocated paid transactions.</div>
+                {jobs.length === 0 ? (
+                  <div className="mt-2 text-sm text-black/60">No jobs yet.</div>
+                ) : (
+                  <div className="mt-3 min-w-0 overflow-x-auto">
+                    <table className="w-full min-w-[920px] text-left text-sm">
+                      <thead className="text-black/60">
+                        <tr className="border-b border-black/10">
+                          <th className="py-3 pr-4 font-semibold">Job</th>
+                          <th className="py-3 pr-4 font-semibold">Status</th>
+                          <th className="py-3 pr-4 text-right font-semibold">Total price</th>
+                          <th className="py-3 pr-4 text-right font-semibold">Paid</th>
+                          <th className="py-3 pr-0 text-right font-semibold">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {jobs
+                          .filter((j) => j.status !== "cancelled")
+                          .map((j) => (
+                            <tr key={j.id} className="border-b border-black/5">
+                              <td className="py-3 pr-4 font-semibold">#{j.id}</td>
+                              <td className="py-3 pr-4">
+                                <JobStatusBadge status={j.status} />
+                              </td>
+                              <td className="py-3 pr-4 text-right font-bold tabular-nums">
+                                {j.final_price ? formatMoney(j.final_price) : "—"}
+                              </td>
+                              <td className="py-3 pr-4 text-right font-bold tabular-nums">
+                                {formatMoney(j.amount_paid ?? 0)}
+                              </td>
+                              <td className="py-3 pr-0 text-right font-bold tabular-nums">
+                                {typeof j.balance !== "undefined" && j.balance !== null
+                                  ? formatMoney(j.balance)
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
 
           <Card className="!p-4">
             <div className="flex items-end justify-between gap-2">
@@ -266,7 +677,13 @@ export function ContractEmployeeDetailPage() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-semibold">
-                          {t.txn_type === "owed_increase" ? "Owed increase" : t.txn_type === "reversal" ? "Reversal" : "Payment"}
+                          {t.txn_type === "owed_increase"
+                            ? "Owed increase"
+                            : t.txn_type === "owed_decrease"
+                              ? "Owed decrease"
+                              : t.txn_type === "reversal"
+                                ? "Reversal"
+                                : "Payment"}
                         </div>
                         <div className="font-bold tabular-nums">{formatMoney(t.amount)}</div>
                       </div>
@@ -427,8 +844,152 @@ export function ContractEmployeeDetailPage() {
               </div>
             </div>
           </Modal>
+
+          <Modal open={resetOpen} title="Reset password" onClose={() => (resetting ? null : setResetOpen(false))}>
+            <div className="space-y-4">
+              <div className="text-sm text-black/70">
+                Set a new password for this contract employee. This takes effect immediately.
+              </div>
+              <label className="text-xs font-semibold text-black/60">
+                New password
+                <input
+                  className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                  value={resetPw}
+                  onChange={(e) => setResetPw(e.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-black/70">
+                <input
+                  type="checkbox"
+                  checked={resetForce}
+                  onChange={(e) => setResetForce(e.target.checked)}
+                />
+                Force password change on next login (recommended)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  isLoading={resetting}
+                  disabled={!detail}
+                  onClick={() => {
+                    if (!detail) return;
+                    if (resetPw.trim().length < 8) {
+                      toast.push("error", "Password must be at least 8 characters.");
+                      return;
+                    }
+                    setResetting(true);
+                    void contractEmployeeAdminSecurityApi
+                      .resetPassword(detail.id, { new_password: resetPw, force_change_on_next_login: resetForce })
+                      .then(() => toast.push("success", "Password reset."))
+                      .then(() => {
+                        setResetOpen(false);
+                        setResetPw("");
+                        setResetForce(true);
+                      })
+                      .catch((e) => toast.push("error", getErrorMessage(e)))
+                      .finally(() => setResetting(false));
+                  }}
+                >
+                  Reset
+                </Button>
+                <Button variant="ghost" disabled={resetting} onClick={() => setResetOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </Modal>
+            </>
+          )}
         </>
       )}
+
+      <Modal open={assignOpen} title="Assign Job" onClose={() => (assigning ? null : setAssignOpen(false))}>
+        <div className="space-y-3">
+          <label className="text-xs font-semibold text-black/60">
+            Description <span className="text-red-600">*</span>
+            <textarea
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold min-h-[96px]"
+              value={assignDesc}
+              onChange={(e) => setAssignDesc(e.target.value)}
+              placeholder="Describe the job…"
+            />
+          </label>
+          <label className="text-xs font-semibold text-black/60">
+            Price offer (optional)
+            <input
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              value={assignPrice}
+              onChange={(e) => setAssignPrice(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+            />
+          </label>
+          <label className="text-xs font-semibold text-black/60">
+            Image (optional)
+            <input
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              type="file"
+              accept="image/*"
+              onChange={(e) => setAssignImageFile((e.target.files && e.target.files[0]) || null)}
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" disabled={assigning} onClick={() => setAssignOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={assigning}
+              onClick={() => {
+                if (!Number.isFinite(id)) return;
+                if (!assignDesc.trim()) {
+                  toast.push("error", "Description is required.");
+                  return;
+                }
+                if (assignPrice.trim() && !isValidThousandsCommaNumber(assignPrice)) {
+                  toast.push("error", "Fix comma formatting in amount.");
+                  return;
+                }
+                const offer = assignPrice.trim() ? parseMoneyInput(assignPrice) : null;
+                if (assignPrice.trim() && (offer === null || Number.isNaN(offer) || offer <= 0)) {
+                  toast.push("error", "Enter a valid offer (> 0) or leave it blank.");
+                  return;
+                }
+                setAssigning(true);
+                void (async () => {
+                  let imageUrl: string | null = null;
+                  if (assignImageFile) {
+                    const up = await contractJobsApi.uploadImage(assignImageFile);
+                    imageUrl = up.image_url;
+                  }
+                  await contractJobsApi.createAdmin({
+                    contract_employee_id: id,
+                    description: assignDesc.trim(),
+                    image_url: imageUrl || undefined,
+                    price_offer: offer ?? undefined
+                  });
+                })()
+                  .then(() => refreshJobs())
+                  .then(() => {
+                    setAssignDesc("");
+                    setAssignPrice("");
+                    setAssignImageFile(null);
+                    setAssignOpen(false);
+                    toast.push("success", "Job assigned.");
+                  })
+                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .finally(() => setAssigning(false));
+              }}
+            >
+              Assign
+            </Button>
+          </div>
+          <div className="text-xs text-black/50">
+            Description is required. Image is optional. If you set an offer, the employee can accept or renegotiate.
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

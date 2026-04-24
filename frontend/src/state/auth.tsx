@@ -3,7 +3,7 @@ import { authStore } from "./authStore";
 import { decodeJwt, isJwtExpiredForClient, JwtPayload } from "../utils/jwt";
 import { adminApi } from "../services/endpoints";
 
-export type Role = "showroom" | "factory" | "admin" | "finance";
+export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee";
 
 type AuthState = {
   token: string | null;
@@ -52,7 +52,9 @@ function deriveState(token: string | null): AuthState {
     };
   }
   const normalizedRole =
-    payload?.role === "manager" ? ("factory" as Role) : ((payload?.role as Role | undefined) ?? null);
+    payload?.role === "manager"
+      ? ("factory" as Role)
+      : ((payload?.role as Role | undefined) ?? null);
   const isImpersonation = payload?.is_impersonation === true;
   const subject =
     typeof payload?.impersonation_subject === "string" && payload.impersonation_subject.trim()

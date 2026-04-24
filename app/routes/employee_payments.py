@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth.auth import normalize_role, require_role
 from app.database import get_db
-from app.schemas import PendingEmployeePaymentItem, PendingEmployeePaymentsOut, EmployeeTransactionOut
+from app.schemas import (
+    EmployeePaymentMarkPaidIn,
+    PendingEmployeePaymentItem,
+    PendingEmployeePaymentsOut,
+    EmployeeTransactionOut,
+)
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 
@@ -328,6 +333,7 @@ def mark_payment_as_paid(
     transaction_id: int,
     confirm_without_receipt: bool = Query(False),
     confirm_overpay: bool = Query(False),
+    body: EmployeePaymentMarkPaidIn | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin", "finance"])),
 ):
@@ -351,12 +357,58 @@ def mark_payment_as_paid(
     t.processed_by_id = current_user.id
     t.processed_by_role = role
 
-    amt = _as_decimal(t.amount)
+    # Optional admin/finance adjustment to requested amount.
+    effective_amount = _as_decimal(body.amount_override) if (body and body.amount_override is not None) else _as_decimal(t.amount)
+    if effective_amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be > 0")
+    if body and body.amount_override is not None:
+        t.amount = effective_amount
+    amt = effective_amount
 
     if t.contract_employee_id is not None:
         emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
         if emp is None:
             raise HTTPException(status_code=404, detail="Contract employee not found")
+
+        # Enforce allocation to one or more jobs.
+        allocations_in = body.allocations if body else []
+        if not allocations_in:
+            # Backward compatibility: allow single linked job id if present.
+            if getattr(t, "contract_job_id", None):
+                allocations_in = [{"contract_job_id": int(t.contract_job_id), "amount": amt}]
+            else:
+                raise HTTPException(status_code=400, detail="Allocations are required: select one or more jobs for this payment.")
+
+        # Validate allocation sum equals effective amount.
+        total_alloc = Decimal("0")
+        for a in allocations_in:
+            a_amt = _as_decimal(a["amount"] if isinstance(a, dict) else getattr(a, "amount", 0))
+            if a_amt <= 0:
+                raise HTTPException(status_code=400, detail="Allocation amounts must be > 0")
+            total_alloc += a_amt
+        if total_alloc != amt:
+            raise HTTPException(status_code=400, detail=f"Allocation total ({total_alloc}) must equal payment amount ({amt}).")
+
+        # Clear existing allocations (should be none for pending).
+        db.query(models.EmployeePaymentAllocation).filter(models.EmployeePaymentAllocation.transaction_id == t.id).delete()
+
+        # Create allocations and validate job ownership.
+        for a in allocations_in:
+            job_id = int(a["contract_job_id"] if isinstance(a, dict) else getattr(a, "contract_job_id", 0))
+            if job_id <= 0:
+                raise HTTPException(status_code=400, detail="contract_job_id must be > 0")
+            job = db.query(models.ContractJob).filter(models.ContractJob.id == job_id).first()
+            if job is None or job.contract_employee_id != int(t.contract_employee_id):
+                raise HTTPException(status_code=400, detail=f"Job #{job_id} does not belong to this employee.")
+            if job.status == "cancelled":
+                raise HTTPException(status_code=409, detail=f"Job #{job_id} is cancelled and cannot receive payments.")
+            db.add(
+                models.EmployeePaymentAllocation(
+                    transaction_id=t.id,
+                    contract_job_id=job_id,
+                    amount=_as_decimal(a["amount"] if isinstance(a, dict) else getattr(a, "amount", 0)),
+                )
+            )
         projected_paid = _as_decimal(emp.total_paid) + amt
         projected_balance = _as_decimal(emp.total_owed) - projected_paid
         if projected_balance < 0 and not confirm_overpay:
@@ -469,6 +521,8 @@ def reverse_transaction(
             emp.total_paid = _as_decimal(emp.total_paid) - amt
         elif orig.txn_type == "owed_increase":
             emp.total_owed = _as_decimal(emp.total_owed) - amt
+        elif orig.txn_type == "owed_decrease":
+            emp.total_owed = _as_decimal(emp.total_owed) + amt
         else:
             raise HTTPException(status_code=400, detail="Unsupported original transaction type for reversal.")
         emp.balance = _as_decimal(emp.total_owed) - _as_decimal(emp.total_paid)

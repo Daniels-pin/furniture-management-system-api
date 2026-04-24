@@ -18,7 +18,12 @@ export function RequireAuth({
 
   if (roles && roles.length > 0) {
     if (!auth.role || !roles.includes(auth.role)) {
-      return <Navigate to={auth.role === "finance" ? "/finance" : "/dashboard"} replace />;
+      return (
+        <Navigate
+          to={auth.role === "finance" ? "/finance" : auth.role === "contract_employee" ? "/contract" : "/dashboard"}
+          replace
+        />
+      );
     }
   }
 

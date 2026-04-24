@@ -173,7 +173,7 @@ def _build_order_response(
         "items": item_rows,
     }
 
-    if user.role in ("admin", "showroom"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
         total = None
         if order.final_price is not None or order.total_price is not None:
             base_price = order.final_price if order.final_price is not None else order.total_price
@@ -206,7 +206,7 @@ def _build_order_response(
         )
 
         # Admin-only: show who performed actions
-        if user.role == "admin":
+        if normalize_role(getattr(user, "role", None)) == "admin":
             created_by_username = None
             updated_by_username = None
             if order.created_by:
@@ -715,10 +715,20 @@ def get_orders(
     )
 
     if status:
-        allowed = {"pending", "in_progress", "completed"}
+        # Supported statuses:
+        # - pending | in_progress | completed: explicit filter
+        # - open: pending + in_progress (default UI view)
+        # Backwards compatible handling:
+        # - delivered exists in DB/schema; treat it as completed for filtering purposes.
+        allowed = {"pending", "in_progress", "completed", "open"}
         if status not in allowed:
             raise HTTPException(status_code=400, detail="Invalid status value")
-        q = q.filter(models.Order.status == status)
+        if status == "open":
+            q = q.filter(models.Order.status.in_(("pending", "in_progress")))
+        elif status == "completed":
+            q = q.filter(models.Order.status.in_(("completed", "delivered")))
+        else:
+            q = q.filter(models.Order.status == status)
 
     if search:
         s = f"%{search.strip()}%"
@@ -761,7 +771,7 @@ def get_orders(
             ],
         }
 
-        if user.role in ("admin", "showroom"):
+        if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
             base.update(
                 {
                     "total_price": order.total_price,
@@ -912,10 +922,10 @@ def get_order(
         "items": item_rows,
     }
 
-    if user.role in ("admin", "showroom"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
         created_by_username = None
         updated_by_username = None
-        if getattr(user, "role", None) == "admin":
+        if normalize_role(getattr(user, "role", None)) == "admin":
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
                 created_by_username = (u1.email or "").split("@")[0] if u1 and u1.email else None
@@ -1065,7 +1075,7 @@ def put_order_admin(
             for i, item in enumerate(items)
         ],
     }
-    if user.role in ("admin", "showroom"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
         total = None
         if order.final_price is not None or order.total_price is not None:
             base_price = order.final_price if order.final_price is not None else order.total_price
@@ -1073,7 +1083,7 @@ def put_order_admin(
                 total = (base_price or Decimal("0")) + (order.tax or Decimal("0"))
         created_by_username = None
         updated_by_username = None
-        if user.role == "admin":
+        if normalize_role(getattr(user, "role", None)) == "admin":
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
                 created_by_username = (u1.email or "").split("@")[0] if u1 and u1.email else None
