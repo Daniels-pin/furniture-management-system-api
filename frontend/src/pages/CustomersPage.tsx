@@ -87,6 +87,56 @@ export function CustomersPage() {
     }
   }
 
+  function CustomerCard({ c, displayNumber }: { c: Customer; displayNumber: string }) {
+    return (
+      <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-bold">Customer #{displayNumber}</div>
+            <div className="mt-1 break-words text-sm font-semibold text-black/80">{c.name}</div>
+            {canSeePrivate && c.created_by ? (
+              <div className="mt-1 text-xs font-medium text-black/45">Added by {c.created_by}</div>
+            ) : null}
+          </div>
+          {canDelete ? (
+            <div className="shrink-0">
+              <Button
+                variant="ghost"
+                disabled={deletingId === c.id}
+                onClick={() => setConfirmDeleteId(c.id)}
+              >
+                Delete
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
+          {canSeePrivate ? (
+            <>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+                <div className="text-xs font-semibold text-black/55">Phone</div>
+                <div className="mt-0.5 font-semibold text-black/80 break-words">{c.phone ?? "—"}</div>
+              </div>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+                <div className="text-xs font-semibold text-black/55">Email</div>
+                <div className="mt-0.5 font-semibold text-black/80 break-words">{c.email ?? "—"}</div>
+              </div>
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+                <div className="text-xs font-semibold text-black/55">Address</div>
+                <div className="mt-0.5 font-semibold text-black/80 break-words">{c.address ?? "—"}</div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-xs font-semibold text-black/45">
+              Details hidden for factory role
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
@@ -112,7 +162,22 @@ export function CustomersPage() {
             <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Customer ID or name…" />
           </div>
 
-          <div className="mt-5 min-w-0 overflow-x-touch">
+          {/* Mobile: cards (avoid horizontal table scroll) */}
+          <div className="mt-4 space-y-3 md:hidden">
+            {isLoading ? (
+              <div className="text-sm text-black/60">Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div className="text-sm text-black/60">No customers found.</div>
+            ) : (
+              pageRows.map((c, idx) => {
+                const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+                return <CustomerCard key={c.id} c={c} displayNumber={displayNumber} />;
+              })
+            )}
+          </div>
+
+          {/* Desktop: keep table unchanged */}
+          <div className="mt-5 hidden min-w-0 overflow-x-touch md:block">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="text-black/60">
                 <tr className="border-b border-black/10">
@@ -147,35 +212,31 @@ export function CustomersPage() {
                   pageRows.map((c, idx) => {
                     const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
                     return (
-                    <tr key={c.id} className="border-b border-black/5">
-                      <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
-                      <td className="py-3 pr-4">
-                        <div>{c.name}</div>
-                        {canSeePrivate && c.created_by ? (
-                          <div className="mt-0.5 text-xs font-medium text-black/45">Added by {c.created_by}</div>
-                        ) : null}
-                      </td>
-                      {canSeePrivate ? (
-                        <>
-                          <td className="py-3 pr-4 text-black/70">{c.phone ?? "—"}</td>
-                          <td className="py-3 pr-4 text-black/70">{c.email ?? "—"}</td>
-                          <td className="py-3 pr-0 text-black/70">{c.address ?? "—"}</td>
-                        </>
-                      ) : (
-                        <td className="py-3 pr-0 text-black/30">Hidden for factory role</td>
-                      )}
-                      {canDelete ? (
-                        <td className="py-3 pr-0 text-right">
-                          <Button
-                            variant="ghost"
-                            disabled={deletingId === c.id}
-                            onClick={() => setConfirmDeleteId(c.id)}
-                          >
-                            Delete
-                          </Button>
+                      <tr key={c.id} className="border-b border-black/5">
+                        <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
+                        <td className="py-3 pr-4">
+                          <div>{c.name}</div>
+                          {canSeePrivate && c.created_by ? (
+                            <div className="mt-0.5 text-xs font-medium text-black/45">Added by {c.created_by}</div>
+                          ) : null}
                         </td>
-                      ) : null}
-                    </tr>
+                        {canSeePrivate ? (
+                          <>
+                            <td className="py-3 pr-4 text-black/70">{c.phone ?? "—"}</td>
+                            <td className="py-3 pr-4 text-black/70">{c.email ?? "—"}</td>
+                            <td className="py-3 pr-0 text-black/70">{c.address ?? "—"}</td>
+                          </>
+                        ) : (
+                          <td className="py-3 pr-0 text-black/30">Hidden for factory role</td>
+                        )}
+                        {canDelete ? (
+                          <td className="py-3 pr-0 text-right">
+                            <Button variant="ghost" disabled={deletingId === c.id} onClick={() => setConfirmDeleteId(c.id)}>
+                              Delete
+                            </Button>
+                          </td>
+                        ) : null}
+                      </tr>
                     );
                   })
                 )}

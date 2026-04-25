@@ -1075,7 +1075,7 @@ export const contractJobsApi = {
     const { data } = await api.get<ContractJob[]>("/contract-jobs/me", { params });
     return data;
   },
-  async createMe(body: { description: string; image_url?: string | null; price_offer: string | number }) {
+  async createMe(body: { description: string; image_url?: string | null; price_offer?: string | number | null }) {
     const { data } = await api.post<ContractJob>("/contract-jobs/me", body);
     return data;
   },
@@ -1157,6 +1157,14 @@ export const employeePaymentsApi = {
     const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/mark-paid`, payload, {
       params: Object.keys(params).length ? params : undefined
     });
+    return data;
+  },
+  async adminApprove(transactionId: number, body?: { amount_override?: string | number | null; note?: string | null }) {
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/admin-approve`, body ?? {});
+    return data;
+  },
+  async sendToFinance(transactionId: number, body?: { note?: string | null }) {
+    const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/send-to-finance`, body ?? {});
     return data;
   },
   async reverse(transactionId: number, params?: { reason?: string }) {

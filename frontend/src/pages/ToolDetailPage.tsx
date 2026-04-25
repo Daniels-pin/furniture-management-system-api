@@ -8,6 +8,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 
 function fmtWhen(iso: string) {
   try {
@@ -38,6 +39,9 @@ export function ToolDetailPage() {
   const [coSaving, setCoSaving] = useState(false);
 
   const [returnSaving, setReturnSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
@@ -82,14 +86,13 @@ export function ToolDetailPage() {
 
   async function moveToTrash() {
     if (!t) return;
-    if (!window.confirm(`Move “${t.name}” to Trash? You cannot delete while it is checked out.`)) return;
-    try {
+    setConfirmAction(() => async () => {
+      if (!t) return;
       await toolsApi.remove(t.id);
       toast.push("success", "Moved to Trash");
       nav("/equipment", { replace: true });
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    }
+    });
+    setConfirmOpen(true);
   }
 
   async function doCheckout() {
@@ -260,6 +263,26 @@ export function ToolDetailPage() {
           </Button>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Move tool to Trash"
+        message={t ? `Move “${t.name}” to Trash? You cannot delete while it is checked out.` : "Move to Trash?"}
+        busy={confirmBusy}
+        onClose={() => (confirmBusy ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
+        }}
+      />
     </div>
   );
 }

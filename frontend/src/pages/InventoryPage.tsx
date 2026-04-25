@@ -19,6 +19,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, sanitizeMoneyInput } from "../utils/moneyInput";
 
@@ -99,6 +100,11 @@ export function InventoryPage() {
   const [payAmount, setPayAmount] = useState("");
   const [payDate, setPayDate] = useState("");
   const [payNote, setPayNote] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("Confirm");
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   const [form, setForm] = useState({
     material_name: "",
@@ -333,21 +339,23 @@ export function InventoryPage() {
 
   async function removePayment(paymentId: number) {
     if (!payRow) return;
-    if (!window.confirm("Remove this payment entry?")) return;
-    try {
+    setConfirmTitle("Remove payment");
+    setConfirmMessage("Remove this payment entry?");
+    setConfirmAction(() => async () => {
+      if (!payRow) return;
       await inventoryApi.deletePayment(payRow.id, paymentId);
       toast.push("success", "Payment removed");
       const list = await inventoryApi.listPayments(payRow.id);
       setPayList(Array.isArray(list) ? list : []);
       await refresh();
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    }
+    });
+    setConfirmOpen(true);
   }
 
   async function doDelete(r: InventoryMaterial) {
-    if (!window.confirm(`Move “${r.material_name}” to Trash?`)) return;
-    try {
+    setConfirmTitle("Move to Trash");
+    setConfirmMessage(`Move “${r.material_name}” to Trash?`);
+    setConfirmAction(() => async () => {
       await inventoryApi.remove(r.id);
       toast.push("success", "Moved to Trash");
       setSelected((prev) => {
@@ -356,23 +364,22 @@ export function InventoryPage() {
         return n;
       });
       await refresh();
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    }
+    });
+    setConfirmOpen(true);
   }
 
   async function bulkDelete() {
     const ids = [...selected];
     if (ids.length === 0) return;
-    if (!window.confirm(`Move ${ids.length} material(s) to Trash?`)) return;
-    try {
+    setConfirmTitle("Move to Trash");
+    setConfirmMessage(`Move ${ids.length} material(s) to Trash?`);
+    setConfirmAction(() => async () => {
       await inventoryApi.bulkDelete(ids);
       toast.push("success", "Moved to Trash");
       setSelected(new Set());
       await refresh();
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    }
+    });
+    setConfirmOpen(true);
   }
 
   async function bulkSetStock() {
@@ -566,40 +573,47 @@ export function InventoryPage() {
       {selectedCount > 0 ? (
         <Card className="flex flex-col gap-3 p-4 md:flex-row md:flex-wrap md:items-center">
           <div className="text-sm font-semibold">{selectedCount} selected</div>
-          <Button variant="secondary" onClick={() => void bulkDelete()}>
-            Bulk delete
-          </Button>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="rounded-xl border border-black/15 bg-white px-3 py-2 text-sm"
-              value={bulkStock}
-              onChange={(e) => setBulkStock(e.target.value as InventoryStockLevel)}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="full">Full</option>
-            </select>
-            <Button variant="secondary" onClick={() => void bulkSetStock()}>
-              Set stock level
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <Button variant="secondary" onClick={() => void bulkDelete()} className="w-full sm:w-auto">
+              Bulk delete
             </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <select
+                className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm sm:w-auto"
+                value={bulkStock}
+                onChange={(e) => setBulkStock(e.target.value as InventoryStockLevel)}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="full">Full</option>
+              </select>
+              <Button variant="secondary" onClick={() => void bulkSetStock()} className="w-full sm:w-auto">
+                Set stock level
+              </Button>
+            </div>
+            <Button
+              variant="secondary"
+              className="w-full sm:w-auto"
+              onClick={() => {
+                const first = rows.find((r) => selected.has(r.id));
+                if (first) {
+                  setBulkStock(first.stock_level);
+                  setBulkSupplier(first.supplier_name ?? "");
+                  setBulkCategory(first.category ?? "");
+                }
+                setBulkEditOpen(true);
+              }}
+            >
+              Bulk edit…
+            </Button>
+            <button
+              type="button"
+              className="min-h-11 w-full rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold text-black/70 hover:bg-black/[0.03] sm:min-h-0 sm:w-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:text-black/60"
+              onClick={() => setSelected(new Set())}
+            >
+              Clear selection
+            </button>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              const first = rows.find((r) => selected.has(r.id));
-              if (first) {
-                setBulkStock(first.stock_level);
-                setBulkSupplier(first.supplier_name ?? "");
-                setBulkCategory(first.category ?? "");
-              }
-              setBulkEditOpen(true);
-            }}
-          >
-            Bulk edit…
-          </Button>
-          <button type="button" className="text-sm font-semibold text-black/60 hover:text-black" onClick={() => setSelected(new Set())}>
-            Clear selection
-          </button>
         </Card>
       ) : null}
 
@@ -609,90 +623,189 @@ export function InventoryPage() {
         ) : rows.length === 0 ? (
           <div className="p-6 text-sm text-black/60">No materials match your filters.</div>
         ) : (
-          <table className="min-w-[1180px] w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-black/10 bg-black/[0.02]">
-                <th className="px-3 py-3">
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
-                </th>
-                <th className="px-3 py-3 font-semibold">Material</th>
-                <th className="px-3 py-3 font-semibold">Category</th>
-                <th className="px-3 py-3 font-semibold">Tracking</th>
-                <th className="px-3 py-3 font-semibold">Qty</th>
-                <th className="px-3 py-3 font-semibold">Stock</th>
-                <th className="px-3 py-3 font-semibold">Supplier</th>
-                <th className="px-3 py-3 font-semibold">Status</th>
-                <th className="px-3 py-3 font-semibold">Cost</th>
-                <th className="px-3 py-3 font-semibold">Paid</th>
-                <th className="px-3 py-3 font-semibold">Balance</th>
-                <th className="px-3 py-3 font-semibold">Added by</th>
-                <th className="px-3 py-3 font-semibold">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const low = r.stock_level === "low";
-                return (
-                  <tr
-                    key={r.id}
-                    className={[
-                      "border-b border-black/5",
-                      low ? "bg-amber-50/80 border-l-4 border-l-amber-500" : ""
-                    ].join(" ")}
-                  >
-                    <td className="px-3 py-3 align-top">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(r.id)}
-                        onChange={() => toggleOne(r.id)}
-                        aria-label={`Select ${r.material_name}`}
-                      />
-                    </td>
-                    <td className="px-3 py-3 align-top font-semibold">
-                      <Link className="text-black hover:underline" to={`/inventory/${r.id}`}>
-                        {r.material_name}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-3 align-top text-black/70">{r.category || "—"}</td>
-                    <td className="px-3 py-3 align-top text-black/70">{r.tracking_mode === "numeric" ? "Numeric" : "Status"}</td>
-                    <td className="px-3 py-3 align-top tabular-nums">
-                      {r.tracking_mode === "numeric" ? fmtNum(r.quantity) : "—"} {r.tracking_mode === "numeric" ? r.unit : ""}
-                    </td>
-                    <td className="px-3 py-3 align-top">{stockLevelBadge(r.stock_level)}</td>
-                    <td className="px-3 py-3 align-top">{r.supplier_name || "—"}</td>
-                    <td className="px-3 py-3 align-top capitalize">{r.payment_status}</td>
-                    <td className="px-3 py-3 align-top tabular-nums">{formatMoney(r.cost)}</td>
-                    <td className="px-3 py-3 align-top tabular-nums">{formatMoney(r.amount_paid)}</td>
-                    <td className="px-3 py-3 align-top tabular-nums">
-                      {r.balance === null || r.balance === undefined ? "—" : formatMoney(r.balance)}
-                    </td>
-                    <td className="px-3 py-3 align-top text-black/60">{r.added_by || "—"}</td>
-                    <td className="px-3 py-3 align-top">
-                      <div className="flex flex-wrap gap-1">
-                        <Link className="text-xs font-bold text-black/70 hover:underline" to={`/inventory/${r.id}`}>
-                          View
-                        </Link>
-                        <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => openEdit(r)}>
-                          Edit
-                        </button>
-                        <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => void openPayments(r)}>
-                          Payments
-                        </button>
-                        {r.tracking_mode === "numeric" ? (
-                          <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => openAdjust(r)}>
-                            Stock Δ
-                          </button>
-                        ) : null}
-                        <button type="button" className="text-xs font-bold text-red-700 hover:underline" onClick={() => void doDelete(r)}>
-                          Delete
-                        </button>
+          <>
+            <div className="md:hidden divide-y divide-black/10">
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <label className="inline-flex items-center gap-2 text-sm font-semibold">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" className="h-4 w-4" />
+                  Select all
+                </label>
+                <div className="text-xs font-semibold text-black/50">{rows.length} item(s)</div>
+              </div>
+              <div className="space-y-3 px-4 pb-4">
+                {rows.map((r) => {
+                  const low = r.stock_level === "low";
+                  return (
+                    <div
+                      key={r.id}
+                      className={[
+                        "rounded-2xl border bg-white p-4",
+                        low ? "border-amber-200 bg-amber-50/30" : "border-black/10"
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <label className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(r.id)}
+                            onChange={() => toggleOne(r.id)}
+                            aria-label={`Select ${r.material_name}`}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-bold">{r.material_name}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-black/55">
+                              <span>{r.category || "—"}</span>
+                              <span>•</span>
+                              <span>{r.tracking_mode === "numeric" ? "Numeric" : "Status"}</span>
+                              <span>•</span>
+                              <span className="capitalize">{r.payment_status}</span>
+                            </div>
+                          </div>
+                        </label>
+                        <div className="shrink-0">{stockLevelBadge(r.stock_level)}</div>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Qty</div>
+                          <div className="mt-0.5 font-bold tabular-nums">
+                            {r.tracking_mode === "numeric" ? `${fmtNum(r.quantity)} ${r.unit}` : "—"}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Supplier</div>
+                          <div className="mt-0.5 font-bold truncate">{r.supplier_name || "—"}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Cost</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(r.cost)}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Balance</div>
+                          <div className="mt-0.5 font-bold tabular-nums">
+                            {r.balance === null || r.balance === undefined ? "—" : formatMoney(r.balance)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Link
+                          to={`/inventory/${r.id}`}
+                          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/[0.03]"
+                        >
+                          Open
+                        </Link>
+                        <Button variant="secondary" className="w-full" onClick={() => openEdit(r)}>
+                          Edit
+                        </Button>
+                        <Button variant="secondary" className="w-full" onClick={() => void openPayments(r)}>
+                          Payments
+                        </Button>
+                        {r.tracking_mode === "numeric" ? (
+                          <Button variant="secondary" className="w-full" onClick={() => openAdjust(r)}>
+                            Stock Δ
+                          </Button>
+                        ) : (
+                          <div />
+                        )}
+                        <Button variant="danger" className="col-span-2 w-full" onClick={() => void doDelete(r)}>
+                          Delete
+                        </Button>
+                      </div>
+
+                      {r.added_by ? <div className="mt-3 text-xs font-semibold text-black/45">Added by {r.added_by}</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <table className="hidden md:table min-w-[1180px] w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-black/10 bg-black/[0.02]">
+                  <th className="px-3 py-3">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
+                  </th>
+                  <th className="px-3 py-3 font-semibold">Material</th>
+                  <th className="px-3 py-3 font-semibold">Category</th>
+                  <th className="px-3 py-3 font-semibold">Tracking</th>
+                  <th className="px-3 py-3 font-semibold">Qty</th>
+                  <th className="px-3 py-3 font-semibold">Stock</th>
+                  <th className="px-3 py-3 font-semibold">Supplier</th>
+                  <th className="px-3 py-3 font-semibold">Status</th>
+                  <th className="px-3 py-3 font-semibold">Cost</th>
+                  <th className="px-3 py-3 font-semibold">Paid</th>
+                  <th className="px-3 py-3 font-semibold">Balance</th>
+                  <th className="px-3 py-3 font-semibold">Added by</th>
+                  <th className="px-3 py-3 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const low = r.stock_level === "low";
+                  return (
+                    <tr
+                      key={r.id}
+                      className={[
+                        "border-b border-black/5",
+                        low ? "bg-amber-50/80 border-l-4 border-l-amber-500" : ""
+                      ].join(" ")}
+                    >
+                      <td className="px-3 py-3 align-top">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.id)}
+                          onChange={() => toggleOne(r.id)}
+                          aria-label={`Select ${r.material_name}`}
+                        />
+                      </td>
+                      <td className="px-3 py-3 align-top font-semibold">
+                        <Link className="text-black hover:underline" to={`/inventory/${r.id}`}>
+                          {r.material_name}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-3 align-top text-black/70">{r.category || "—"}</td>
+                      <td className="px-3 py-3 align-top text-black/70">{r.tracking_mode === "numeric" ? "Numeric" : "Status"}</td>
+                      <td className="px-3 py-3 align-top tabular-nums">
+                        {r.tracking_mode === "numeric" ? fmtNum(r.quantity) : "—"} {r.tracking_mode === "numeric" ? r.unit : ""}
+                      </td>
+                      <td className="px-3 py-3 align-top">{stockLevelBadge(r.stock_level)}</td>
+                      <td className="px-3 py-3 align-top">{r.supplier_name || "—"}</td>
+                      <td className="px-3 py-3 align-top capitalize">{r.payment_status}</td>
+                      <td className="px-3 py-3 align-top tabular-nums">{formatMoney(r.cost)}</td>
+                      <td className="px-3 py-3 align-top tabular-nums">{formatMoney(r.amount_paid)}</td>
+                      <td className="px-3 py-3 align-top tabular-nums">
+                        {r.balance === null || r.balance === undefined ? "—" : formatMoney(r.balance)}
+                      </td>
+                      <td className="px-3 py-3 align-top text-black/60">{r.added_by || "—"}</td>
+                      <td className="px-3 py-3 align-top">
+                        <div className="flex flex-wrap gap-1">
+                          <Link className="text-xs font-bold text-black/70 hover:underline" to={`/inventory/${r.id}`}>
+                            View
+                          </Link>
+                          <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => openEdit(r)}>
+                            Edit
+                          </button>
+                          <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => void openPayments(r)}>
+                            Payments
+                          </button>
+                          {r.tracking_mode === "numeric" ? (
+                            <button type="button" className="text-xs font-bold text-black/70 hover:underline" onClick={() => openAdjust(r)}>
+                              Stock Δ
+                            </button>
+                          ) : null}
+                          <button type="button" className="text-xs font-bold text-red-700 hover:underline" onClick={() => void doDelete(r)}>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </Card>
 
@@ -1010,6 +1123,26 @@ export function InventoryPage() {
           </div>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        busy={confirmBusy}
+        onClose={() => (confirmBusy ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
+        }}
+      />
     </div>
   );
 }

@@ -190,7 +190,27 @@ export function EquipmentPage() {
         });
       }
     }
-    rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    const groupRank = (r: DirRow) => {
+      const s =
+        r.kind === "tool"
+          ? r.inUse
+            ? "in_use"
+            : "available"
+          : r.machineStatus === "in_use"
+            ? "in_use"
+            : r.machineStatus === "available"
+              ? "available"
+              : "other";
+      if (s === "in_use") return 0;
+      if (s === "available") return 1;
+      return 2;
+    };
+    rows.sort((a, b) => {
+      const ga = groupRank(a);
+      const gb = groupRank(b);
+      if (ga !== gb) return ga - gb;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
     return rows;
   }, [tools, machines, dirKind, dirStatus, dirSearch]);
 
@@ -385,7 +405,24 @@ export function EquipmentPage() {
                       </span>
                     </td>
                     <td className="px-3 py-2 font-semibold">{r.name}</td>
-                    <td className="px-3 py-2 text-black/70">{r.statusLabel}</td>
+                    <td className="px-3 py-2">
+                      {(() => {
+                        const isInUse =
+                          r.kind === "tool" ? r.inUse : r.machineStatus === "in_use";
+                        const isAvailable =
+                          r.kind === "tool" ? !r.inUse : r.machineStatus === "available";
+                        const cls = isInUse
+                          ? "bg-yellow-100 text-yellow-900 ring-yellow-200"
+                          : isAvailable
+                            ? "bg-green-100 text-green-900 ring-green-200"
+                            : "bg-black/5 text-black/70 ring-black/10";
+                        return (
+                          <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", cls].join(" ")}>
+                            {r.statusLabel}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <Link
                         to={r.kind === "tool" ? `/equipment/tool/${r.id}` : `/equipment/machine/${r.id}`}

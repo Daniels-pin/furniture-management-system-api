@@ -16,6 +16,8 @@ from app.auth.auth import normalize_role, require_role
 from app.database import get_db
 from app.schemas import (
     EmployeePaymentMarkPaidIn,
+    AdminApprovePaymentRequestIn,
+    AdminSendPaymentToFinanceIn,
     PendingEmployeePaymentItem,
     PendingEmployeePaymentsOut,
     EmployeeTransactionOut,
@@ -39,10 +41,16 @@ def list_pending_payments(
     overpaid: Optional[bool] = Query(None, description="true shows employees with balance < 0 (contract only)"),
     sort: str = Query("oldest", description="oldest | newest | amount_desc | amount_asc"),
 ):
-    q = db.query(models.EmployeeTransaction).filter(
-        models.EmployeeTransaction.txn_type == "payment",
-        models.EmployeeTransaction.status == "pending",
-    )
+    role = normalize_role(getattr(current_user, "role", None))
+    q = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.txn_type == "payment")
+
+    # Role visibility rules:
+    # - Admin: sees employee requests and items awaiting finance
+    # - Finance: MUST ONLY see sent_to_finance items
+    if role == "finance":
+        q = q.filter(models.EmployeeTransaction.status.in_(["sent_to_finance", "pending"]))
+    else:
+        q = q.filter(models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]))
     if kind == "contract":
         q = q.filter(models.EmployeeTransaction.contract_employee_id.isnot(None))
     elif kind == "monthly":
@@ -113,6 +121,111 @@ def list_pending_payments(
             )
 
     return PendingEmployeePaymentsOut(total_pending_amount=total, items=items)
+
+
+@router.post("/{transaction_id}/admin-approve", response_model=EmployeeTransactionOut)
+def admin_approve_payment_request(
+    transaction_id: int,
+    body: AdminApprovePaymentRequestIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+):
+    t = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == transaction_id).first()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t.txn_type != "payment":
+        raise HTTPException(status_code=400, detail="Only payment requests can be approved.")
+    if t.status not in ("requested",):
+        # Allow legacy pending to be treated as already in finance queue.
+        raise HTTPException(status_code=409, detail="Only requested payments can be approved.")
+
+    if body.amount_override is not None:
+        t.amount = _as_decimal(body.amount_override)
+    if body.note is not None and str(body.note).strip():
+        t.note = str(body.note).strip()
+    t.status = "approved_by_admin"
+    t.processed_by_id = current_user.id
+    t.processed_by_role = "admin"
+
+    # Notify employee (if a contract employee with a linked user account).
+    if t.contract_employee_id is not None:
+        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
+        if ce and ce.user_id:
+            from app.utils.notifications import create_notifications
+
+            create_notifications(
+                db,
+                recipient_user_ids=[int(ce.user_id)],
+                kind="payment_approved",
+                title="Payment approved",
+                message=f"Amount: {str(_as_decimal(t.amount))}",
+                entity_type="employee_transaction",
+                entity_id=int(t.id),
+            )
+
+    log_financial_action(
+        db,
+        action="payment_request_approved",
+        entity_type="employee_transaction",
+        entity_id=t.id,
+        actor_user=current_user,
+        meta={"amount": str(_as_decimal(t.amount)), "contract_employee_id": t.contract_employee_id, "employee_id": t.employee_id},
+    )
+    db.commit()
+    db.refresh(t)
+    return EmployeeTransactionOut.model_validate(t)
+
+
+@router.post("/{transaction_id}/send-to-finance", response_model=EmployeeTransactionOut)
+def admin_send_payment_to_finance(
+    transaction_id: int,
+    body: AdminSendPaymentToFinanceIn | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+):
+    t = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == transaction_id).first()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t.txn_type != "payment":
+        raise HTTPException(status_code=400, detail="Only payment requests can be sent to Finance.")
+    if t.status not in ("approved_by_admin", "requested"):
+        # Legacy 'pending' is already in Finance queue.
+        raise HTTPException(status_code=409, detail="Payment is not eligible to send to Finance.")
+
+    # If admin sends directly without explicit approval, we still move it through approved state.
+    if t.status == "requested":
+        t.status = "approved_by_admin"
+    if body and body.note is not None and str(body.note).strip():
+        t.note = str(body.note).strip()
+    t.status = "sent_to_finance"
+
+    log_financial_action(
+        db,
+        action="payment_sent_to_finance",
+        entity_type="employee_transaction",
+        entity_id=t.id,
+        actor_user=current_user,
+        meta={"amount": str(_as_decimal(t.amount)), "contract_employee_id": t.contract_employee_id, "employee_id": t.employee_id},
+    )
+
+    # Notify finance users
+    finance_ids = [int(uid) for (uid,) in db.query(models.User.id).filter(models.User.role == "finance").all() if uid is not None]
+    if finance_ids:
+        from app.utils.notifications import create_notifications
+
+        create_notifications(
+            db,
+            recipient_user_ids=finance_ids,
+            kind="payment_sent_to_finance",
+            title="Payment sent to Finance",
+            message=f"Amount: {str(_as_decimal(t.amount))}",
+            entity_type="employee_transaction",
+            entity_id=int(t.id),
+        )
+
+    db.commit()
+    db.refresh(t)
+    return EmployeeTransactionOut.model_validate(t)
 
 
 @router.post("/{transaction_id}/receipt", response_model=EmployeeTransactionOut)
@@ -342,10 +455,12 @@ def mark_payment_as_paid(
         raise HTTPException(status_code=404, detail="Transaction not found")
     if t.txn_type != "payment":
         raise HTTPException(status_code=400, detail="Only payment transactions can be marked paid here.")
-    if t.status != "pending":
+    if t.status == "paid" or t.status == "cancelled":
         raise HTTPException(status_code=409, detail="Transaction is already finalized.")
 
     role = normalize_role(getattr(current_user, "role", None))
+    if role == "finance" and t.status not in ("sent_to_finance", "pending"):
+        raise HTTPException(status_code=403, detail="Finance can only confirm payments sent to finance.")
     if role == "finance" and not t.receipt_url:
         raise HTTPException(status_code=400, detail="Receipt is required for Finance to confirm payment.")
     if role == "admin" and not t.receipt_url and not confirm_without_receipt:
@@ -409,21 +524,22 @@ def mark_payment_as_paid(
                     amount=_as_decimal(a["amount"] if isinstance(a, dict) else getattr(a, "amount", 0)),
                 )
             )
-        projected_paid = _as_decimal(emp.total_paid) + amt
-        projected_balance = _as_decimal(emp.total_owed) - projected_paid
-        if projected_balance < 0 and not confirm_overpay:
+        projected_total_owed = _as_decimal(emp.total_owed) - amt
+        if projected_total_owed < 0 and not confirm_overpay:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "OVERPAY_CONFIRM_REQUIRED",
                     "message": "This payment will overpay the employee (employee will owe the company). पुष्टि confirm_overpay=true to proceed.",
-                    "current_balance": str(_as_decimal(emp.balance)),
+                    "current_balance": str(_as_decimal(emp.total_owed)),
                     "amount": str(amt),
-                    "projected_balance": str(projected_balance),
+                    "projected_balance": str(projected_total_owed),
                 },
             )
+        # Core rule: confirmed payment increases total_paid and decreases total_owed.
         emp.total_paid = _as_decimal(emp.total_paid) + amt
-        emp.balance = _as_decimal(emp.total_owed) - _as_decimal(emp.total_paid)
+        emp.total_owed = _as_decimal(emp.total_owed) - amt
+        emp.balance = _as_decimal(emp.total_owed)
         emp.updated_at = paid_at
         t.running_balance = emp.balance
     else:
@@ -462,6 +578,38 @@ def mark_payment_as_paid(
             "processed_by_role": role,
         },
     )
+
+    # Notifications:
+    # - Contract employee: notify when payment completed
+    # - Admins: notify when finance completed (optional)
+    if t.contract_employee_id is not None:
+        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
+        if ce and ce.user_id:
+            from app.utils.notifications import create_notifications
+
+            create_notifications(
+                db,
+                recipient_user_ids=[int(ce.user_id)],
+                kind="payment_completed",
+                title="Payment completed",
+                message=f"Amount: {str(amt)}",
+                entity_type="employee_transaction",
+                entity_id=int(t.id),
+            )
+    if role == "finance":
+        admin_ids = [int(uid) for (uid,) in db.query(models.User.id).filter(models.User.role == "admin").all() if uid is not None]
+        if admin_ids:
+            from app.utils.notifications import create_notifications
+
+            create_notifications(
+                db,
+                recipient_user_ids=admin_ids,
+                kind="payment_completed",
+                title="Payment completed by Finance",
+                message=f"Amount: {str(amt)}",
+                entity_type="employee_transaction",
+                entity_id=int(t.id),
+            )
     db.commit()
     db.refresh(t)
     return EmployeeTransactionOut.model_validate(t)

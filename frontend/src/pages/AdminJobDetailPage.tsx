@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
-import { contractJobsApi } from "../services/endpoints";
+import { Modal } from "../components/ui/Modal";
+import { Input } from "../components/ui/Input";
+import { contractJobsApi, notificationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { formatMoney } from "../utils/money";
@@ -58,6 +60,9 @@ export function AdminJobDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [job, setJob] = useState<ContractJob | null>(null);
+  const [renegotiateOpen, setRenegotiateOpen] = useState(false);
+  const [renegotiatePrice, setRenegotiatePrice] = useState("");
+  const [renegotiating, setRenegotiating] = useState(false);
 
   useEffect(() => {
     if (!Number.isFinite(id)) {
@@ -84,6 +89,26 @@ export function AdminJobDetailPage() {
       alive = false;
     };
   }, [id, toast]);
+
+  useEffect(() => {
+    if (!job) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
+        if (!alive) return;
+        const items = Array.isArray(res?.items) ? res.items : [];
+        const related = items.filter((n: any) => n?.entity_type === "contract_job" && Number(n?.entity_id) === Number(job.id));
+        await Promise.all(related.map((n: any) => notificationsApi.markRead(Number(n.id))));
+        if (related.length) window.dispatchEvent(new Event("furniture:notifications-updated"));
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [job?.id]);
 
   usePageHeader({
     title: job ? `Job #${job.id}` : "Job",
@@ -186,22 +211,8 @@ export function AdminJobDetailPage() {
                     <Button
                       variant="secondary"
                       onClick={() => {
-                        const raw = prompt("Set offer (NGN)") || "";
-                        if (!raw.trim()) return;
-                        if (raw.trim() && !isValidThousandsCommaNumber(raw)) {
-                          toast.push("error", "Fix comma formatting in amount.");
-                          return;
-                        }
-                        const amt = parseMoneyInput(raw);
-                        if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                          toast.push("error", "Enter a valid amount (> 0).");
-                          return;
-                        }
-                        void contractJobsApi
-                          .adminSetOffer(job.id, { price_offer: amt })
-                          .then((j) => setJob(j))
-                          .then(() => toast.push("success", "Offer updated."))
-                          .catch((e) => toast.push("error", getErrorMessage(e)));
+                        setRenegotiatePrice("");
+                        setRenegotiateOpen(true);
                       }}
                     >
                       Renegotiate
@@ -298,6 +309,49 @@ export function AdminJobDetailPage() {
           )}
         </Card>
       </div>
+
+      <Modal open={renegotiateOpen} title={job ? `Renegotiate price (Job #${job.id})` : "Renegotiate price"} onClose={() => (renegotiating ? null : setRenegotiateOpen(false))}>
+        <div className="space-y-3">
+          <div className="text-sm text-black/70">Enter a new offer price.</div>
+          <Input
+            label="New offer (NGN)"
+            value={renegotiatePrice}
+            onChange={(e) => setRenegotiatePrice(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+          />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" disabled={renegotiating} onClick={() => setRenegotiateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={renegotiating}
+              onClick={() => {
+                if (!job) return;
+                if (renegotiatePrice.trim() && !isValidThousandsCommaNumber(renegotiatePrice)) {
+                  toast.push("error", "Fix comma formatting in amount.");
+                  return;
+                }
+                const amt = parseMoneyInput(renegotiatePrice);
+                if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                  toast.push("error", "Enter a valid amount (> 0).");
+                  return;
+                }
+                setRenegotiating(true);
+                void contractJobsApi
+                  .adminSetOffer(job.id, { price_offer: amt })
+                  .then((j) => setJob(j))
+                  .then(() => toast.push("success", "Offer updated."))
+                  .then(() => setRenegotiateOpen(false))
+                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .finally(() => setRenegotiating(false));
+              }}
+            >
+              Submit
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

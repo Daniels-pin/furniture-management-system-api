@@ -76,20 +76,21 @@ def request_payment(
         raise HTTPException(status_code=403, detail="Change your password to continue.")
     if _needs_completion(ce):
         raise HTTPException(status_code=403, detail="Complete your profile to continue.")
-    # Prevent duplicate pending requests.
+    # Prevent duplicate open requests.
     existing = (
         db.query(models.EmployeeTransaction)
         .filter(
             models.EmployeeTransaction.contract_employee_id == ce.id,
             models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "pending",
+            models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
         )
         .first()
     )
     if existing:
         raise HTTPException(status_code=409, detail="You already have a pending payment request.")
 
-    bal = Decimal(str(ce.balance or 0))
+    # `total_owed` is the live/net owed amount (positive => company owes employee).
+    bal = Decimal(str(ce.total_owed or 0))
     amt = Decimal(str(body.amount))
     if bal <= 0:
         raise HTTPException(status_code=409, detail="You have no outstanding balance to request.")
@@ -100,7 +101,7 @@ def request_payment(
         contract_employee_id=ce.id,
         txn_type="payment",
         amount=amt,
-        status="pending",
+        status="requested",
         note=body.note,
         created_by_id=current_user.id,
     )
@@ -118,12 +119,8 @@ def request_payment(
     db.refresh(txn)
 
     # Notify admin + finance users about the new request.
-    recipients = [
-        int(uid)
-        for (uid,) in db.query(models.User.id)
-        .filter(models.User.role.in_(["admin", "finance"]))
-        .all()
-    ]
+    # Finance must not see raw employee requests. Only Admin is notified at this step.
+    recipients = [int(uid) for (uid,) in db.query(models.User.id).filter(models.User.role == "admin").all()]
     if recipients:
         create_notifications(
             db,

@@ -8,6 +8,7 @@ import { useAuth } from "../state/auth";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, sanitizeMoneyInput } from "../utils/moneyInput";
 
@@ -76,6 +77,9 @@ export function InventoryMaterialDetailPage() {
   const [payDate, setPayDate] = useState("");
   const [payNote, setPayNote] = useState("");
   const [paySaving, setPaySaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   const loadDetail = useCallback(async () => {
     if (!Number.isFinite(id)) return;
@@ -238,15 +242,14 @@ export function InventoryMaterialDetailPage() {
 
   async function removePayment(paymentId: number) {
     if (!mat) return;
-    if (!window.confirm("Remove this payment entry?")) return;
-    try {
+    setConfirmAction(() => async () => {
+      if (!mat) return;
       await inventoryApi.deletePayment(mat.id, paymentId);
       toast.push("success", "Payment removed");
       await loadDetail();
       await loadPayments();
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    }
+    });
+    setConfirmOpen(true);
   }
 
   useEffect(() => {
@@ -488,6 +491,26 @@ export function InventoryMaterialDetailPage() {
           </Card>
         </>
       )}
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Remove payment"
+        message="Remove this payment entry?"
+        busy={confirmBusy}
+        onClose={() => (confirmBusy ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
+        }}
+      />
     </div>
   );
 }

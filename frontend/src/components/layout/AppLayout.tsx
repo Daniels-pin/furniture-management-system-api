@@ -215,29 +215,36 @@ export function AppLayout() {
 
   useEffect(() => {
     // Reset per-user on login/logout.
-    const key = auth.userId ? `furniture_last_notif_id_${auth.userId}` : null;
-    const saved = key ? Number(localStorage.getItem(key) || 0) : 0;
-    lastNotifIdRef.current = Number.isFinite(saved) ? saved : 0;
+    const key = auth.userId ? `furniture_last_notif_created_at_${auth.userId}` : null;
+    const saved = key ? String(localStorage.getItem(key) || "") : "";
+    // We store an ISO timestamp string; empty means "no baseline".
+    lastNotifIdRef.current = 0; // kept for backward compatibility (unused by new polling)
+    if (key && !saved) localStorage.setItem(key, "");
   }, [auth.userId, auth.token]);
 
   useEffect(() => {
     if (!auth.token || !auth.userId) return;
     let alive = true;
-    const key = `furniture_last_notif_id_${auth.userId}`;
+    const key = `furniture_last_notif_created_at_${auth.userId}`;
 
     async function tick() {
       try {
-        const afterId = lastNotifIdRef.current > 0 ? lastNotifIdRef.current : undefined;
-        const res = await notificationsApi.my({ after_id: afterId, limit: 30 });
+        const lastCreatedAt = localStorage.getItem(key) || "";
+        const baseline = lastCreatedAt ? new Date(lastCreatedAt).getTime() : 0;
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
         if (!alive) return;
         const items = Array.isArray(res?.items) ? [...res.items] : [];
-        // API returns newest-first; show oldest-first.
-        items.sort((a: NotificationItem, b: NotificationItem) => a.id - b.id);
+        // Toast any unread notification whose (possibly bumped) created_at is newer than our baseline.
+        items.sort((a: NotificationItem, b: NotificationItem) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        let newest = baseline;
         for (const n of items) {
+          const t = new Date(n.created_at).getTime();
+          if (!Number.isFinite(t)) continue;
+          newest = Math.max(newest, t);
+          if (t <= baseline) continue;
           toast.push("success", n.title + (n.message ? ` — ${n.message}` : ""));
-          lastNotifIdRef.current = Math.max(lastNotifIdRef.current, n.id);
         }
-        localStorage.setItem(key, String(lastNotifIdRef.current));
+        if (newest > baseline) localStorage.setItem(key, new Date(newest).toISOString());
       } catch {
         // ignore (non-critical)
       }

@@ -8,6 +8,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 
 function fmtWhen(iso: string) {
   try {
@@ -43,6 +44,9 @@ export function MachineDetailPage() {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<MachineStatus>("available");
@@ -192,14 +196,12 @@ export function MachineDetailPage() {
             type="button"
             variant="secondary"
             onClick={async () => {
-              if (!window.confirm(`Move “${m.machine_name}” to Trash?`)) return;
-              try {
+              setConfirmAction(() => async () => {
                 await machinesApi.remove(m.id);
                 toast.push("success", "Moved to Trash");
                 nav("/equipment", { replace: true });
-              } catch (e) {
-                toast.push("error", getErrorMessage(e));
-              }
+              });
+              setConfirmOpen(true);
             }}
           >
             Move to trash
@@ -286,6 +288,26 @@ export function MachineDetailPage() {
           </Button>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Move machine to Trash"
+        message={m ? `Move “${m.machine_name}” to Trash?` : "Move to Trash?"}
+        busy={confirmBusy}
+        onClose={() => (confirmBusy ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
+        }}
+      />
     </div>
   );
 }

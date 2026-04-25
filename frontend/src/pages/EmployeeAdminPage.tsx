@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { employeesApi, usersApi, type EmployeePeriodParams } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
@@ -10,20 +11,6 @@ import { useAuth } from "../state/auth";
 import type { EmployeeDetail, PayrollPeriodsNav, User } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
-
-async function runWithPaidConfirm<T>(fn: (confirmFinancialEdit: boolean) => Promise<T>): Promise<T> {
-  try {
-    return await fn(false);
-  } catch (e: unknown) {
-    const status = (e as { response?: { status?: number } })?.response?.status;
-    if (status === 409) {
-      if (window.confirm("This month is marked paid. Change payroll records anyway?")) {
-        return await fn(true);
-      }
-    }
-    throw e;
-  }
-}
 
 export function EmployeeAdminPage() {
   const auth = useAuth();
@@ -63,6 +50,33 @@ export function EmployeeAdminPage() {
   const [payRef, setPayRef] = useState("");
   const [payDate, setPayDate] = useState("");
   const [periodNav, setPeriodNav] = useState<PayrollPeriodsNav | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("Confirm");
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmResolve, setConfirmResolve] = useState<null | ((v: boolean) => void)>(null);
+
+  async function askConfirm(title: string, message: string) {
+    return await new Promise<boolean>((resolve) => {
+      setConfirmTitle(title);
+      setConfirmMessage(message);
+      setConfirmResolve(() => resolve);
+      setConfirmOpen(true);
+    });
+  }
+
+  async function runWithPaidConfirm<T>(fn: (confirmFinancialEdit: boolean) => Promise<T>): Promise<T> {
+    try {
+      return await fn(false);
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status === 409) {
+        const ok = await askConfirm("Confirm change", "This month is marked paid. Change payroll records anyway?");
+        if (ok) return await fn(true);
+      }
+      throw e;
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -165,9 +179,8 @@ export function EmployeeAdminPage() {
       return;
     }
     if (!isNew && loadedBaseSalary.trim() !== baseSalary.trim()) {
-      if (!window.confirm("Update base salary? This affects payroll calculations for every month.")) {
-        return;
-      }
+      const ok = await askConfirm("Update base salary", "Update base salary? This affects payroll calculations for every month.");
+      if (!ok) return;
     }
     setSaving(true);
     try {
@@ -284,7 +297,8 @@ export function EmployeeAdminPage() {
 
   async function removeEmployee() {
     if (!emp || isNew) return;
-    if (!window.confirm(`Delete employee “${emp.full_name}”? This cannot be undone.`)) return;
+    const ok = await askConfirm("Delete employee", `Delete employee “${emp.full_name}”? This cannot be undone.`);
+    if (!ok) return;
     try {
       await employeesApi.remove(emp.id);
       toast.push("success", "Employee removed.");
@@ -297,9 +311,11 @@ export function EmployeeAdminPage() {
   async function onPaymentAction(next: "paid" | "unpaid") {
     if (!emp || isNew) return;
     if (next === "paid") {
-      if (!window.confirm(`Mark ${emp.period.label} as paid for ${emp.full_name}?`)) return;
+      const ok = await askConfirm("Mark paid", `Mark ${emp.period.label} as paid for ${emp.full_name}?`);
+      if (!ok) return;
     } else {
-      if (!window.confirm(`Mark ${emp.period.label} as unpaid? Payment reference will be cleared.`)) return;
+      const ok = await askConfirm("Mark unpaid", `Mark ${emp.period.label} as unpaid? Payment reference will be cleared.`);
+      if (!ok) return;
     }
     try {
       const iso = payDate ? new Date(payDate + "T12:00:00").toISOString() : undefined;
@@ -746,6 +762,32 @@ export function EmployeeAdminPage() {
           </ul>
         </Card>
       ) : null}
+
+      <ConfirmModal
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        busy={confirmBusy}
+        confirmLabel="Yes"
+        cancelLabel="No"
+        confirmVariant="secondary"
+        onClose={() => {
+          if (confirmBusy) return;
+          setConfirmOpen(false);
+          const resolve = confirmResolve;
+          setConfirmResolve(null);
+          if (resolve) resolve(false);
+        }}
+        onConfirm={() => {
+          if (confirmBusy) return;
+          setConfirmBusy(true);
+          const resolve = confirmResolve;
+          setConfirmResolve(null);
+          setConfirmOpen(false);
+          setConfirmBusy(false);
+          if (resolve) resolve(true);
+        }}
+      />
     </div>
   );
 }

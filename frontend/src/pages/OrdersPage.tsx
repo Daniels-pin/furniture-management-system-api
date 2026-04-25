@@ -425,7 +425,125 @@ export function OrdersPage() {
           </div>
         </div>
 
-        <div className="mt-5 min-w-0 overflow-x-touch">
+        <div className="mt-5 md:hidden space-y-3">
+          {isLoading ? (
+            <div className="text-sm text-black/60">Loading…</div>
+          ) : orders.length === 0 ? (
+            <div className="text-sm text-black/60">No orders found.</div>
+          ) : (
+            (() => {
+              const pending = orders.filter((o) => o.status === "pending");
+              const progress = orders.filter((o) => o.status === "in_progress");
+              const completed = orders.filter((o) => o.status === "completed" || o.status === "delivered");
+
+              const sections: Array<{ key: string; title: string; rows: Order[] }> =
+                view === "completed"
+                  ? [{ key: "completed", title: "Completed", rows: completed }]
+                  : [
+                      { key: "pending", title: "Pending", rows: pending },
+                      { key: "in_progress", title: "In Progress", rows: progress }
+                    ];
+
+              let runningIndex = 0;
+              return sections.flatMap((sec) => {
+                if (!sec.rows.length) return [];
+                const header = (
+                  <div key={`hdr:${sec.key}`} className="pt-2 text-xs font-bold uppercase tracking-[0.08em] text-black/50">
+                    {sec.title}
+                  </div>
+                );
+                const cards = sec.rows.map((o) => {
+                  runningIndex += 1;
+                  const displayNumber = String((page - 1) * limit + runningIndex).padStart(3, "0");
+                  const d = daysRemaining(o.due_date ?? null);
+                  const status = (o.status === "pending" || o.status === "in_progress" || o.status === "completed" ? o.status : "completed") as any;
+                  return (
+                    <div
+                      key={o.id}
+                      className="rounded-2xl border border-black/10 bg-white p-4"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => nav(`/orders/${o.id}`, { state: { displayNumber } })}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        nav(`/orders/${o.id}`, { state: { displayNumber } });
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold">#{displayNumber}</div>
+                          <div className="mt-1 truncate text-xs font-semibold text-black/55">
+                            {o.customer?.name ?? "—"}
+                          </div>
+                        </div>
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {canUpdateStatus ? (
+                            <StatusDropdown
+                              value={status}
+                              onChange={async (next) => {
+                                try {
+                                  setOrders((xs) => xs.map((x) => (x.id === o.id ? { ...x, status: next } : x)));
+                                  await ordersApi.updateStatus(o.id, next);
+                                  await refresh(page);
+                                } catch (err) {
+                                  toast.push("error", getErrorMessage(err));
+                                  await refresh(page);
+                                }
+                              }}
+                            />
+                          ) : (
+                            <StatusBadge status={o.status} />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Due</div>
+                          <div className="mt-0.5 font-bold">{o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Days left</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{d === null ? "—" : d}</div>
+                        </div>
+                        {canSeePricing ? (
+                          <div className="col-span-2 rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                            <div className="font-semibold text-black/55">Pricing</div>
+                            <div className="mt-0.5 font-bold tabular-nums">
+                              {o.total != null || o.final_price != null || o.total_price != null
+                                ? `Total: ${formatMoney((o as any).total ?? o.final_price ?? o.total_price)}`
+                                : "—"}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-3">
+                        {canDeleteOrder(o) ? (
+                          <Button
+                            variant="danger"
+                            className="w-full"
+                            disabled={deletingId === o.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (typeof o.id === "number") setConfirmDeleteId(o.id);
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                });
+                return [header, ...cards];
+              });
+            })()
+          )}
+        </div>
+
+        <div className="mt-5 hidden md:block min-w-0 overflow-x-touch">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">

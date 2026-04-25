@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { contractEmployeePortalApi, contractJobsApi, notificationsApi } from "../services/endpoints";
@@ -34,8 +34,69 @@ function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   return <span className={[base, cls].join(" ")}>{label}</span>;
 }
 
+function ContractJobCard({
+  job,
+  highlight,
+  onOpen,
+  actions
+}: {
+  job: ContractJob;
+  highlight: boolean;
+  onOpen(): void;
+  actions: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={[
+        "w-full rounded-2xl border border-black/10 bg-white p-4 text-left shadow-soft transition",
+        highlight ? "bg-blue-50/60" : "",
+        "active:scale-[0.99]"
+      ].join(" ")}
+      onClick={onOpen}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-bold">Job #{job.id}</div>
+            <JobStatusBadge status={job.status} />
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+              <div className="font-semibold text-black/55">Price</div>
+              <div className="mt-0.5 text-sm font-bold tabular-nums text-black">
+                {job.final_price ? formatMoney(job.final_price) : job.price_offer ? formatMoney(job.price_offer) : "—"}
+              </div>
+            </div>
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+              <div className="font-semibold text-black/55">Balance</div>
+              <div className="mt-0.5 text-sm font-bold tabular-nums text-black">
+                {typeof job.balance !== "undefined" && job.balance !== null ? formatMoney(job.balance) : "—"}
+              </div>
+            </div>
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+              <div className="font-semibold text-black/55">Paid</div>
+              <div className="mt-0.5 text-sm font-bold tabular-nums text-black">{formatMoney(job.amount_paid ?? 0)}</div>
+            </div>
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+              <div className="font-semibold text-black/55">Created</div>
+              <div className="mt-0.5 text-[13px] font-semibold text-black">{new Date(job.created_at).toLocaleDateString()}</div>
+            </div>
+          </div>
+        </div>
+        <div className="shrink-0 text-xs font-semibold text-black/45">Tap to open</div>
+      </div>
+
+      <div className="mt-4" onClick={(e) => e.stopPropagation()}>
+        <div className="grid grid-cols-1 gap-2">{actions}</div>
+      </div>
+    </button>
+  );
+}
+
 export function ContractEmployeeDashboardPage() {
   const toast = useToast();
+  const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [me, setMe] = useState<ContractEmployeeMe | null>(null);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
@@ -81,6 +142,10 @@ export function ContractEmployeeDashboardPage() {
   const [renegotiateTarget, setRenegotiateTarget] = useState<ContractJob | null>(null);
   const [renegotiatePrice, setRenegotiatePrice] = useState("");
   const [renegotiating, setRenegotiating] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<ContractJob | null>(null);
+  const [cancelNote, setCancelNote] = useState("");
+  const [cancelling, setCancelling] = useState(false);
   const [highlightJobIds, setHighlightJobIds] = useState<number[]>([]);
 
   usePageHeader({
@@ -327,87 +392,65 @@ export function ContractEmployeeDashboardPage() {
           {jobs.length === 0 ? (
             <div className="mt-3 text-sm text-black/60">No jobs yet.</div>
           ) : (
-            <div className="mt-3 min-w-0 overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="text-black/60">
-                  <tr className="border-b border-black/10">
-                    <th className="py-3 pr-4 font-semibold">Job</th>
-                    <th className="py-3 pr-4 font-semibold">Status</th>
-                    <th className="py-3 pr-4 text-right font-semibold">Price</th>
-                    <th className="py-3 pr-4 text-right font-semibold">Paid</th>
-                    <th className="py-3 pr-4 text-right font-semibold">Balance</th>
-                    <th className="py-3 pr-4 font-semibold">Timeline</th>
-                    <th className="py-3 pr-0 text-right font-semibold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((j) => (
-                    <tr
+            <>
+              {/* Mobile: cards to avoid horizontal scrolling + cramped row actions */}
+              <div className="mt-3 space-y-3 md:hidden">
+                {jobs.map((j) => {
+                  const needsBoth = Boolean((j as any).negotiation_occurred);
+                  const lastBy = ((j as any).last_offer_by_role ?? null) as any;
+                  const empAccepted = Boolean((j as any).employee_accepted_at);
+                  const canAccept = j.status === "pending" && !j.price_accepted_at && j.price_offer != null && (needsBoth ? !empAccepted : lastBy === "admin");
+                  const waitingForAdmin = j.status === "pending" && !j.price_accepted_at && j.price_offer != null && !canAccept;
+                  const canRenegotiate = j.status !== "cancelled" && !j.price_accepted_at;
+                  const canStart = j.status === "pending" && Boolean(j.price_accepted_at);
+                  const canComplete = j.status === "in_progress";
+                  const canCancel = j.status !== "cancelled";
+
+                  return (
+                    <ContractJobCard
                       key={j.id}
-                      className={[
-                        "border-b border-black/5",
-                        highlightJobIds.includes(j.id) ? "bg-blue-50/60" : ""
-                      ].join(" ")}
-                    >
-                      <td className="py-3 pr-4 font-semibold">#{j.id}</td>
-                      <td className="py-3 pr-4">
-                        <JobStatusBadge status={j.status} />
-                      </td>
-                      <td className="py-3 pr-4 text-right font-bold tabular-nums">
-                        {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
-                      </td>
-                      <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</td>
-                      <td className="py-3 pr-4 text-right font-bold tabular-nums">
-                        {typeof j.balance !== "undefined" && j.balance !== null ? formatMoney(j.balance) : "—"}
-                      </td>
-                      <td className="py-3 pr-4 text-xs font-semibold text-black/60">
-                        Created: {new Date(j.created_at).toLocaleString()}
-                        {j.price_accepted_at ? ` • Accepted: ${new Date(j.price_accepted_at).toLocaleString()}` : ""}
-                        {j.started_at ? ` • Started: ${new Date(j.started_at).toLocaleString()}` : ""}
-                        {j.completed_at ? ` • Completed: ${new Date(j.completed_at).toLocaleString()}` : ""}
-                        {j.paid_flag ? " • Paid" : ""}
-                      </td>
-                      <td className="py-3 pr-0 text-right">
-                        <div className="inline-flex flex-wrap justify-end gap-2">
-                          {j.status === "pending" && !j.price_accepted_at ? (
-                            <>
-                              {(() => {
-                                const needsBoth = Boolean((j as any).negotiation_occurred);
-                                const lastBy = ((j as any).last_offer_by_role ?? null) as any;
-                                const empAccepted = Boolean((j as any).employee_accepted_at);
-                                const canAccept = needsBoth ? !empAccepted : lastBy === "admin";
-                                return canAccept ? (
-                                  <Button
-                                    variant="secondary"
-                                    onClick={() => {
-                                      void contractJobsApi
-                                        .acceptPrice(j.id)
-                                        .then(() => refresh())
-                                        .then(() => toast.push("success", "Offer accepted."))
-                                        .catch((e) => toast.push("error", getErrorMessage(e)));
-                                    }}
-                                  >
-                                    Accept offer
-                                  </Button>
-                                ) : (
-                                  <Button variant="secondary" disabled>
-                                    Waiting for admin
-                                  </Button>
-                                );
-                              })()}
-                              <Button
-                                onClick={() => {
-                                  setRenegotiateTarget(j);
-                                  setRenegotiatePrice("");
-                                  setRenegotiateOpen(true);
-                                }}
-                              >
-                                Renegotiate price
-                              </Button>
-                            </>
-                          ) : null}
-                          {j.status === "pending" && j.price_accepted_at ? (
+                      job={j}
+                      highlight={highlightJobIds.includes(j.id)}
+                      onOpen={() => nav(`/contract/jobs/${j.id}`)}
+                      actions={
+                        <>
+                          <Button variant="secondary" className="w-full" onClick={() => nav(`/contract/jobs/${j.id}`)}>
+                            View details
+                          </Button>
+                          {canAccept ? (
                             <Button
+                              variant="secondary"
+                              className="w-full"
+                              onClick={() => {
+                                void contractJobsApi
+                                  .acceptPrice(j.id)
+                                  .then(() => refresh())
+                                  .then(() => toast.push("success", "Offer accepted."))
+                                  .catch((e) => toast.push("error", getErrorMessage(e)));
+                              }}
+                            >
+                              Accept offer
+                            </Button>
+                          ) : waitingForAdmin ? (
+                            <Button variant="secondary" className="w-full" disabled>
+                              Waiting for admin
+                            </Button>
+                          ) : null}
+                          {canRenegotiate ? (
+                            <Button
+                              className="w-full"
+                              onClick={() => {
+                                setRenegotiateTarget(j);
+                                setRenegotiatePrice("");
+                                setRenegotiateOpen(true);
+                              }}
+                            >
+                              Renegotiate price
+                            </Button>
+                          ) : null}
+                          {canStart ? (
+                            <Button
+                              className="w-full"
                               onClick={() => {
                                 void contractJobsApi
                                   .start(j.id)
@@ -419,8 +462,9 @@ export function ContractEmployeeDashboardPage() {
                               Start
                             </Button>
                           ) : null}
-                          {j.status === "in_progress" ? (
+                          {canComplete ? (
                             <Button
+                              className="w-full"
                               onClick={() => {
                                 void contractJobsApi
                                   .complete(j.id)
@@ -432,29 +476,164 @@ export function ContractEmployeeDashboardPage() {
                               Complete
                             </Button>
                           ) : null}
-                          {j.status !== "cancelled" ? (
+                          {canCancel ? (
                             <Button
                               variant="danger"
+                              className="w-full"
                               onClick={() => {
-                                const note = prompt("Cancellation note (required)") || "";
-                                if (!note.trim()) return;
-                                void contractJobsApi
-                                  .cancel(j.id, { note: note.trim() })
-                                  .then(() => refresh())
-                                  .then(() => toast.push("success", "Job cancelled."))
-                                  .catch((e) => toast.push("error", getErrorMessage(e)));
+                                setCancelTarget(j);
+                                setCancelNote("");
+                                setCancelOpen(true);
                               }}
                             >
                               Cancel
                             </Button>
                           ) : null}
-                        </div>
-                      </td>
+                        </>
+                      }
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Desktop: preserve existing table layout */}
+              <div className="mt-3 hidden min-w-0 overflow-x-touch md:block">
+                <table className="w-full min-w-[920px] text-left text-sm">
+                  <thead className="text-black/60">
+                    <tr className="border-b border-black/10">
+                      <th className="py-3 pr-4 font-semibold">Job</th>
+                      <th className="py-3 pr-4 font-semibold">Status</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Price</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Paid</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Balance</th>
+                      <th className="py-3 pr-4 font-semibold">Timeline</th>
+                      <th className="py-3 pr-0 text-right font-semibold">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {jobs.map((j) => (
+                      <tr
+                        key={j.id}
+                        className={[
+                          "border-b border-black/5",
+                          highlightJobIds.includes(j.id) ? "bg-blue-50/60" : "",
+                          "cursor-pointer hover:bg-black/[0.02]"
+                        ].join(" ")}
+                        onClick={() => nav(`/contract/jobs/${j.id}`)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") nav(`/contract/jobs/${j.id}`);
+                        }}
+                      >
+                        <td className="py-3 pr-4 font-semibold">#{j.id}</td>
+                        <td className="py-3 pr-4">
+                          <JobStatusBadge status={j.status} />
+                        </td>
+                        <td className="py-3 pr-4 text-right font-bold tabular-nums">
+                          {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
+                        </td>
+                        <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</td>
+                        <td className="py-3 pr-4 text-right font-bold tabular-nums">
+                          {typeof j.balance !== "undefined" && j.balance !== null ? formatMoney(j.balance) : "—"}
+                        </td>
+                        <td className="py-3 pr-4 text-xs font-semibold text-black/60">
+                          Created: {new Date(j.created_at).toLocaleString()}
+                          {j.price_accepted_at ? ` • Accepted: ${new Date(j.price_accepted_at).toLocaleString()}` : ""}
+                          {j.started_at ? ` • Started: ${new Date(j.started_at).toLocaleString()}` : ""}
+                          {j.completed_at ? ` • Completed: ${new Date(j.completed_at).toLocaleString()}` : ""}
+                          {j.paid_flag ? " • Paid" : ""}
+                        </td>
+                        <td className="py-3 pr-0 text-right">
+                          <div className="inline-flex flex-wrap justify-end gap-2">
+                            {j.status === "pending" && !j.price_accepted_at ? (
+                              <>
+                                {(() => {
+                                  const needsBoth = Boolean((j as any).negotiation_occurred);
+                                  const lastBy = ((j as any).last_offer_by_role ?? null) as any;
+                                  const empAccepted = Boolean((j as any).employee_accepted_at);
+                                  const canAccept = needsBoth ? !empAccepted : lastBy === "admin";
+                                  return canAccept ? (
+                                    <Button
+                                      variant="secondary"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void contractJobsApi
+                                          .acceptPrice(j.id)
+                                          .then(() => refresh())
+                                          .then(() => toast.push("success", "Offer accepted."))
+                                          .catch((e) => toast.push("error", getErrorMessage(e)));
+                                      }}
+                                    >
+                                      Accept offer
+                                    </Button>
+                                  ) : (
+                                    <Button variant="secondary" disabled>
+                                      Waiting for admin
+                                    </Button>
+                                  );
+                                })()}
+                                <Button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenegotiateTarget(j);
+                                    setRenegotiatePrice("");
+                                    setRenegotiateOpen(true);
+                                  }}
+                                >
+                                  Renegotiate price
+                                </Button>
+                              </>
+                            ) : null}
+                            {j.status === "pending" && j.price_accepted_at ? (
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void contractJobsApi
+                                    .start(j.id)
+                                    .then(() => refresh())
+                                    .then(() => toast.push("success", "Job started."))
+                                    .catch((e) => toast.push("error", getErrorMessage(e)));
+                                }}
+                              >
+                                Start
+                              </Button>
+                            ) : null}
+                            {j.status === "in_progress" ? (
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void contractJobsApi
+                                    .complete(j.id)
+                                    .then(() => refresh())
+                                    .then(() => toast.push("success", "Job completed."))
+                                    .catch((e) => toast.push("error", getErrorMessage(e)));
+                                }}
+                              >
+                                Complete
+                              </Button>
+                            ) : null}
+                            {j.status !== "cancelled" ? (
+                              <Button
+                                variant="danger"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCancelTarget(j);
+                                  setCancelNote("");
+                                  setCancelOpen(true);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </Card>
       ) : tab === "new" ? (
@@ -506,9 +685,9 @@ export function ContractEmployeeDashboardPage() {
                   toast.push("error", "Fix comma formatting in amount.");
                   return;
                 }
-                const amt = parseMoneyInput(newPriceOffer);
-                if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                  toast.push("error", "Enter a valid price (> 0).");
+                const amt = newPriceOffer.trim() ? parseMoneyInput(newPriceOffer) : null;
+                if (newPriceOffer.trim() && (amt === null || Number.isNaN(amt) || amt <= 0)) {
+                  toast.push("error", "Enter a valid price (> 0) or leave it blank.");
                   return;
                 }
                 setCreating(true);
@@ -521,7 +700,7 @@ export function ContractEmployeeDashboardPage() {
                   await contractJobsApi.createMe({
                     description: newDesc.trim(),
                     image_url: imageUrl || undefined,
-                    price_offer: amt
+                    price_offer: amt ?? undefined
                   });
                 })()
                   .then(() => refresh())
@@ -541,13 +720,13 @@ export function ContractEmployeeDashboardPage() {
             </Button>
           </div>
           <div className="mt-2 text-xs text-black/50">
-            Description is required. Image is optional (upload or paste a Cloudinary URL).
+            Description is required. Price and image are optional.
           </div>
         </Card>
       ) : tab === "request" ? (
         <Card className="!p-4">
           <div className="text-sm font-semibold">Request payment</div>
-          <div className="mt-2 text-sm text-black/60">This creates a pending request for Finance to review.</div>
+          <div className="mt-2 text-sm text-black/60">This creates a request for Admin approval. Finance will only see it after Admin sends it to Finance.</div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Amount (NGN)"
@@ -762,6 +941,39 @@ export function ContractEmployeeDashboardPage() {
               }}
             >
               Submit
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={cancelOpen} title={cancelTarget ? `Cancel job (Job #${cancelTarget.id})` : "Cancel job"} onClose={() => (cancelling ? null : setCancelOpen(false))}>
+        <div className="space-y-3">
+          <div className="text-sm text-black/70">Provide a cancellation reason (required). This will notify the admin.</div>
+          <Input label="Reason" value={cancelNote} onChange={(e) => setCancelNote(e.target.value)} placeholder="Reason…" />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" disabled={cancelling} onClick={() => setCancelOpen(false)}>
+              Back
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={cancelling}
+              onClick={() => {
+                if (!cancelTarget) return;
+                if (!cancelNote.trim()) {
+                  toast.push("error", "Reason is required.");
+                  return;
+                }
+                setCancelling(true);
+                void contractJobsApi
+                  .cancel(cancelTarget.id, { note: cancelNote.trim() })
+                  .then(() => refresh())
+                  .then(() => toast.push("success", "Job cancelled."))
+                  .then(() => setCancelOpen(false))
+                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .finally(() => setCancelling(false));
+              }}
+            >
+              Confirm cancel
             </Button>
           </div>
         </div>

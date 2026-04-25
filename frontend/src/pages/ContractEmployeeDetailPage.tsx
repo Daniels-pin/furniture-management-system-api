@@ -207,15 +207,15 @@ export function ContractEmployeeDetailPage() {
               </div>
               <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
                 <div className="text-xs font-semibold text-black/60">Phone</div>
-                <div className="mt-1 font-bold">{detail.phone ?? "—"}</div>
+                <div className="mt-1 font-bold">{detail.phone ?? "Not provided"}</div>
               </div>
               <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
                 <div className="text-xs font-semibold text-black/60">Bank</div>
-                <div className="mt-1 font-bold">{(detail as any).bank_name ?? "—"}</div>
+                <div className="mt-1 font-bold">{(detail as any).bank_name ?? "Not provided"}</div>
               </div>
               <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
                 <div className="text-xs font-semibold text-black/60">Account</div>
-                <div className="mt-1 font-mono text-xs font-bold">{detail.account_number ?? "—"}</div>
+                <div className="mt-1 font-mono text-xs font-bold">{detail.account_number ?? "Not provided"}</div>
               </div>
             </div>
           </Card>
@@ -325,101 +325,39 @@ export function ContractEmployeeDetailPage() {
 
               <Card className="!p-4">
                 <div className="flex flex-wrap items-end justify-between gap-2">
-                  <div className="text-sm font-semibold text-black">
-                    {selectedJob ? `Job #${selectedJob.id}` : "Select a job"}
-                  </div>
+                  <div className="text-sm font-semibold text-black">Open job details</div>
+                  <Button
+                    variant="secondary"
+                    disabled={!selectedJob}
+                    onClick={() => {
+                      if (!selectedJob) return;
+                      nav(`/admin/jobs/${selectedJob.id}`);
+                    }}
+                  >
+                    View selected job
+                  </Button>
                 </div>
                 {!selectedJob ? (
-                  <div className="mt-2 text-sm text-black/60">Click a job from the preview list to open it here.</div>
+                  <div className="mt-2 text-sm text-black/60">Select a job above, then open it in the full job detail page.</div>
                 ) : (
-                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
-                      <div className="text-xs font-semibold text-black/55">Description</div>
-                      <div className="mt-1 text-sm font-semibold text-black/80 whitespace-pre-wrap break-words">
-                        {selectedJob.description || "—"}
-                      </div>
-                      <div className="text-xs font-semibold text-black/55">Image</div>
-                      {selectedJob.image_url ? (
-                        <a
-                          className="mt-2 inline-block text-sm font-semibold text-black underline decoration-black/30 underline-offset-2"
-                          href={selectedJob.image_url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Preview image
-                        </a>
-                      ) : (
-                        <div className="mt-2 text-sm text-black/60">—</div>
-                      )}
-                      <div className="mt-3 text-xs font-semibold text-black/55">Status</div>
-                      <div className="mt-1">
-                        <JobStatusBadge status={selectedJob.status} />
-                      </div>
-                      <div className="mt-3 text-xs font-semibold text-black/55">Timeline</div>
-                      <div className="mt-1 text-xs text-black/60">
-                        Created: {new Date(selectedJob.created_at).toLocaleString()}
-                        {selectedJob.price_accepted_at ? ` • Accepted: ${new Date(selectedJob.price_accepted_at).toLocaleString()}` : ""}
-                        {selectedJob.started_at ? ` • Started: ${new Date(selectedJob.started_at).toLocaleString()}` : ""}
-                        {selectedJob.completed_at ? ` • Completed: ${new Date(selectedJob.completed_at).toLocaleString()}` : ""}
-                        {selectedJob.paid_flag ? " • Paid" : ""}
-                      </div>
+                  <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-semibold">Job #{selectedJob.id}</div>
+                      <JobStatusBadge status={selectedJob.status} />
                     </div>
-                    <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
-                      <div className="text-xs font-semibold text-black/55">Price</div>
-                      <div className="mt-1 text-sm font-bold tabular-nums">
+                    <div className="mt-1 text-xs text-black/60 line-clamp-2">{(selectedJob.description || "").trim() || "—"}</div>
+                    <div className="mt-2 text-xs text-black/60">
+                      Price:{" "}
+                      <span className="font-semibold text-black tabular-nums">
                         {selectedJob.final_price
                           ? formatMoney(selectedJob.final_price)
                           : selectedJob.price_offer
                             ? formatMoney(selectedJob.price_offer)
                             : "—"}
-                      </div>
-                      {!selectedJob.price_accepted_at ? (
-                        <div className="mt-3">
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              const raw = prompt("Set offer (NGN) — employee will accept to lock") || "";
-                              if (!raw.trim()) return;
-                              if (raw.trim() && !isValidThousandsCommaNumber(raw)) {
-                                toast.push("error", "Fix comma formatting in amount.");
-                                return;
-                              }
-                              const amt = parseMoneyInput(raw);
-                              if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                                toast.push("error", "Enter a valid amount (> 0).");
-                                return;
-                              }
-                              void contractJobsApi
-                                .adminSetOffer(selectedJob.id, { price_offer: amt })
-                                .then(() => refreshJobs())
-                                .then(() => toast.push("success", "Offer updated."))
-                                .catch((e) => toast.push("error", getErrorMessage(e)));
-                            }}
-                          >
-                            Renegotiate (set offer)
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-xs text-black/55">Price is locked (employee accepted).</div>
-                      )}
-                      {selectedJob.status !== "cancelled" ? (
-                        <div className="mt-3">
-                          <Button
-                            variant="danger"
-                            onClick={() => {
-                              const note = prompt("Cancellation note (required)") || "";
-                              if (!note.trim()) return;
-                              void contractJobsApi
-                                .cancel(selectedJob.id, { note: note.trim() })
-                                .then(() => Promise.all([refreshJobs(), contractEmployeesApi.get(detail.id).then(setDetail)]))
-                                .then(() => toast.push("success", "Job cancelled."))
-                                .catch((e) => toast.push("error", getErrorMessage(e)));
-                            }}
-                          >
-                            Cancel job
-                          </Button>
-                        </div>
-                      ) : null}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs text-black/55">
+                      All job actions (renegotiate, accept, cancel, override) are handled on the full job detail page.
                     </div>
                   </div>
                 )}
@@ -602,7 +540,48 @@ export function ContractEmployeeDetailPage() {
                 {jobs.length === 0 ? (
                   <div className="mt-2 text-sm text-black/60">No jobs yet.</div>
                 ) : (
-                  <div className="mt-3 min-w-0 overflow-x-auto">
+                  <>
+                    <div className="mt-3 md:hidden space-y-3">
+                      {jobs
+                        .filter((j) => j.status !== "cancelled")
+                        .map((j) => (
+                          <div key={j.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-bold">Job #{j.id}</div>
+                                <div className="mt-1">
+                                  <JobStatusBadge status={j.status} />
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs font-semibold text-black/55">Balance</div>
+                                <div className="mt-0.5 text-base font-bold tabular-nums">
+                                  {typeof j.balance !== "undefined" && j.balance !== null ? formatMoney(j.balance) : "—"}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                                <div className="font-semibold text-black/55">Total</div>
+                                <div className="mt-0.5 font-bold tabular-nums">{j.final_price ? formatMoney(j.final_price) : "—"}</div>
+                              </div>
+                              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                                <div className="font-semibold text-black/55">Paid</div>
+                                <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</div>
+                              </div>
+                              <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                                <div className="font-semibold text-black/55">Balance</div>
+                                <div className="mt-0.5 font-bold tabular-nums">
+                                  {typeof j.balance !== "undefined" && j.balance !== null ? formatMoney(j.balance) : "—"}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+
+                    <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
                     <table className="w-full min-w-[920px] text-left text-sm">
                       <thead className="text-black/60">
                         <tr className="border-b border-black/10">
@@ -637,7 +616,8 @@ export function ContractEmployeeDetailPage() {
                           ))}
                       </tbody>
                     </table>
-                  </div>
+                    </div>
+                  </>
                 )}
               </Card>
 
@@ -668,7 +648,7 @@ export function ContractEmployeeDetailPage() {
                       key={t.id}
                       className={[
                         "px-3 py-2 text-sm",
-                        t.status === "pending"
+                        t.status === "pending" || t.status === "requested" || t.status === "approved_by_admin" || t.status === "sent_to_finance"
                           ? "bg-black/[0.03]"
                           : t.status === "cancelled"
                             ? "bg-black/[0.015] opacity-70"
@@ -690,7 +670,15 @@ export function ContractEmployeeDetailPage() {
                       <div className="mt-0.5 text-xs text-black/55">
                         {new Date(t.created_at).toLocaleString()} •{" "}
                         <span className="font-semibold">
-                          {t.status === "pending" ? "Pending" : t.status === "cancelled" ? "Cancelled" : "Paid"}
+                          {t.status === "requested"
+                            ? "Requested"
+                            : t.status === "approved_by_admin"
+                              ? "Approved"
+                              : t.status === "sent_to_finance" || t.status === "pending"
+                                ? "Sent to Finance"
+                                : t.status === "cancelled"
+                                  ? "Cancelled"
+                                  : "Paid"}
                         </span>
                         {typeof t.running_balance !== "undefined" && t.running_balance !== null
                           ? ` • Balance: ${formatMoney(t.running_balance)}`
@@ -703,7 +691,12 @@ export function ContractEmployeeDetailPage() {
                       ) : null}
                       {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
                       <div className="mt-2 flex justify-end gap-2">
-                        {auth.role === "admin" && t.status === "pending" && t.txn_type === "payment" ? (
+                        {auth.role === "admin" &&
+                        (t.status === "requested" ||
+                          t.status === "approved_by_admin" ||
+                          t.status === "sent_to_finance" ||
+                          t.status === "pending") &&
+                        t.txn_type === "payment" ? (
                           <Button variant="danger" onClick={() => setCancelTargetId(t.id)}>
                             Cancel
                           </Button>

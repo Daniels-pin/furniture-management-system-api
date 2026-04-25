@@ -471,7 +471,56 @@ export function OrderDetailsPage() {
 
             <Card>
               <div className="text-sm font-semibold">Items</div>
-              <div className="mt-4 min-w-0 overflow-x-touch">
+              <div className="mt-4 md:hidden space-y-2">
+                {data.items.length === 0 ? (
+                  <div className="text-sm text-black/60">No items.</div>
+                ) : (
+                  data.items.map((it) => {
+                    const lt = (it as any).line_type ?? "item";
+                    if (lt === "subheading") {
+                      return (
+                        <div
+                          key={it.id}
+                          className="rounded-2xl border border-black/10 bg-black/[0.02] px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-black"
+                        >
+                          {it.item_name}
+                        </div>
+                      );
+                    }
+                    const unit = canSeeItemPricing ? parseMoneyNumber(it.amount) : null;
+                    const qty = typeof it.quantity === "number" ? it.quantity : Number(it.quantity);
+                    const line = unit !== null && Number.isFinite(qty) ? unit * qty : null;
+                    return (
+                      <div key={it.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                        <div className="text-sm font-bold">{it.item_name}</div>
+                        <div className="mt-1 text-sm text-black/70 break-words whitespace-normal">{it.description ?? "—"}</div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                            <div className="font-semibold text-black/55">Qty</div>
+                            <div className="mt-0.5 font-bold tabular-nums">{it.quantity}</div>
+                          </div>
+                          {canSeeItemPricing ? (
+                            <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                              <div className="font-semibold text-black/55">Unit</div>
+                              <div className="mt-0.5 font-bold tabular-nums">{formatMoney(unit)}</div>
+                            </div>
+                          ) : (
+                            <div />
+                          )}
+                          {canSeeItemPricing ? (
+                            <div className="col-span-2 rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                              <div className="font-semibold text-black/55">Line total</div>
+                              <div className="mt-0.5 font-bold tabular-nums">{formatMoney(line)}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="mt-4 hidden md:block min-w-0 overflow-x-touch">
                 <table className="w-full min-w-[720px] table-fixed border-collapse text-left text-sm">
                   <colgroup>
                     {canSeeItemPricing ? (

@@ -7,6 +7,7 @@ import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import type { WaybillDetail } from "../types/api";
 import { WaybillDocumentBody } from "../components/documents/WaybillDocumentBody";
 
@@ -30,6 +31,9 @@ export function WaybillDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
   const [statusDraft, setStatusDraft] = useState<"pending" | "shipped" | "delivered">("pending");
   const [logisticsBusy, setLogisticsBusy] = useState(false);
   const [driverName, setDriverName] = useState("");
@@ -241,17 +245,17 @@ export function WaybillDetailPage() {
                   className="border-red-600 text-red-700 hover:bg-red-50"
                   isLoading={acting}
                   onClick={async () => {
-                    if (!window.confirm("Delete this waybill permanently?")) return;
-                    try {
+                    setConfirmAction(() => async () => {
                       setActing(true);
-                      await waybillApi.delete(id);
-                      toast.push("success", "Waybill deleted.");
-                      nav("/waybills");
-                    } catch (e) {
-                      toast.push("error", getErrorMessage(e));
-                    } finally {
-                      setActing(false);
-                    }
+                      try {
+                        await waybillApi.delete(id);
+                        toast.push("success", "Waybill deleted.");
+                        nav("/waybills");
+                      } finally {
+                        setActing(false);
+                      }
+                    });
+                    setConfirmOpen(true);
                   }}
                 >
                   Delete
@@ -294,6 +298,26 @@ export function WaybillDetailPage() {
         <WaybillDocumentBody data={data} />
         </>
       )}
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Delete waybill"
+        message="Delete this waybill permanently?"
+        busy={confirmBusy || acting}
+        onClose={() => (confirmBusy || acting ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
+        }}
+      />
     </div>
   );
 }

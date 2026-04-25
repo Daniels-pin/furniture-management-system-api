@@ -114,7 +114,105 @@ export function FinanceDashboardPage() {
         ) : !pending || pending.items.length === 0 ? (
           <div className="mt-3 text-sm text-black/60">No pending payments.</div>
         ) : (
-          <div className="mt-3 min-w-0 overflow-x-auto">
+          <>
+            <div className="mt-3 md:hidden space-y-3">
+              {pending.items.map((it) => (
+                <div key={it.transaction.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-bold">{it.employee_name}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+                          {it.employee_kind === "monthly" ? "Monthly" : "Contract"}
+                        </span>
+                        <span className="text-xs font-semibold text-black/55">{it.period_label ?? "—"}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-semibold text-black/55">Amount</div>
+                      <div className="mt-0.5 text-base font-bold tabular-nums">{formatMoney(it.transaction.amount)}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    <div>
+                      <div className="text-xs font-semibold text-black/55">Receipt</div>
+                      <div className="mt-1">
+                        {it.transaction.receipt_url ? (
+                          <Button
+                            variant="secondary"
+                            className="w-full"
+                            onClick={() => setPreviewUrl(it.transaction.receipt_url ?? null)}
+                          >
+                            Preview receipt
+                          </Button>
+                        ) : (
+                          <input
+                            type="file"
+                            className="block w-full text-sm"
+                            disabled={busyId === it.transaction.id}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              setBusyId(it.transaction.id);
+                              void employeePaymentsApi
+                                .uploadReceipt(it.transaction.id, f)
+                                .then(() => refresh())
+                                .catch((er) => toast.push("error", getErrorMessage(er)))
+                                .finally(() => setBusyId(null));
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      disabled={busyId === it.transaction.id || (auth.role === "finance" && !it.transaction.receipt_url)}
+                      isLoading={busyId === it.transaction.id}
+                      onClick={() => {
+                        if (it.employee_kind === "contract") {
+                          setAllocOpen(true);
+                          setAllocTxId(it.transaction.id);
+                          setAllocEmployeeId(it.employee_id);
+                          setAllocEmployeeName(it.employee_name);
+                          setAllocAmount(String(it.transaction.amount ?? ""));
+                          setOverpayConfirm(false);
+                          setConfirmWithoutReceipt(auth.role === "admin" && !it.transaction.receipt_url);
+                          setAllocLines({});
+                          setAllocJobs([]);
+                          setAllocLoading(true);
+                          void contractEmployeesApi
+                            .finances(it.employee_id)
+                            .then((d) => setAllocJobs(Array.isArray(d?.jobs) ? d.jobs : []))
+                            .catch((er) => toast.push("error", getErrorMessage(er)))
+                            .finally(() => setAllocLoading(false));
+                          return;
+                        }
+                        if (auth.role === "admin" && it.transaction.receipt_url) {
+                          setBusyId(it.transaction.id);
+                          void employeePaymentsApi
+                            .markPaid(it.transaction.id)
+                            .then(() => refresh())
+                            .then(() => toast.push("success", "Marked paid."))
+                            .catch((er) => toast.push("error", getErrorMessage(er)))
+                            .finally(() => setBusyId(null));
+                          return;
+                        }
+                        setConfirmId(it.transaction.id);
+                        setOverpayConfirm(false);
+                        setConfirmWithoutReceipt(auth.role === "admin" && !it.transaction.receipt_url);
+                      }}
+                    >
+                      Mark paid
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="text-black/60">
                 <tr className="border-b border-black/10">
@@ -212,7 +310,8 @@ export function FinanceDashboardPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </Card>
 
@@ -327,7 +426,70 @@ export function FinanceDashboardPage() {
               No eligible jobs found for allocation.
             </div>
           ) : (
-            <div className="min-w-0 overflow-x-auto">
+            <>
+              <div className="md:hidden space-y-3">
+                {allocJobs.map((j) => {
+                  const v = allocLines[j.id] ?? "";
+                  const checked = typeof allocLines[j.id] !== "undefined";
+                  return (
+                    <div key={j.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <label className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = { ...allocLines };
+                              if (e.target.checked) next[j.id] = next[j.id] ?? "";
+                              else delete next[j.id];
+                              setAllocLines(next);
+                            }}
+                            className="mt-1 h-4 w-4"
+                            aria-label={`Use job ${j.id}`}
+                          />
+                          <div>
+                            <div className="text-sm font-bold">Job #{j.id}</div>
+                            <div className="mt-0.5 text-xs font-semibold text-black/55">{j.status}</div>
+                          </div>
+                        </label>
+                        <div className="text-right text-xs">
+                          <div className="font-semibold text-black/55">Balance</div>
+                          <div className="mt-0.5 text-sm font-bold tabular-nums">{formatMoney(j.balance ?? 0)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Total</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.final_price ?? 0)}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Paid</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Balance</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.balance ?? 0)}</div>
+                        </div>
+                      </div>
+
+                      <label className="mt-3 block text-xs font-semibold text-black/60">
+                        Allocate amount
+                        <input
+                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold text-right"
+                          disabled={!checked}
+                          value={v}
+                          onChange={(e) => setAllocLines({ ...allocLines, [j.id]: e.target.value })}
+                          inputMode="decimal"
+                          placeholder="0"
+                        />
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block min-w-0 overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="text-black/60">
                   <tr className="border-b border-black/10">
@@ -378,7 +540,8 @@ export function FinanceDashboardPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
 
           <div className="flex flex-wrap justify-end gap-2">

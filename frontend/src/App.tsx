@@ -40,6 +40,7 @@ import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
 import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
 import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
 import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboardPage";
+import { ContractJobDetailPage } from "./pages/ContractJobDetailPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
 import { FinanceDashboardPage } from "./pages/FinanceDashboardPage";
 import { useAuth } from "./state/auth";
@@ -283,6 +284,14 @@ export default function App() {
           element={
             <RequireAuth roles={["contract_employee"]}>
               <ContractEmployeeDashboardPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="contract/jobs/:jobId"
+          element={
+            <RequireAuth roles={["contract_employee"]}>
+              <ContractJobDetailPage />
             </RequireAuth>
           }
         />

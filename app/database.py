@@ -5,7 +5,12 @@ from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+def _is_production_env() -> bool:
+    return (os.getenv("RENDER") or "").strip().lower() in ("1", "true", "yes") or (
+        (os.getenv("ENV") or "").strip().lower() == "production"
+    )
+
+load_dotenv(override=not _is_production_env())
 
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 if not DATABASE_URL:

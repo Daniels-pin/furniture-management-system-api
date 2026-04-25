@@ -606,7 +606,13 @@ export type EmployeeSelfUpdatePayload = {
 
 export type ContractEmployeeStatus = "active" | "inactive";
 export type EmployeeTxnType = "owed_increase" | "owed_decrease" | "payment" | "reversal";
-export type EmployeeTxnStatus = "pending" | "paid" | "cancelled";
+export type EmployeeTxnStatus =
+  | "requested"
+  | "approved_by_admin"
+  | "sent_to_finance"
+  | "pending" // legacy
+  | "paid"
+  | "cancelled";
 
 export type EmployeePaymentAllocation = {
   contract_job_id: number;
@@ -696,9 +702,13 @@ export type ContractJob = {
   negotiation_occurred?: boolean;
   admin_accepted_at?: string | null;
   employee_accepted_at?: string | null;
+  adminAccepted?: boolean;
+  employeeAccepted?: boolean;
+  hasNegotiation?: boolean;
   final_price?: string | number | null;
   amount_paid: string | number;
   balance?: string | number | null;
+  payment_state?: "not_paid" | "partially_paid" | "fully_paid";
   price_accepted_at?: string | null;
   status: ContractJobStatus;
   created_at: string;
@@ -754,8 +764,12 @@ export type ContractEmployeeFinance = {
 export type NotificationKind =
   | "job_assigned"
   | "price_updated"
+  | "price_accepted"
   | "job_cancelled"
   | "payment_request_submitted"
+  | "payment_approved"
+  | "payment_sent_to_finance"
+  | "payment_completed"
   | "system";
 
 export type NotificationItem = {

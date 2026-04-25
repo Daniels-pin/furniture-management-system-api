@@ -117,8 +117,17 @@ class UserResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+    # Accept either an email address or a legacy username stored in `users.email`.
+    # (Some local/dev databases predate email validation.)
+    email: str = Field(..., min_length=1, max_length=320)
+    password: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _strip_email(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
 
 
 class ChangePasswordRequest(BaseModel):
@@ -1145,7 +1154,17 @@ class EmployeePaymentUpdate(BaseModel):
 
 ContractEmployeeStatus = Literal["active", "inactive"]
 EmployeeTxnType = Literal["owed_increase", "owed_decrease", "payment", "reversal"]
-EmployeeTxnStatus = Literal["pending", "paid", "cancelled"]
+# Payment lifecycle:
+# requested -> approved_by_admin -> sent_to_finance -> paid
+# Note: legacy data may still contain status="pending" (treated as sent_to_finance by the API for compatibility).
+EmployeeTxnStatus = Literal[
+    "requested",
+    "approved_by_admin",
+    "sent_to_finance",
+    "pending",
+    "paid",
+    "cancelled",
+]
 
 
 class EmployeePaymentAllocationOut(BaseModel):
@@ -1262,6 +1281,7 @@ class ContractEmployeeLinkUser(BaseModel):
 # --- Contract jobs ---
 
 ContractJobStatus = Literal["pending", "in_progress", "completed", "cancelled"]
+ContractJobPaymentState = Literal["not_paid", "partially_paid", "fully_paid"]
 
 
 class ContractJobCreateAdmin(BaseModel):
@@ -1281,7 +1301,7 @@ class ContractJobCreateAdmin(BaseModel):
 class ContractJobCreateEmployee(BaseModel):
     description: str = Field(..., min_length=1, max_length=4000)
     image_url: Optional[str] = Field(None, max_length=2000)
-    price_offer: Decimal = Field(..., gt=0)
+    price_offer: Optional[Decimal] = Field(None, gt=0)
 
     @field_validator("description", mode="before")
     @classmethod
@@ -1312,9 +1332,14 @@ class ContractJobOut(BaseModel):
     negotiation_occurred: bool = False
     admin_accepted_at: Optional[datetime] = None
     employee_accepted_at: Optional[datetime] = None
+    # Compatibility flags for UI/state rules.
+    adminAccepted: bool = False
+    employeeAccepted: bool = False
+    hasNegotiation: bool = False
     final_price: Optional[Decimal] = None
     amount_paid: Decimal = Decimal("0")
     balance: Optional[Decimal] = None
+    payment_state: ContractJobPaymentState = "not_paid"
     price_accepted_at: Optional[datetime] = None
     status: ContractJobStatus
     created_at: datetime
@@ -1334,8 +1359,12 @@ class ContractJobOut(BaseModel):
 NotificationKind = Literal[
     "job_assigned",
     "price_updated",
+    "price_accepted",
     "job_cancelled",
     "payment_request_submitted",
+    "payment_approved",
+    "payment_sent_to_finance",
+    "payment_completed",
     "system",
 ]
 
@@ -1438,6 +1467,19 @@ class PendingEmployeePaymentItem(BaseModel):
 class PendingEmployeePaymentsOut(BaseModel):
     total_pending_amount: Decimal
     items: List[PendingEmployeePaymentItem]
+
+
+class AdminApprovePaymentRequestIn(BaseModel):
+    """Admin step: approve a request and optionally adjust the amount."""
+
+    amount_override: Optional[Decimal] = Field(None, gt=0)
+    note: Optional[str] = Field(None, max_length=2000)
+
+
+class AdminSendPaymentToFinanceIn(BaseModel):
+    """Admin step: send an approved request to Finance."""
+
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 # --- Expense / petty cash ---

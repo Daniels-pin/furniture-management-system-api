@@ -476,7 +476,85 @@ export function EmployeesPage() {
                   Overpaid only (contract)
                 </label>
               </div>
-              <div className="min-w-0 overflow-x-auto">
+              <div className="md:hidden space-y-3">
+                {pending.items.map((it) => (
+                  <div key={it.transaction.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold">{it.employee_name}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+                            {it.employee_kind === "monthly" ? "Monthly" : "Contract"}
+                          </span>
+                          <span className="text-xs font-semibold text-black/55">{it.period_label ?? "—"}</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-semibold text-black/55">Amount</div>
+                        <div className="mt-0.5 text-base font-bold tabular-nums">{formatMoney(it.transaction.amount)}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      <div>
+                        <div className="text-xs font-semibold text-black/55">Receipt</div>
+                        <div className="mt-1">
+                          {it.transaction.receipt_url ? (
+                            <Button
+                              variant="secondary"
+                              className="w-full"
+                              onClick={() => setReceiptPreviewUrl(it.transaction.receipt_url ?? null)}
+                            >
+                              Preview receipt
+                            </Button>
+                          ) : (
+                            <input
+                              type="file"
+                              className="block w-full text-sm"
+                              disabled={pendingBusyId === it.transaction.id}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                setPendingBusyId(it.transaction.id);
+                                void employeePaymentsApi
+                                  .uploadReceipt(it.transaction.id, f)
+                                  .then(() =>
+                                    employeePaymentsApi.pending({
+                                      search: pendingSearch.trim() || undefined,
+                                      overpaid: pendingOverpaidOnly ? true : undefined,
+                                      sort: pendingSort
+                                    })
+                                  )
+                                  .then((res) => setPending(res))
+                                  .catch((er) => toast.push("error", getErrorMessage(er)))
+                                  .finally(() => setPendingBusyId(null));
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      {it.employee_kind === "contract" ? (
+                        <Button variant="secondary" className="w-full" onClick={() => navigate("/finance")}>
+                          Open in Finance
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="w-full"
+                          disabled={pendingBusyId === it.transaction.id || !it.transaction.receipt_url}
+                          isLoading={pendingBusyId === it.transaction.id}
+                          onClick={() => setConfirmMarkPaid({ id: it.transaction.id })}
+                        >
+                          Mark paid
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block min-w-0 overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left text-sm">
                   <thead className="text-black/60">
                     <tr className="border-b border-black/10">
@@ -697,7 +775,55 @@ export function EmployeesPage() {
             ) : rows.length === 0 ? (
               <div className="text-sm text-black/60">No employees yet. Add one to get started.</div>
             ) : (
-              <div className="min-w-0 overflow-x-auto">
+              <>
+                <div className="md:hidden space-y-3">
+                  {rows.map((r) => (
+                    <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <label className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.full_name}`}
+                            checked={monthlySelectedIds.includes(r.id)}
+                            onChange={(e) => {
+                              setMonthlySelectedIds((prev) =>
+                                e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)
+                              );
+                            }}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-bold">{r.full_name}</div>
+                            <div className="mt-1 text-xs font-semibold text-black/55">
+                              {r.phone ?? "—"} • <span className="font-mono">{r.account_number ?? "—"}</span>
+                            </div>
+                          </div>
+                        </label>
+                        <div className="text-right">
+                          <div className="text-xs font-semibold text-black/55">Final payable</div>
+                          <div className="mt-0.5 text-base font-bold tabular-nums">{formatMoney(r.salary.final_payable)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <span
+                          className={
+                            r.payment.status === "paid"
+                              ? "rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900"
+                              : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900"
+                          }
+                        >
+                          {r.payment.status === "paid" ? "Paid" : "Unpaid"}
+                        </span>
+                        <Button variant="secondary" onClick={() => openDrawer("monthly", r.id)}>
+                          Open
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block min-w-0 overflow-x-auto">
                 <table className="w-full min-w-[920px] text-left text-sm">
                   <thead className="text-black/60">
                     <tr className="border-b border-black/10">
@@ -765,7 +891,8 @@ export function EmployeesPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+                </div>
+              </>
             )}
           </Card>
         </>
@@ -871,7 +998,101 @@ export function EmployeesPage() {
             ) : contractRows.length === 0 ? (
               <div className="text-sm text-black/60">No contract employees yet.</div>
             ) : (
-              <div className="min-w-0 overflow-x-auto">
+              <>
+                <div className="md:hidden space-y-3">
+                  {contractRows.map((r) => (
+                    <div
+                      key={r.id}
+                      className="rounded-2xl border border-black/10 bg-white p-4"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => navigate(`/contract-employees/${r.id}`)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        navigate(`/contract-employees/${r.id}`);
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <label
+                          className="flex items-start gap-3"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.full_name}`}
+                            checked={contractSelectedIds.includes(r.id)}
+                            onChange={(e) => {
+                              setContractSelectedIds((prev) =>
+                                e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)
+                              );
+                            }}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-bold">{r.full_name}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+                                {r.status === "active" ? "Active" : "Inactive"}
+                              </span>
+                              <span
+                                className={[
+                                  "inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
+                                  (r.pending_requests ?? 0) > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                                ].join(" ")}
+                              >
+                                {typeof r.pending_requests === "number" ? r.pending_requests : 0} pending
+                              </span>
+                            </div>
+                          </div>
+                        </label>
+                        <div className="text-right">
+                          <div className="text-xs font-semibold text-black/55">Balance</div>
+                          <div className="mt-0.5 text-base font-bold tabular-nums">{formatMoney(r.balance)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Owed</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(r.total_owed)}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Paid</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(r.total_paid)}</div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Active jobs</div>
+                          <div className="mt-0.5 font-bold tabular-nums">
+                            {typeof r.active_jobs_count === "number" ? r.active_jobs_count : 0}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                          <div className="font-semibold text-black/55">Pending req</div>
+                          <div className="mt-0.5 font-bold tabular-nums">
+                            {typeof r.pending_requests === "number" ? r.pending_requests : 0}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3">
+                        <Button
+                          variant="secondary"
+                          className="w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/contract-employees/${r.id}`);
+                          }}
+                        >
+                          Open
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block min-w-0 overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left text-sm">
                   <thead className="text-black/60">
                     <tr className="border-b border-black/10">
@@ -968,7 +1189,8 @@ export function EmployeesPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+                </div>
+              </>
             )}
           </Card>
         </>

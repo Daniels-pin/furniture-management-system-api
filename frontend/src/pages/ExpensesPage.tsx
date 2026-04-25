@@ -180,7 +180,57 @@ export function ExpensesPage() {
         ) : rows.length === 0 ? (
           <div className="mt-3 text-sm text-black/60">No entries yet.</div>
         ) : (
-          <div className="mt-3 min-w-0 overflow-x-auto">
+          <>
+            <div className="mt-3 md:hidden space-y-3">
+              {rows.map((r) => (
+                <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-black/55">{new Date(r.entry_date).toLocaleDateString()}</div>
+                      <div className="mt-1">
+                        <span
+                          className={[
+                            "rounded-full px-2 py-0.5 text-xs font-semibold",
+                            r.entry_type === "credit" ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"
+                          ].join(" ")}
+                        >
+                          {r.entry_type === "credit" ? "Credit" : "Expense"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-semibold text-black/55">Amount</div>
+                      <div className="mt-0.5 text-base font-bold tabular-nums">
+                        {r.entry_type === "expense" ? "−" : "+"}
+                        {formatMoney(r.amount)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold text-black/55">Note</div>
+                    <div className="mt-1 text-sm text-black/70 break-words">{r.note ?? "—"}</div>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {r.receipt_url ? (
+                      <Button variant="secondary" className="w-full" onClick={() => setPreviewUrl(r.receipt_url ?? null)}>
+                        Preview receipt
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" className="w-full" onClick={() => setReceiptFor(r)}>
+                        Upload receipt
+                      </Button>
+                    )}
+                    <div className="text-right text-xs font-semibold text-black/45">
+                      {r.processed_by_role ?? "—"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="text-black/60">
                 <tr className="border-b border-black/10">
@@ -233,7 +283,8 @@ export function ExpensesPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </Card>
 

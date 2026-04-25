@@ -6,6 +6,7 @@ import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { ConvertToInvoiceModal } from "../components/ConvertToInvoiceModal";
 import type { ProformaDetail } from "../types/api";
 import { ProformaDocumentBody } from "../components/documents/ProformaDocumentBody";
@@ -22,6 +23,11 @@ export function ProformaDetailPage() {
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [convertInvoiceOpen, setConvertInvoiceOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("Confirm");
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   async function refresh() {
     if (!Number.isFinite(id)) return;
@@ -177,18 +183,19 @@ export function ProformaDetailPage() {
                   data?.status === "converted"
                     ? " The converted order and invoice stay in place; only this proforma record is removed from the active list."
                     : "";
-                if (!window.confirm(`Move this proforma to Trash? You can restore it later from the Trash page.${extra}`))
-                  return;
-                try {
+                setConfirmTitle("Move to Trash");
+                setConfirmMessage(`Move this proforma to Trash? You can restore it later from the Trash page.${extra}`);
+                setConfirmAction(() => async () => {
                   setActing(true);
-                  await proformaApi.delete(id);
-                  toast.push("success", "Proforma moved to Trash.");
-                  nav("/proforma");
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setActing(false);
-                }
+                  try {
+                    await proformaApi.delete(id);
+                    toast.push("success", "Proforma moved to Trash.");
+                    nav("/proforma");
+                  } finally {
+                    setActing(false);
+                  }
+                });
+                setConfirmOpen(true);
               }}
             >
               Delete
@@ -215,6 +222,26 @@ export function ProformaDetailPage() {
           } finally {
             setActing(false);
           }
+        }}
+      />
+
+      <ConfirmModal
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        busy={confirmBusy || acting}
+        onClose={() => (confirmBusy || acting ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
         }}
       />
 

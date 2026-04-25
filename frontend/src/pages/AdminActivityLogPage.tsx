@@ -61,6 +61,31 @@ export function AdminActivityLogPage() {
     });
   }, [rows, q]);
 
+  function ActivityCard({ r }: { r: AuditLogItem }) {
+    const meta = r.meta == null ? "—" : typeof r.meta === "string" ? r.meta : JSON.stringify(r.meta);
+    return (
+      <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-bold">{r.action}</div>
+            <div className="mt-1 text-xs font-semibold text-black/60">
+              {formatWhen(r.created_at)} · {r.actor ?? "—"}
+            </div>
+            <div className="mt-1 text-xs font-semibold text-black/60 break-words">
+              {r.entity_type}
+              {r.entity_id != null ? ` #${r.entity_id}` : ""}
+            </div>
+          </div>
+          <div className="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">#{r.id}</div>
+        </div>
+        <div className="mt-3 rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+          <div className="text-xs font-semibold text-black/55">Meta</div>
+          <div className="mt-1 whitespace-pre-wrap break-words text-xs font-semibold text-black/70">{meta}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
@@ -83,7 +108,19 @@ export function AdminActivityLogPage() {
           placeholder="action, user, entity, ID…"
         />
         <div className="mt-2 text-xs text-black/50">Search applies to the current page of results.</div>
-        <div className="mt-5 min-w-0 overflow-x-touch">
+        {/* Mobile: cards */}
+        <div className="mt-4 space-y-3 md:hidden">
+          {isLoading ? (
+            <div className="text-sm text-black/60">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-sm text-black/60">No activity found.</div>
+          ) : (
+            filtered.map((r) => <ActivityCard key={r.id} r={r} />)
+          )}
+        </div>
+
+        {/* Desktop: keep table */}
+        <div className="mt-5 hidden min-w-0 overflow-x-touch md:block">
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">
@@ -116,9 +153,7 @@ export function AdminActivityLogPage() {
                     </td>
                     <td className="py-3 pr-4 text-black/70">
                       {r.entity_type}
-                      {r.entity_id != null ? (
-                        <span className="font-semibold text-black"> #{r.entity_id}</span>
-                      ) : null}
+                      {r.entity_id != null ? <span className="font-semibold text-black"> #{r.entity_id}</span> : null}
                     </td>
                     <td className="py-3 pr-4 text-black/70">{r.actor ?? "—"}</td>
                     <td className="py-3 pr-0 text-black/60">

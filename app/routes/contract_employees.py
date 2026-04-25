@@ -87,7 +87,7 @@ def list_contract_employees(
             .filter(
                 models.EmployeeTransaction.contract_employee_id == r.id,
                 models.EmployeeTransaction.txn_type == "payment",
-                models.EmployeeTransaction.status == "pending",
+                models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
             )
             .count()
         )
@@ -277,9 +277,9 @@ def increase_total_owed(
     if not note:
         raise HTTPException(status_code=400, detail="note is required")
 
-    # Owed increase is applied immediately (paid/locked) by Admin.
+    # Manual adjustments affect the live/net amount owed.
     emp.total_owed = (Decimal(str(emp.total_owed or 0)) + amt)
-    emp.balance = Decimal(str(emp.total_owed)) - Decimal(str(emp.total_paid or 0))
+    emp.balance = Decimal(str(emp.total_owed))
     emp.updated_at = datetime.utcnow()
 
     txn = models.EmployeeTransaction(
@@ -328,7 +328,7 @@ def decrease_total_owed(
 
     now = datetime.utcnow()
     emp.total_owed = (Decimal(str(emp.total_owed or 0)) - amt)
-    emp.balance = Decimal(str(emp.total_owed)) - Decimal(str(emp.total_paid or 0))
+    emp.balance = Decimal(str(emp.total_owed))
     emp.updated_at = now
 
     txn = models.EmployeeTransaction(
@@ -373,7 +373,7 @@ def get_contract_employee_finances(
         .filter(
             models.EmployeeTransaction.contract_employee_id == employee_id,
             models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "pending",
+            models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
         )
         .order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
         .first()
@@ -453,7 +453,7 @@ def send_contract_payment_to_finance(
         .filter(
             models.EmployeeTransaction.contract_employee_id == employee_id,
             models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "pending",
+            models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
         )
         .first()
     )
@@ -464,12 +464,26 @@ def send_contract_payment_to_finance(
         contract_employee_id=employee_id,
         txn_type="payment",
         amount=amt,
-        status="pending",
+        status="sent_to_finance",
         note=body.note,
         created_by_id=current_user.id,
     )
     db.add(txn)
     db.flush()
+    # Notify finance users
+    finance_ids = [int(uid) for (uid,) in db.query(models.User.id).filter(models.User.role == "finance").all() if uid is not None]
+    if finance_ids:
+        from app.utils.notifications import create_notifications
+
+        create_notifications(
+            db,
+            recipient_user_ids=finance_ids,
+            kind="payment_sent_to_finance",
+            title="Payment sent to Finance",
+            message=f"Amount: {str(amt)}",
+            entity_type="employee_transaction",
+            entity_id=int(txn.id),
+        )
     log_financial_action(
         db,
         action="send_to_finance",

@@ -64,6 +64,15 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
     )
     amount_paid = sum((_as_decimal(a) for (a,) in paid_alloc_sum), Decimal("0"))
     bal = _as_decimal(j.final_price) - amount_paid if j.final_price is not None else None
+    payment_state = "not_paid"
+    if j.final_price is not None:
+        fp = _as_decimal(j.final_price)
+        if amount_paid <= 0:
+            payment_state = "not_paid"
+        elif amount_paid >= fp:
+            payment_state = "fully_paid"
+        else:
+            payment_state = "partially_paid"
     if employee_name is None:
         ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == j.contract_employee_id).first()
         employee_name = (ce.full_name if ce else None)
@@ -80,9 +89,13 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         negotiation_occurred=bool(getattr(j, "negotiation_occurred", False)),
         admin_accepted_at=getattr(j, "admin_accepted_at", None),
         employee_accepted_at=getattr(j, "employee_accepted_at", None),
+        adminAccepted=bool(getattr(j, "admin_accepted_at", None)),
+        employeeAccepted=bool(getattr(j, "employee_accepted_at", None)),
+        hasNegotiation=bool(getattr(j, "negotiation_occurred", False)),
         final_price=_as_decimal(j.final_price) if j.final_price is not None else None,
         amount_paid=amount_paid,
         balance=bal,
+        payment_state=payment_state,
         price_accepted_at=j.price_accepted_at,
         status=j.status,
         created_at=j.created_at,
@@ -209,8 +222,10 @@ def _create_owed_increase_for_job(db: Session, ce: models.ContractEmployee, job:
         return
 
     now = datetime.utcnow()
+    # `total_owed` is the live/net amount owed to the employee (can go negative after overpayment).
+    # `balance` is kept in sync for backward compatibility with older UI fields.
     ce.total_owed = _as_decimal(ce.total_owed) + amt
-    ce.balance = _as_decimal(ce.total_owed) - _as_decimal(ce.total_paid)
+    ce.balance = _as_decimal(ce.total_owed)
     ce.updated_at = now
 
     txn = models.EmployeeTransaction(
@@ -288,7 +303,7 @@ def _reverse_owed_increase_for_job(db: Session, job: models.ContractJob, actor: 
     )
     if ce:
         ce.total_owed = _as_decimal(ce.total_owed) - amt
-        ce.balance = _as_decimal(ce.total_owed) - _as_decimal(ce.total_paid)
+        ce.balance = _as_decimal(ce.total_owed)
         ce.updated_at = now
         rev.running_balance = ce.balance
 
@@ -463,16 +478,17 @@ def create_job_me(
     desc = (body.description or "").strip()
     if not desc:
         raise HTTPException(status_code=422, detail="description is required")
+    offer = (Decimal(str(body.price_offer)) if body.price_offer is not None else None)
     j = models.ContractJob(
         contract_employee_id=ce.id,
         created_by_id=current_user.id,
         created_by_role="contract_employee",
         description=desc,
         image_url=body.image_url,
-        price_offer=Decimal(str(body.price_offer)),
-        last_offer_by_role="contract_employee",
-        offer_updated_at=datetime.utcnow(),
-        offer_version=1,
+        price_offer=offer,
+        last_offer_by_role=("contract_employee" if offer is not None else None),
+        offer_updated_at=(datetime.utcnow() if offer is not None else None),
+        offer_version=(1 if offer is not None else 0),
         negotiation_occurred=False,
         admin_accepted_at=None,
         employee_accepted_at=None,
@@ -482,6 +498,23 @@ def create_job_me(
     db.add(j)
     db.commit()
     db.refresh(j)
+    # Notify admins when an employee creates a job (so it shows up centrally).
+    admin_ids = [
+        int(uid)
+        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
+        if uid is not None
+    ]
+    if admin_ids:
+        create_notifications(
+            db,
+            recipient_user_ids=admin_ids,
+            kind="job_assigned",
+            title=f"New job created (#{j.id})",
+            message="A contract employee created a new job.",
+            entity_type="contract_job",
+            entity_id=int(j.id),
+        )
+        db.commit()
     return _job_out(db, j)
 
 
@@ -576,6 +609,23 @@ def accept_price_me(
     _lock_price_if_ready(db, j, ce, current_user)
     db.commit()
     db.refresh(j)
+    # Notify admins when employee accepts (price accepted event).
+    admin_ids = [
+        int(uid)
+        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
+        if uid is not None
+    ]
+    if admin_ids:
+        create_notifications(
+            db,
+            recipient_user_ids=admin_ids,
+            kind="price_accepted",
+            title=f"Offer accepted (Job #{j.id})",
+            message="Employee accepted the current offer.",
+            entity_type="contract_job",
+            entity_id=int(j.id),
+        )
+        db.commit()
     return _job_out(db, j)
 
 
@@ -605,6 +655,18 @@ def admin_accept_offer(
     _lock_price_if_ready(db, j, ce, current_user)
     db.commit()
     db.refresh(j)
+    # Notify employee when admin accepts.
+    if ce.user_id:
+        create_notifications(
+            db,
+            recipient_user_ids=[int(ce.user_id)],
+            kind="price_accepted",
+            title=f"Offer accepted (Job #{j.id})",
+            message="Admin accepted the current offer.",
+            entity_type="contract_job",
+            entity_id=int(j.id),
+        )
+        db.commit()
     return _job_out(db, j, employee_name=(ce.full_name if ce else None))
 
 
@@ -708,19 +770,37 @@ def cancel_job(
     db.commit()
     db.refresh(j)
 
-    # Notify employee when job is cancelled.
+    # Notify the other party when job is cancelled.
     ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == j.contract_employee_id).first()
-    if ce and ce.user_id:
-        create_notifications(
-            db,
-            recipient_user_ids=[int(ce.user_id)],
-            kind="job_cancelled",
-            title=f"Job cancelled (#{j.id})",
-            message=(j.cancelled_note or "This job has been cancelled."),
-            entity_type="contract_job",
-            entity_id=int(j.id),
-        )
-        db.commit()
+    admin_ids = [
+        int(uid)
+        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
+        if uid is not None
+    ]
+    if role == "admin":
+        if ce and ce.user_id:
+            create_notifications(
+                db,
+                recipient_user_ids=[int(ce.user_id)],
+                kind="job_cancelled",
+                title=f"Job cancelled (#{j.id})",
+                message=(j.cancelled_note or "This job has been cancelled."),
+                entity_type="contract_job",
+                entity_id=int(j.id),
+            )
+            db.commit()
+    else:
+        if admin_ids:
+            create_notifications(
+                db,
+                recipient_user_ids=admin_ids,
+                kind="job_cancelled",
+                title=f"Job cancelled (#{j.id})",
+                message=(j.cancelled_note or "This job has been cancelled."),
+                entity_type="contract_job",
+                entity_id=int(j.id),
+            )
+            db.commit()
     return _job_out(db, j)
 
 

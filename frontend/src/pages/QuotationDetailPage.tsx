@@ -6,6 +6,7 @@ import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { ConvertToInvoiceModal } from "../components/ConvertToInvoiceModal";
 import type { QuotationDetail } from "../types/api";
 import { QuotationDocumentBody } from "../components/documents/QuotationDocumentBody";
@@ -22,6 +23,11 @@ export function QuotationDetailPage() {
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [convertInvoiceOpen, setConvertInvoiceOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState("Confirm");
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | (() => Promise<void>)>(null);
 
   async function refresh() {
     if (!Number.isFinite(id)) return;
@@ -169,17 +175,19 @@ export function QuotationDetailPage() {
               variant="secondary"
               isLoading={acting}
               onClick={async () => {
-                if (!window.confirm("Create a proforma invoice from this quotation?")) return;
-                try {
+                setConfirmTitle("Convert to proforma");
+                setConfirmMessage("Create a proforma invoice from this quotation?");
+                setConfirmAction(() => async () => {
                   setActing(true);
-                  const res = await quotationApi.convertToProforma(id);
-                  toast.push("success", res.message || "Converted");
-                  nav(`/proforma/${res.proforma_id}`);
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setActing(false);
-                }
+                  try {
+                    const res = await quotationApi.convertToProforma(id);
+                    toast.push("success", res.message || "Converted");
+                    nav(`/proforma/${res.proforma_id}`);
+                  } finally {
+                    setActing(false);
+                  }
+                });
+                setConfirmOpen(true);
               }}
             >
               Convert to proforma
@@ -208,22 +216,19 @@ export function QuotationDetailPage() {
                   data?.status === "converted"
                     ? " Any linked order or proforma invoice stays in place; only this quotation record is removed from the active list."
                     : "";
-                if (
-                  !window.confirm(
-                    `Move this quotation to Trash? You can restore it later from the Trash page.${extra}`
-                  )
-                )
-                  return;
-                try {
+                setConfirmTitle("Move to Trash");
+                setConfirmMessage(`Move this quotation to Trash? You can restore it later from the Trash page.${extra}`);
+                setConfirmAction(() => async () => {
                   setActing(true);
-                  await quotationApi.delete(id);
-                  toast.push("success", "Quotation moved to Trash.");
-                  nav("/quotations");
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setActing(false);
-                }
+                  try {
+                    await quotationApi.delete(id);
+                    toast.push("success", "Quotation moved to Trash.");
+                    nav("/quotations");
+                  } finally {
+                    setActing(false);
+                  }
+                });
+                setConfirmOpen(true);
               }}
             >
               Delete
@@ -250,6 +255,26 @@ export function QuotationDetailPage() {
           } finally {
             setActing(false);
           }
+        }}
+      />
+
+      <ConfirmModal
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        busy={confirmBusy || acting}
+        onClose={() => (confirmBusy || acting ? null : setConfirmOpen(false))}
+        onConfirm={() => {
+          const act = confirmAction;
+          if (!act) return;
+          setConfirmBusy(true);
+          void act()
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => {
+              setConfirmBusy(false);
+              setConfirmOpen(false);
+              setConfirmAction(null);
+            });
         }}
       />
 

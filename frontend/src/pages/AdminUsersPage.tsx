@@ -81,6 +81,47 @@ export function AdminUsersPage() {
     }
   }
 
+  function UserCard({ u, displayNumber }: { u: User; displayNumber: string }) {
+    const canImpersonate = typeof u.id === "number" && u.id !== auth.userId;
+    return (
+      <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-bold">User #{displayNumber}</div>
+            <div className="mt-1 break-words text-sm font-semibold text-black/80">{u.username}</div>
+            <div className="mt-1 inline-flex rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+              {u.role}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-2">
+          {canImpersonate ? (
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={impersonatingId !== null || deletingId === u.id}
+              onClick={() => {
+                if (typeof u.id === "number") setImpersonateConfirmId(u.id);
+              }}
+            >
+              Login as User
+            </Button>
+          ) : null}
+          <Button
+            variant="danger"
+            className="w-full"
+            disabled={deletingId === u.id}
+            onClick={() => {
+              if (typeof u.id === "number") setConfirmDeleteId(u.id);
+            }}
+          >
+            Delete
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
@@ -98,7 +139,22 @@ export function AdminUsersPage() {
 
       <Card>
         <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, username, role…" />
-        <div className="mt-5 min-w-0 overflow-x-touch">
+        {/* Mobile: cards */}
+        <div className="mt-4 space-y-3 md:hidden">
+          {isLoading ? (
+            <div className="text-sm text-black/60">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-sm text-black/60">No users found.</div>
+          ) : (
+            pageRows.map((u, idx) => {
+              const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+              return <UserCard key={u.id} u={u} displayNumber={displayNumber} />;
+            })
+          )}
+        </div>
+
+        {/* Desktop: keep table */}
+        <div className="mt-5 hidden min-w-0 overflow-x-touch md:block">
           <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="text-black/60">
               <tr className="border-b border-black/10">
@@ -125,33 +181,33 @@ export function AdminUsersPage() {
                 pageRows.map((u, idx) => {
                   const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
                   return (
-                  <tr key={u.id} className="border-b border-black/5">
-                    <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
-                    <td className="py-3 pr-4">{u.username}</td>
-                    <td className="py-3 pr-4">{u.role}</td>
-                    <td className="py-3 pr-0 text-right">
-                      <div className="flex flex-wrap items-center justify-end gap-1">
-                        {typeof u.id === "number" && u.id !== auth.userId ? (
+                    <tr key={u.id} className="border-b border-black/5">
+                      <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
+                      <td className="py-3 pr-4">{u.username}</td>
+                      <td className="py-3 pr-4">{u.role}</td>
+                      <td className="py-3 pr-0 text-right">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          {typeof u.id === "number" && u.id !== auth.userId ? (
+                            <Button
+                              variant="secondary"
+                              disabled={impersonatingId !== null || deletingId === u.id}
+                              onClick={() => setImpersonateConfirmId(u.id)}
+                            >
+                              Login as User
+                            </Button>
+                          ) : null}
                           <Button
-                            variant="secondary"
-                            disabled={impersonatingId !== null || deletingId === u.id}
-                            onClick={() => setImpersonateConfirmId(u.id)}
+                            variant="ghost"
+                            disabled={deletingId === u.id}
+                            onClick={() => {
+                              if (typeof u.id === "number") setConfirmDeleteId(u.id);
+                            }}
                           >
-                            Login as User
+                            Delete
                           </Button>
-                        ) : null}
-                        <Button
-                          variant="ghost"
-                          disabled={deletingId === u.id}
-                          onClick={() => {
-                            if (typeof u.id === "number") setConfirmDeleteId(u.id);
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                        </div>
+                      </td>
+                    </tr>
                   );
                 })
               )}

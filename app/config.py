@@ -2,7 +2,12 @@ import os
 from dotenv import load_dotenv
 
 # load variables from .env file
-load_dotenv()
+def _is_production_env() -> bool:
+    return (os.getenv("RENDER") or "").strip().lower() in ("1", "true", "yes") or (
+        (os.getenv("ENV") or "").strip().lower() == "production"
+    )
+
+load_dotenv(override=not _is_production_env())
 
 def _getenv_stripped(key: str, default: str | None = None) -> str | None:
     val = os.getenv(key)
