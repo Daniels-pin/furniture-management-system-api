@@ -78,7 +78,9 @@ export function FinanceDashboardPage() {
       const bal = toFiniteNumber(j.balance);
       if (bal === null) return false;
       if (bal <= 0) return false;
-      return j.status === "pending" || j.status === "in_progress";
+      // Allocations are allowed for any non-cancelled job with an outstanding balance.
+      // (Jobs may be "completed" but still unpaid/partially paid.)
+      return j.status !== "cancelled";
     });
   }, [allocJobs]);
 

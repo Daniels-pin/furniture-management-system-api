@@ -635,6 +635,50 @@ def mark_payment_as_paid(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin", "finance"])),
 ):
+    def _auto_allocate_contract_jobs(contract_employee_id: int, amount: Decimal) -> list[dict]:
+        """Fallback allocation: spread payment across jobs with outstanding balances.
+
+        We allocate to the smallest remaining balances first to fully settle jobs where possible.
+        """
+        if amount <= 0:
+            return []
+        job_rows = (
+            db.query(models.ContractJob)
+            .filter(models.ContractJob.contract_employee_id == int(contract_employee_id), models.ContractJob.status != "cancelled")
+            .order_by(models.ContractJob.id.asc())
+            .all()
+        )
+        candidates: list[tuple[int, Decimal]] = []
+        for j in job_rows:
+            fp = _as_decimal(getattr(j, "final_price", None))
+            if fp <= 0:
+                continue
+            paid = _as_decimal(getattr(j, "amount_paid", 0))
+            remaining = fp - paid
+            if remaining <= 0:
+                continue
+            candidates.append((int(j.id), remaining))
+        # Smallest balances first.
+        candidates.sort(key=lambda x: (x[1], x[0]))
+        allocations: list[dict] = []
+        remaining_to_allocate = _as_decimal(amount)
+        for job_id, job_remaining in candidates:
+            if remaining_to_allocate <= 0:
+                break
+            a_amt = min(remaining_to_allocate, job_remaining)
+            if a_amt <= 0:
+                continue
+            allocations.append({"contract_job_id": int(job_id), "amount": a_amt})
+            remaining_to_allocate -= a_amt
+        if remaining_to_allocate != 0:
+            # Not enough outstanding job balances to cover this payment amount.
+            # Keep consistent with strict allocation rule (sum must match payment amount).
+            raise HTTPException(
+                status_code=400,
+                detail="Allocations are required: no sufficient job balances found to auto-allocate this payment amount.",
+            )
+        return allocations
+
     t = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == transaction_id).first()
     if t is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -677,7 +721,8 @@ def mark_payment_as_paid(
             if getattr(t, "contract_job_id", None):
                 allocations_in = [{"contract_job_id": int(t.contract_job_id), "amount": amt}]
             else:
-                raise HTTPException(status_code=400, detail="Allocations are required: select one or more jobs for this payment.")
+                # Fallback: auto-allocate across jobs with outstanding balances.
+                allocations_in = _auto_allocate_contract_jobs(int(t.contract_employee_id), amt)
 
         # Validate allocation sum equals effective amount.
         total_alloc = Decimal("0")
