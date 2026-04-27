@@ -37,6 +37,7 @@ import { EmployeesPage } from "./pages/EmployeesPage";
 import { EmployeeAdminPage } from "./pages/EmployeeAdminPage";
 import { EmployeeLegacyRedirect } from "./pages/EmployeeLegacyRedirect";
 import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
+import { MonthlyEmployeeDetailPage } from "./pages/MonthlyEmployeeDetailPage";
 import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
 import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
 import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboardPage";
@@ -300,6 +301,14 @@ export default function App() {
           element={
             <RequireAuth roles={["admin", "factory"]}>
               <EmployeeAdminPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="employees/:employeeId/detail"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <MonthlyEmployeeDetailPage />
             </RequireAuth>
           }
         />

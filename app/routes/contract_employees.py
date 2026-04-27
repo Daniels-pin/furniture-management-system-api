@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 
@@ -22,11 +23,13 @@ from app.schemas import (
     ContractEmployeeFinanceOut,
     ContractJobFinanceRow,
     ContractEmployeeUpdate,
+    ContractEmployeeSendPaymentToFinanceIn,
     EmployeeSendPaymentToFinance,
     EmployeeTransactionOut,
 )
 
 router = APIRouter(prefix="/contract-employees", tags=["Contract Employees"])
+logger = logging.getLogger(__name__)
 
 
 def _to_out(emp: models.ContractEmployee) -> ContractEmployeeOut:
@@ -438,38 +441,146 @@ def get_contract_employee_finances(
 @router.post("/{employee_id}/payments/send-to-finance", response_model=EmployeeTransactionOut)
 def send_contract_payment_to_finance(
     employee_id: int,
-    body: EmployeeSendPaymentToFinance,
+    body: ContractEmployeeSendPaymentToFinanceIn | EmployeeSendPaymentToFinance,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
 ):
     emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
     if emp is None:
         raise HTTPException(status_code=404, detail="Contract employee not found")
-    amt = Decimal(str(body.amount))
-    if amt <= 0:
-        raise HTTPException(status_code=400, detail="amount must be > 0")
-    existing = (
-        db.query(models.EmployeeTransaction)
-        .filter(
-            models.EmployeeTransaction.contract_employee_id == employee_id,
-            models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
-        )
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="This employee already has a pending payment.")
 
-    txn = models.EmployeeTransaction(
-        contract_employee_id=employee_id,
-        txn_type="payment",
-        amount=amt,
-        status="sent_to_finance",
-        note=body.note,
-        created_by_id=current_user.id,
-    )
-    db.add(txn)
-    db.flush()
+    # Preferred/modern behavior: process ONLY the specified request id.
+    if isinstance(body, ContractEmployeeSendPaymentToFinanceIn):
+        request_id = int(body.request_id)
+        logger.info("contract_employee send-to-finance: request_id=%s contract_employee_id=%s", request_id, employee_id)
+
+        t = (
+            db.query(models.EmployeeTransaction)
+            .filter(
+                models.EmployeeTransaction.id == request_id,
+                models.EmployeeTransaction.contract_employee_id == employee_id,
+                models.EmployeeTransaction.txn_type == "payment",
+            )
+            .first()
+        )
+        if t is None:
+            raise HTTPException(status_code=404, detail="Payment request not found")
+
+        # Validation rules (ONLY)
+        owed = Decimal(str(getattr(emp, "total_owed", 0) or 0))
+        request_amt = Decimal(str(getattr(t, "amount", 0) or 0))
+        pay_amt = Decimal(str(getattr(body, "amount", 0) or 0))
+        if pay_amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        if pay_amt > owed:
+            raise HTTPException(status_code=400, detail=f"amount cannot exceed total owed ({owed}).")
+        if pay_amt > request_amt:
+            raise HTTPException(status_code=400, detail=f"amount cannot exceed request amount ({request_amt}).")
+        if t.status == "paid" or getattr(t, "paid_at", None) is not None:
+            raise HTTPException(status_code=409, detail="Request is already marked paid.")
+        if t.status in ("sent_to_finance", "pending"):
+            raise HTTPException(status_code=409, detail="Request is already sent to Finance.")
+        if t.status not in ("requested", "approved_by_admin"):
+            raise HTTPException(status_code=409, detail="Payment request is not eligible to send to Finance.")
+
+        # Conflict rule: block ONLY if a DIFFERENT request is already in Finance queue for this employee.
+        conflicting = (
+            db.query(models.EmployeeTransaction)
+            .filter(
+                models.EmployeeTransaction.contract_employee_id == employee_id,
+                models.EmployeeTransaction.txn_type == "payment",
+                models.EmployeeTransaction.status.in_(["sent_to_finance", "pending"]),
+                models.EmployeeTransaction.id != t.id,
+            )
+            .order_by(models.EmployeeTransaction.id.desc())
+            .first()
+        )
+        if conflicting is not None:
+            logger.info(
+                "contract_employee send-to-finance conflict: request_id=%s conflicting_request_id=%s",
+                request_id,
+                int(conflicting.id),
+            )
+            raise HTTPException(status_code=409, detail="This employee already has a payment pending in Finance.")
+
+        base_note = str(body.note).strip() if (body.note is not None and str(body.note).strip()) else None
+
+        # Full payment: transition the same request into Finance queue.
+        if pay_amt == request_amt:
+            if base_note is not None:
+                t.note = base_note
+            # Allow same-record transition requested/approved_by_admin -> sent_to_finance
+            t.status = "sent_to_finance"
+            txn = t
+        else:
+            # Partial payment (CRITICAL RULE):
+            # - The ORIGINAL request intent is FULLY RESOLVED once Admin sends ANY amount to Finance.
+            # - The remaining amount MUST NOT remain as a pending request.
+            # - The unpaid remainder stays in the employee's live balance/owed (handled by totals on payment confirmation),
+            #   not as a request artifact.
+
+            finance_note = base_note
+            if finance_note is None:
+                finance_note = f"Partial payment sent to Finance (from request #{t.id})"
+
+            finance_txn = models.EmployeeTransaction(
+                contract_employee_id=employee_id,
+                txn_type="payment",
+                amount=pay_amt,
+                status="sent_to_finance",
+                note=finance_note,
+                created_by_id=current_user.id,
+                processed_by_id=current_user.id,
+                processed_by_role="admin",
+            )
+            db.add(finance_txn)
+            db.flush()
+
+            # Resolve (close) the original request WITHOUT changing its amount.
+            t.status = "resolved"
+            tail = f"Resolved by admin send-to-finance: {str(pay_amt)} from requested {str(request_amt)}."
+            if t.note and str(t.note).strip():
+                t.note = f"{str(t.note).strip()} | {tail}"
+            else:
+                t.note = tail
+            t.processed_by_id = current_user.id
+            t.processed_by_role = "admin"
+
+            txn = finance_txn
+    else:
+        # Backward-compatible legacy behavior: create a new Finance-queue row from an amount.
+        # (Kept for older clients; prefer request_id flow above.)
+        amt = Decimal(str(body.amount))
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        conflicting = (
+            db.query(models.EmployeeTransaction)
+            .filter(
+                models.EmployeeTransaction.contract_employee_id == employee_id,
+                models.EmployeeTransaction.txn_type == "payment",
+                models.EmployeeTransaction.status.in_(["sent_to_finance", "pending"]),
+            )
+            .first()
+        )
+        if conflicting is not None:
+            logger.info(
+                "contract_employee legacy send-to-finance conflict: contract_employee_id=%s conflicting_request_id=%s",
+                employee_id,
+                int(conflicting.id),
+            )
+            raise HTTPException(status_code=409, detail="This employee already has a payment pending in Finance.")
+
+        txn = models.EmployeeTransaction(
+            contract_employee_id=employee_id,
+            txn_type="payment",
+            amount=amt,
+            status="sent_to_finance",
+            note=body.note,
+            created_by_id=current_user.id,
+        )
+        db.add(txn)
+        db.flush()
+
     # Notify finance users
     finance_ids = [int(uid) for (uid,) in db.query(models.User.id).filter(models.User.role == "finance").all() if uid is not None]
     if finance_ids:
@@ -480,7 +591,7 @@ def send_contract_payment_to_finance(
             recipient_user_ids=finance_ids,
             kind="payment_sent_to_finance",
             title="Payment sent to Finance",
-            message=f"Amount: {str(amt)}",
+            message=f"Amount: {str(getattr(txn, 'amount', ''))}",
             entity_type="employee_transaction",
             entity_id=int(txn.id),
         )
@@ -490,7 +601,12 @@ def send_contract_payment_to_finance(
         entity_type="employee_transaction",
         entity_id=txn.id,
         actor_user=current_user,
-        meta={"employee_kind": "contract", "contract_employee_id": employee_id, "amount": str(amt), "note": body.note},
+        meta={
+            "employee_kind": "contract",
+            "contract_employee_id": employee_id,
+            "amount": str(getattr(txn, "amount", None)),
+            "note": getattr(txn, "note", None),
+        },
     )
     db.commit()
     db.refresh(txn)

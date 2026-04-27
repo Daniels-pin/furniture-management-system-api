@@ -21,6 +21,8 @@ from app.schemas import (
     PendingEmployeePaymentItem,
     PendingEmployeePaymentsOut,
     EmployeeTransactionOut,
+    PaymentRequestDetailOut,
+    ContractJobMiniOut,
 )
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
@@ -32,6 +34,49 @@ def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
+def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeePaymentItem:
+    # Prefer the audit log timestamp for when it was sent to Finance.
+    sent_log = (
+        db.query(models.FinancialAuditLog)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id == t.id,
+            models.FinancialAuditLog.action.in_(["payment_sent_to_finance", "send_to_finance_bulk"]),
+        )
+        .order_by(models.FinancialAuditLog.id.desc())
+        .first()
+    )
+    sent_to_finance_at = getattr(sent_log, "created_at", None) or getattr(t, "created_at", None)
+
+    if t.contract_employee_id is not None:
+        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
+        return PendingEmployeePaymentItem(
+            transaction=EmployeeTransactionOut.model_validate(t),
+            employee_kind="contract",
+            employee_id=int(t.contract_employee_id),
+            employee_name=ce.full_name if ce else "Contract employee",
+            account_number=(ce.account_number if ce else None),
+            phone=(ce.phone if ce else None),
+            period_label=None,
+            sent_to_finance_at=sent_to_finance_at,
+        )
+    emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
+    period_label: Optional[str] = None
+    if t.period_id:
+        p = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == t.period_id).first()
+        period_label = p.label if p else None
+    return PendingEmployeePaymentItem(
+        transaction=EmployeeTransactionOut.model_validate(t),
+        employee_kind="monthly",
+        employee_id=int(t.employee_id or 0),
+        employee_name=emp.full_name if emp else "Employee",
+        account_number=(emp.account_number if emp else None),
+        phone=(emp.phone if emp else None),
+        period_label=period_label,
+        sent_to_finance_at=sent_to_finance_at,
+    )
+
+
 @router.get("/pending", response_model=PendingEmployeePaymentsOut)
 def list_pending_payments(
     db: Session = Depends(get_db),
@@ -40,14 +85,20 @@ def list_pending_payments(
     kind: Optional[str] = Query(None, description="monthly | contract"),
     overpaid: Optional[bool] = Query(None, description="true shows employees with balance < 0 (contract only)"),
     sort: str = Query("oldest", description="oldest | newest | amount_desc | amount_asc"),
+    queue_only: bool = Query(False, description="When true, only include items awaiting finance (sent_to_finance|pending)."),
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
 ):
     role = normalize_role(getattr(current_user, "role", None))
     q = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.txn_type == "payment")
 
-    # Role visibility rules:
-    # - Admin: sees employee requests and items awaiting finance
+    # Visibility rules:
+    # - queue_only: force the finance queue (awaiting finance) regardless of role
     # - Finance: MUST ONLY see sent_to_finance items
-    if role == "finance":
+    # - Admin: sees employee requests and items awaiting finance
+    if queue_only:
+        q = q.filter(models.EmployeeTransaction.status.in_(["sent_to_finance", "pending"]))
+    elif role == "finance":
         q = q.filter(models.EmployeeTransaction.status.in_(["sent_to_finance", "pending"]))
     else:
         q = q.filter(models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]))
@@ -81,46 +132,96 @@ def list_pending_payments(
 
     rows = q.all()
 
-    items: list[PendingEmployeePaymentItem] = []
+    # Filter overpaid for contract employees (post-query because it depends on joined employee data).
+    filtered: list[models.EmployeeTransaction] = []
     total = Decimal("0")
     for t in rows:
-        total += _as_decimal(t.amount)
-        if t.contract_employee_id is not None:
+        if t.contract_employee_id is not None and overpaid is not None:
             ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
-            if overpaid is True and ce and _as_decimal(ce.balance) >= 0:
-                continue
-            if overpaid is False and ce and _as_decimal(ce.balance) < 0:
-                continue
-            items.append(
-                PendingEmployeePaymentItem(
-                    transaction=EmployeeTransactionOut.model_validate(t),
-                    employee_kind="contract",
-                    employee_id=int(t.contract_employee_id),
-                    employee_name=ce.full_name if ce else "Contract employee",
-                    account_number=(ce.account_number if ce else None),
-                    phone=(ce.phone if ce else None),
-                    period_label=None,
-                )
-            )
-        else:
-            emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
-            period_label: Optional[str] = None
-            if t.period_id:
-                p = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == t.period_id).first()
-                period_label = p.label if p else None
-            items.append(
-                PendingEmployeePaymentItem(
-                    transaction=EmployeeTransactionOut.model_validate(t),
-                    employee_kind="monthly",
-                    employee_id=int(t.employee_id or 0),
-                    employee_name=emp.full_name if emp else "Employee",
-                    account_number=(emp.account_number if emp else None),
-                    phone=(emp.phone if emp else None),
-                    period_label=period_label,
-                )
-            )
+            if ce:
+                bal = _as_decimal(getattr(ce, "balance", 0))
+                if overpaid is True and bal >= 0:
+                    continue
+                if overpaid is False and bal < 0:
+                    continue
+        filtered.append(t)
+        total += _as_decimal(t.amount)
 
-    return PendingEmployeePaymentsOut(total_pending_amount=total, items=items)
+    page_rows = filtered[offset : offset + limit]
+    items = [_txn_to_item(db, t) for t in page_rows]
+
+    return PendingEmployeePaymentsOut(
+        total_pending_amount=total,
+        total=len(filtered),
+        limit=limit,
+        offset=offset,
+        items=items,
+    )
+
+
+@router.get("/history", response_model=PendingEmployeePaymentsOut)
+def list_payment_history(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+    search: str = Query("", max_length=200),
+    kind: Optional[str] = Query(None, description="monthly | contract"),
+    sort: str = Query("newest", description="oldest | newest | amount_desc | amount_asc"),
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    role = normalize_role(getattr(current_user, "role", None))
+    q = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.txn_type == "payment")
+
+    # Role visibility rules for history:
+    # - Finance: can see paid/cancelled payment transactions that reached finance queue
+    # - Admin: can see all paid/cancelled payment transactions
+    if role == "finance":
+        q = q.filter(models.EmployeeTransaction.status.in_(["paid", "cancelled"]))
+    else:
+        q = q.filter(models.EmployeeTransaction.status.in_(["paid", "cancelled"]))
+
+    if kind == "contract":
+        q = q.filter(models.EmployeeTransaction.contract_employee_id.isnot(None))
+    elif kind == "monthly":
+        q = q.filter(models.EmployeeTransaction.employee_id.isnot(None))
+
+    s = (search or "").strip()
+    if s:
+        emp_ids = [int(x) for (x,) in db.query(models.Employee.id).filter(models.Employee.full_name.ilike(f"%{s}%")).all()]
+        ce_ids = [
+            int(x)
+            for (x,) in db.query(models.ContractEmployee.id).filter(models.ContractEmployee.full_name.ilike(f"%{s}%")).all()
+        ]
+        q = q.filter(
+            or_(
+                models.EmployeeTransaction.employee_id.in_(emp_ids) if emp_ids else False,
+                models.EmployeeTransaction.contract_employee_id.in_(ce_ids) if ce_ids else False,
+            )
+        )
+
+    if sort == "oldest":
+        q = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
+    elif sort == "amount_desc":
+        q = q.order_by(models.EmployeeTransaction.amount.desc(), models.EmployeeTransaction.id.desc())
+    elif sort == "amount_asc":
+        q = q.order_by(models.EmployeeTransaction.amount.asc(), models.EmployeeTransaction.id.asc())
+    else:
+        q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
+
+    rows = q.all()
+    total_amt = Decimal("0")
+    for t in rows:
+        total_amt += _as_decimal(t.amount)
+    page_rows = rows[offset : offset + limit]
+    items = [_txn_to_item(db, t) for t in page_rows]
+
+    return PendingEmployeePaymentsOut(
+        total_pending_amount=total_amt,
+        total=len(rows),
+        limit=limit,
+        offset=offset,
+        items=items,
+    )
 
 
 @router.post("/{transaction_id}/admin-approve", response_model=EmployeeTransactionOut)
@@ -192,6 +293,18 @@ def admin_send_payment_to_finance(
         # Legacy 'pending' is already in Finance queue.
         raise HTTPException(status_code=409, detail="Payment is not eligible to send to Finance.")
 
+    # Validation rules (ONLY):
+    # - Amount must be <= total owed (contract employees only; monthly payroll uses a different system)
+    # - Payment must not already be processed (covered by allowed statuses above)
+    if t.contract_employee_id is not None:
+        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
+        if ce is None:
+            raise HTTPException(status_code=404, detail="Contract employee not found")
+        owed = _as_decimal(getattr(ce, "total_owed", 0))
+        amt = _as_decimal(t.amount)
+        if amt > owed:
+            raise HTTPException(status_code=400, detail=f"amount cannot exceed total owed ({owed}).")
+
     # If admin sends directly without explicit approval, we still move it through approved state.
     if t.status == "requested":
         t.status = "approved_by_admin"
@@ -226,6 +339,78 @@ def admin_send_payment_to_finance(
     db.commit()
     db.refresh(t)
     return EmployeeTransactionOut.model_validate(t)
+
+
+@router.get("/{transaction_id}/detail", response_model=PaymentRequestDetailOut)
+def payment_request_detail(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+):
+    t = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == transaction_id).first()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t.txn_type != "payment":
+        raise HTTPException(status_code=400, detail="Only payment requests are supported here.")
+
+    employee_name = "Employee"
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    jobs: list[ContractJobMiniOut] = []
+    if t.contract_employee_id is not None:
+        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
+        employee_name = ce.full_name if ce else "Contract employee"
+        bank_name = (ce.bank_name if ce else None)
+        account_number = (ce.account_number if ce else None)
+        # Provide a small jobs list for context (if applicable).
+        job_rows = (
+            db.query(models.ContractJob)
+            .filter(models.ContractJob.contract_employee_id == t.contract_employee_id, models.ContractJob.status != "cancelled")
+            .order_by(models.ContractJob.id.desc())
+            .limit(30)
+            .all()
+        )
+        jobs = [
+            ContractJobMiniOut(id=int(j.id), status=str(j.status), final_price=_as_decimal(j.final_price) if j.final_price is not None else None)
+            for j in job_rows
+        ]
+    else:
+        emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
+        employee_name = emp.full_name if emp else "Employee"
+        bank_name = (getattr(emp, "bank_name", None) if emp else None)
+        account_number = (emp.account_number if emp else None)
+
+    # Requested amount is stored in the audit log at request time; fall back to current amount.
+    requested_amount = _as_decimal(t.amount)
+    req_log = (
+        db.query(models.FinancialAuditLog)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id == t.id,
+            models.FinancialAuditLog.action == "contract_employee_payment_requested",
+        )
+        .order_by(models.FinancialAuditLog.id.desc())
+        .first()
+    )
+    if req_log and isinstance(getattr(req_log, "meta", None), dict):
+        try:
+            requested_amount = _as_decimal(req_log.meta.get("amount"))
+        except Exception:
+            requested_amount = _as_decimal(t.amount)
+
+    current_amount = _as_decimal(t.amount)
+    adjusted_amount = current_amount if current_amount != requested_amount else None
+
+    return PaymentRequestDetailOut(
+        transaction=EmployeeTransactionOut.model_validate(t),
+        employee_name=employee_name,
+        bank_name=bank_name,
+        account_number=account_number,
+        requested_amount=requested_amount,
+        adjusted_amount=adjusted_amount,
+        jobs=jobs,
+        note=t.note,
+    )
 
 
 @router.post("/{transaction_id}/receipt", response_model=EmployeeTransactionOut)

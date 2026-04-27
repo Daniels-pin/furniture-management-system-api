@@ -6,12 +6,18 @@ import { contractEmployeePortalApi, contractJobsApi, notificationsApi } from "..
 import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import type { ContractEmployeeMe, ContractJob } from "../types/api";
+import type { ContractEmployeeMe, ContractJob, EmployeeTransaction } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { Modal } from "../components/ui/Modal";
 import { Input } from "../components/ui/Input";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
+import {
+  getFinancialActivityClasses,
+  getFinancialActivityColor,
+  getFinancialActivityStatusLabel,
+  getFinancialActivityTypeLabel
+} from "../utils/financialActivity";
 
 function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset";
@@ -100,6 +106,7 @@ export function ContractEmployeeDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [me, setMe] = useState<ContractEmployeeMe | null>(null);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
+  const [txns, setTxns] = useState<EmployeeTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const initialTab = (searchParams.get("tab") || "summary") as
     | "summary"
@@ -169,10 +176,13 @@ export function ContractEmployeeDashboardPage() {
         const needsPasswordChange = Boolean((m as any)?.needs_password_change);
         const needsProfileCompletion = Boolean(m?.needs_profile_completion);
         const canLoadJobs = !needsPasswordChange && !needsProfileCompletion;
-        const j = canLoadJobs ? await contractJobsApi.listMe() : [];
+        const [j, t] = canLoadJobs
+          ? await Promise.all([contractJobsApi.listMe(), contractEmployeePortalApi.transactions()])
+          : [[], [] as EmployeeTransaction[]];
         if (!alive) return;
         setMe(m);
         setJobs(j);
+        setTxns(Array.isArray(t) ? t : []);
         setProfileDraft({
           full_name: m.full_name ?? "",
           bank_name: m.bank_name ?? "",
@@ -225,7 +235,56 @@ export function ContractEmployeeDashboardPage() {
 
   const inProgress = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
-  const cancelledCount = useMemo(() => jobs.filter((j) => j.status === "cancelled").length, [jobs]);
+  const pendingRequests = useMemo(
+    () =>
+      (txns || []).filter(
+        (t) =>
+          t.txn_type === "payment" &&
+          (t.status === "requested" || t.status === "approved_by_admin" || t.status === "sent_to_finance" || t.status === "pending")
+      ),
+    [txns]
+  );
+  const [financeUnreadCount, setFinanceUnreadCount] = useState(0);
+
+  const FINANCE_KINDS = useMemo(
+    () =>
+      new Set([
+        "job_cancelled",
+        "price_updated",
+        "price_accepted",
+        "payment_request_submitted",
+        "payment_approved",
+        "payment_sent_to_finance",
+        "payment_completed"
+      ]),
+    []
+  );
+
+  useEffect(() => {
+    if (loading) return;
+    if (!me) return;
+    let alive = true;
+    async function refreshFinanceBadge() {
+      try {
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
+        if (!alive) return;
+        const items = Array.isArray(res?.items) ? res.items : [];
+        const count = items.filter((n: any) => FINANCE_KINDS.has(String(n?.kind || ""))).length;
+        setFinanceUnreadCount(count);
+      } catch {
+        if (!alive) return;
+        setFinanceUnreadCount(0);
+      }
+    }
+
+    const onUpdated = () => void refreshFinanceBadge();
+    window.addEventListener("furniture:notifications-updated", onUpdated as any);
+    void refreshFinanceBadge();
+    return () => {
+      alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as any);
+    };
+  }, [loading, me, FINANCE_KINDS]);
 
   useEffect(() => {
     if (loading) return;
@@ -253,14 +312,37 @@ export function ContractEmployeeDashboardPage() {
     };
   }, [loading, tab]);
 
+  useEffect(() => {
+    if (loading) return;
+    if (tab !== "summary") return;
+    let alive = true;
+    (async () => {
+      try {
+        // Optimistically clear the badge immediately on open.
+        setFinanceUnreadCount(0);
+        await notificationsApi.markFinanceRead();
+        if (!alive) return;
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
+      } catch {
+        // ignore (non-critical)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [loading, tab]);
+
   async function refresh() {
     const m = await contractEmployeePortalApi.me();
     const needsPasswordChange = Boolean((m as any)?.needs_password_change);
     const needsProfileCompletion = Boolean(m?.needs_profile_completion);
     const canLoadJobs = !needsPasswordChange && !needsProfileCompletion;
-    const j = canLoadJobs ? await contractJobsApi.listMe() : [];
+    const [j, t] = canLoadJobs
+      ? await Promise.all([contractJobsApi.listMe(), contractEmployeePortalApi.transactions()])
+      : [[], [] as EmployeeTransaction[]];
     setMe(m);
     setJobs(j);
+    setTxns(Array.isArray(t) ? t : []);
     setProfileDraft({
       full_name: m.full_name ?? "",
       bank_name: m.bank_name ?? "",
@@ -272,40 +354,50 @@ export function ContractEmployeeDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
-        {(
-          [
-            ["summary", "Financial Summary"],
-            ["jobs", "Jobs"],
-            ["new", "Start New Job"],
-            ["request", "Request Payment"],
-            ["profile", "Profile"],
-            ["password", "Change Password"]
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => {
-              if (mustOnboard && k !== "profile" && k !== "password") return;
-              setTabAndSync(k);
-            }}
-            className={[
-              "min-h-10 rounded-xl px-3 text-sm font-semibold",
-              tab === k ? "bg-black text-white" : "text-black/70 hover:bg-black/5",
-              mustOnboard && k !== "profile" && k !== "password" ? "opacity-50 cursor-not-allowed" : ""
-            ].join(" ")}
-          >
-            <span className="inline-flex items-center gap-2">
-              <span>{label}</span>
-              {k === "summary" && cancelledCount > 0 ? (
-                <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
-                  {cancelledCount}
+      <div className="-mx-4 md:mx-0">
+        <div
+          className={[
+            "overflow-x-auto overscroll-x-contain",
+            "px-4 md:px-0",
+            "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          ].join(" ")}
+        >
+          <div className="inline-flex max-w-full rounded-2xl border border-black/10 bg-white p-1 whitespace-nowrap">
+            {(
+              [
+                ["summary", "Financial Summary"],
+                ["jobs", "Jobs"],
+                ["new", "Start New Job"],
+                ["request", "Request Payment"],
+                ["profile", "Profile"],
+                ["password", "Change Password"]
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  if (mustOnboard && k !== "profile" && k !== "password") return;
+                  setTabAndSync(k);
+                }}
+                className={[
+                  "shrink-0 min-h-10 rounded-xl px-3 text-sm font-semibold",
+                  tab === k ? "bg-black text-white" : "text-black/70 hover:bg-black/5",
+                  mustOnboard && k !== "profile" && k !== "password" ? "opacity-50 cursor-not-allowed" : ""
+                ].join(" ")}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span>{label}</span>
+                  {k === "summary" && financeUnreadCount > 0 ? (
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
+                      {financeUnreadCount}
+                    </span>
+                  ) : null}
                 </span>
-              ) : null}
-            </span>
-          </button>
-        ))}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -379,6 +471,78 @@ export function ContractEmployeeDashboardPage() {
                 )}
               </div>
             </div>
+          </Card>
+
+          <Card className="sm:col-span-3 !p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Financial Activity</div>
+              <Button variant="secondary" onClick={() => void refresh()}>
+                Refresh
+              </Button>
+            </div>
+
+            {pendingRequests.length ? (
+              <div className="mt-3 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-950">
+                <div className="font-semibold">Pending</div>
+                <div className="mt-1 text-xs text-yellow-900">
+                  {pendingRequests
+                    .map((t) => `#${t.id} (${getFinancialActivityStatusLabel(t)})`)
+                    .slice(0, 4)
+                    .join(" • ")}
+                  {pendingRequests.length > 4 ? " • …" : ""}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-black/60">No pending requests.</div>
+            )}
+
+            {txns.length === 0 ? (
+              <div className="mt-3 text-sm text-black/60">No financial activity yet.</div>
+            ) : (
+              <ul className="mt-3 divide-y divide-black/10 rounded-2xl border border-black/10">
+                {txns.slice(0, 12).map((t) => {
+                  const color = getFinancialActivityColor(t);
+                  const cls = getFinancialActivityClasses(color);
+                  const typeLabel = getFinancialActivityTypeLabel(t);
+                  const statusLabel = getFinancialActivityStatusLabel(t);
+                  const relatedJob =
+                    typeof (t as any)?.contract_job_id !== "undefined" && (t as any)?.contract_job_id !== null
+                      ? `Job #${Number((t as any).contract_job_id)}`
+                      : Array.isArray((t as any)?.allocations) && (t as any).allocations.length
+                        ? `Jobs: ${(t as any).allocations
+                            .slice(0, 3)
+                            .map((a: any) => `#${Number(a.contract_job_id)}`)
+                            .join(", ")}${(t as any).allocations.length > 3 ? "…" : ""}`
+                        : null;
+
+                  return (
+                    <li key={t.id} className={["px-4 py-3 text-sm", cls.bg, cls.text].join(" ")}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="font-semibold">{typeLabel}</div>
+                            <span
+                              className={[
+                                "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+                                cls.ring
+                              ].join(" ")}
+                            >
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-black/60">
+                            {new Date(t.created_at).toLocaleString()}
+                            {relatedJob ? ` • ${relatedJob}` : ""}
+                          </div>
+                          {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
+                        </div>
+                        <div className="shrink-0 font-bold tabular-nums">{formatMoney(t.amount)}</div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </Card>
         </div>
       ) : tab === "jobs" ? (
@@ -837,19 +1001,44 @@ export function ContractEmployeeDashboardPage() {
             <Button
               variant="secondary"
               isLoading={profileBusy}
+              disabled={profileBusy}
               onClick={() => {
+                if (!profileDraft.full_name.trim()) {
+                  toast.push("error", "Name is required.");
+                  return;
+                }
+                if (!profileDraft.bank_name.trim()) {
+                  toast.push("error", "Bank name is required.");
+                  return;
+                }
+                if (!profileDraft.account_number.trim()) {
+                  toast.push("error", "Account number is required.");
+                  return;
+                }
+                if (!/^\d+$/.test(profileDraft.account_number.trim())) {
+                  toast.push("error", "Account number must contain digits only.");
+                  return;
+                }
                 setProfileBusy(true);
+                const payload = {
+                  full_name: profileDraft.full_name.trim() || null,
+                  bank_name: profileDraft.bank_name.trim() || null,
+                  account_number: profileDraft.account_number.trim() || null,
+                  phone: profileDraft.phone.trim() || null,
+                  address: profileDraft.address.trim() || null
+                };
+                console.log("[contract-employee.patchMe] payload", payload);
                 void contractEmployeePortalApi
-                  .patchMe({
-                    full_name: profileDraft.full_name.trim() || null,
-                    bank_name: profileDraft.bank_name.trim() || null,
-                    account_number: profileDraft.account_number.trim() || null,
-                    phone: profileDraft.phone.trim() || null,
-                    address: profileDraft.address.trim() || null
+                  .patchMe(payload)
+                  .then((m) => {
+                    console.log("[contract-employee.patchMe] response", m);
+                    setMe(m);
                   })
-                  .then((m) => setMe(m))
                   .then(() => toast.push("success", "Profile updated."))
-                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .catch((e) => {
+                    console.error("[contract-employee.patchMe] error", e);
+                    toast.push("error", getErrorMessage(e));
+                  })
                   .finally(() => setProfileBusy(false));
               }}
             >

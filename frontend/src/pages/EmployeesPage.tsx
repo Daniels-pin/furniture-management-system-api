@@ -30,7 +30,6 @@ export function EmployeesPage() {
     | "monthly"
     | "contract"
     | "pending";
-  const drawer = searchParams.get("drawer"); // e.g. monthly:12 | contract:4
   const refreshToken = searchParams.get("r");
 
   const [nav, setNav] = useState<PayrollPeriodsNav | null>(null);
@@ -115,21 +114,7 @@ export function EmployeesPage() {
     );
   }
 
-  const [drawerLoading, setDrawerLoading] = useState(false);
-  const [drawerKind, drawerId] = useMemo(() => {
-    if (!drawer) return [null, null] as const;
-    const [k, id] = drawer.split(":");
-    if ((k !== "monthly" && k !== "contract") || !id) return [null, null] as const;
-    const n = Number(id);
-    if (!Number.isFinite(n)) return [null, null] as const;
-    return [k as "monthly" | "contract", n] as const;
-  }, [drawer]);
-
-  const [monthlyDetail, setMonthlyDetail] = useState<any>(null);
-  const [monthlyTxns, setMonthlyTxns] = useState<EmployeeTransaction[]>([]);
-  const [mPayAmt, setMPayAmt] = useState("");
-  const [mPayNote, setMPayNote] = useState("");
-  const [mSending, setMSending] = useState(false);
+  // Drawer removed: monthly employees use list → click → detail page pattern.
 
   const periodParams = useMemo(() => {
     if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
@@ -261,35 +246,7 @@ export function EmployeesPage() {
     };
   }, [auth.role, tab, toast, contractSearch, contractStatusFilter, contractOverpaidOnly, refreshToken]);
 
-  useEffect(() => {
-    if (auth.role !== "admin") return;
-    if (!drawerKind || !drawerId) return;
-    // Contract employee profiles now live on a dedicated page.
-    if (drawerKind === "contract") return;
-    let alive = true;
-    (async () => {
-      setDrawerLoading(true);
-      try {
-        if (drawerKind === "monthly") {
-          if (!periodParams) return;
-          const [d, tx] = await Promise.all([
-            employeesApi.get(drawerId, periodParams),
-            employeesApi.transactions(drawerId, periodParams)
-          ]);
-          if (!alive) return;
-          setMonthlyDetail(d);
-          setMonthlyTxns(tx);
-        }
-      } catch (e) {
-        toast.push("error", getErrorMessage(e));
-      } finally {
-        if (alive) setDrawerLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [auth.role, drawerKind, drawerId, periodParams, toast]);
+  // Drawer removed.
 
   function setPeriod(nextYear: number, nextMonth: number) {
     setSearchParams({ year: String(nextYear), month: String(nextMonth) });
@@ -322,24 +279,7 @@ export function EmployeesPage() {
   function setTab(next: "monthly" | "contract" | "pending") {
     const sp = new URLSearchParams(searchParams);
     sp.set("tab", next);
-    sp.delete("drawer");
     setSearchParams(sp);
-  }
-
-  function openDrawer(kind: "monthly" | "contract", id: number) {
-    const sp = new URLSearchParams(searchParams);
-    sp.set("drawer", `${kind}:${id}`);
-    if (kind === "monthly") sp.set("tab", "monthly");
-    if (kind === "contract") sp.set("tab", "contract");
-    setSearchParams(sp);
-  }
-
-  function closeDrawer() {
-    const sp = new URLSearchParams(searchParams);
-    sp.delete("drawer");
-    setSearchParams(sp);
-    setMonthlyDetail(null);
-    setMonthlyTxns([]);
   }
 
   return (
@@ -770,7 +710,31 @@ export function EmployeesPage() {
           </div>
 
           <Card>
-            {loading || !periodParams ? (
+            {!periodParams ? (
+              <div className="space-y-3">
+                <div className="text-sm font-semibold">Select a payroll month</div>
+                <div className="text-sm text-black/60">
+                  This page needs a <span className="font-semibold">year</span> and <span className="font-semibold">month</span> in the URL to load employees.
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {nav?.active_period ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setSearchParams(
+                          { year: String(nav.active_period!.year), month: String(nav.active_period!.month), tab: "monthly" },
+                          { replace: true }
+                        )
+                      }
+                    >
+                      Go to active month ({nav.active_period.label})
+                    </Button>
+                  ) : (
+                    <div className="text-sm text-black/60">Loading payroll months…</div>
+                  )}
+                </div>
+              </div>
+            ) : loading ? (
               <div className="text-sm text-black/60">Loading…</div>
             ) : rows.length === 0 ? (
               <div className="text-sm text-black/60">No employees yet. Add one to get started.</div>
@@ -778,7 +742,22 @@ export function EmployeesPage() {
               <>
                 <div className="md:hidden space-y-3">
                   {rows.map((r) => (
-                    <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                    <div
+                      key={r.id}
+                      className="rounded-2xl border border-black/10 bg-white p-4 cursor-pointer hover:bg-black/[0.02]"
+                      role="link"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        if (isInteractiveTarget(e.target)) return;
+                        navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        if (isInteractiveTarget(e.target)) return;
+                        e.preventDefault();
+                        navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
+                      }}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <label className="flex items-start gap-3">
                           <input
@@ -791,17 +770,15 @@ export function EmployeesPage() {
                               );
                             }}
                             className="mt-1 h-4 w-4"
+                            onClick={(e) => e.stopPropagation()}
                           />
                           <div className="min-w-0">
                             <div className="truncate text-sm font-bold">{r.full_name}</div>
-                            <div className="mt-1 text-xs font-semibold text-black/55">
-                              {r.phone ?? "—"} • <span className="font-mono">{r.account_number ?? "—"}</span>
-                            </div>
+                            {r.notes ? <div className="mt-1 text-xs text-black/55 line-clamp-2">{r.notes}</div> : null}
                           </div>
                         </label>
-                        <div className="text-right">
-                          <div className="text-xs font-semibold text-black/55">Final payable</div>
-                          <div className="mt-0.5 text-base font-bold tabular-nums">{formatMoney(r.salary.final_payable)}</div>
+                        <div className="text-right" aria-hidden="true">
+                          <div className="text-xs font-semibold text-black/55"> </div>
                         </div>
                       </div>
 
@@ -815,7 +792,13 @@ export function EmployeesPage() {
                         >
                           {r.payment.status === "paid" ? "Paid" : "Unpaid"}
                         </span>
-                        <Button variant="secondary" onClick={() => openDrawer("monthly", r.id)}>
+                        <Button
+                          variant="secondary"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
+                          }}
+                        >
                           Open
                         </Button>
                       </div>
@@ -824,7 +807,7 @@ export function EmployeesPage() {
                 </div>
 
                 <div className="hidden md:block min-w-0 overflow-x-auto">
-                <table className="w-full min-w-[920px] text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="text-black/60">
                     <tr className="border-b border-black/10">
                       <th className="py-3 pr-4 font-semibold">
@@ -839,21 +822,34 @@ export function EmployeesPage() {
                         />
                       </th>
                       <th className="py-3 pr-4 font-semibold">Name</th>
-                      <th className="py-3 pr-4 font-semibold">Phone</th>
-                      <th className="py-3 pr-4 font-semibold">Account</th>
-                      <th className="py-3 pr-4 text-right font-semibold">Final payable</th>
-                      <th className="py-3 pr-4 font-semibold">Payment</th>
-                      <th className="py-3 pr-0 text-right font-semibold"> </th>
+                      <th className="py-3 pr-4 font-semibold">Note</th>
+                      <th className="py-3 pr-0 font-semibold">Payment</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r) => (
-                      <tr key={r.id} className="border-b border-black/5">
+                      <tr
+                        key={r.id}
+                        className="border-b border-black/5 cursor-pointer hover:bg-black/[0.02]"
+                        role="link"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          if (isInteractiveTarget(e.target)) return;
+                          navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          if (isInteractiveTarget(e.target)) return;
+                          e.preventDefault();
+                          navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
+                        }}
+                      >
                         <td className="py-3 pr-4">
                           <input
                             type="checkbox"
                             aria-label={`Select ${r.full_name}`}
                             checked={monthlySelectedIds.includes(r.id)}
+                            onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               setMonthlySelectedIds((prev) =>
                                 e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)
@@ -862,12 +858,10 @@ export function EmployeesPage() {
                           />
                         </td>
                         <td className="py-3 pr-4 font-semibold">{r.full_name}</td>
-                        <td className="py-3 pr-4">{r.phone ?? "—"}</td>
-                        <td className="py-3 pr-4 font-mono text-xs">{r.account_number ?? "—"}</td>
-                        <td className="py-3 pr-4 text-right font-semibold tabular-nums">
-                          {formatMoney(r.salary.final_payable)}
+                        <td className="py-3 pr-4 text-xs text-black/60">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-0">
                           <span
                             className={
                               r.payment.status === "paid"
@@ -877,15 +871,6 @@ export function EmployeesPage() {
                           >
                             {r.payment.status === "paid" ? "Paid" : "Unpaid"}
                           </span>
-                        </td>
-                        <td className="py-3 pr-0 text-right">
-                          <button
-                            type="button"
-                            className="text-sm font-semibold text-black underline decoration-black/30 underline-offset-2"
-                            onClick={() => openDrawer("monthly", r.id)}
-                          >
-                            Open
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1196,195 +1181,7 @@ export function EmployeesPage() {
         </>
       )}
 
-      {drawerKind && drawerId ? (
-        <div className="fixed inset-0 z-50">
-          <button type="button" className="absolute inset-0 bg-black/40" onClick={closeDrawer} aria-label="Close" />
-          <div className="absolute right-0 top-0 h-full w-[min(520px,92vw)] overflow-y-auto bg-white shadow-xl">
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-black/10 bg-white px-4 py-3">
-              <div className="min-w-0">
-                <div className="text-sm font-bold">
-                  {drawerKind === "monthly" ? monthlyDetail?.full_name ?? "Employee" : "Contract employee"}
-                </div>
-                <div className="mt-0.5 text-xs font-semibold text-black/50">
-                  {drawerKind === "monthly" ? "Monthly employee" : "Contract employee"}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="min-h-10 min-w-10 rounded-xl px-2 text-sm font-semibold text-black/70 hover:bg-black/5"
-                onClick={closeDrawer}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4 p-4">
-              {drawerLoading ? (
-                <div className="text-sm text-black/60">Loading…</div>
-              ) : drawerKind === "monthly" && monthlyDetail && periodParams ? (
-                <>
-                  <Card className="!p-4">
-                    <div className="text-xs font-semibold text-black/55">Financial summary</div>
-                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
-                        <div className="text-xs font-semibold text-black/60">Final payable</div>
-                        <div className="mt-1 font-bold tabular-nums">{formatMoney(monthlyDetail.salary.final_payable)}</div>
-                      </div>
-                      <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
-                        <div className="text-xs font-semibold text-black/60">Payment status</div>
-                        <div className="mt-1 font-bold">{monthlyDetail.payment.status === "paid" ? "Paid" : "Unpaid"}</div>
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card className="!p-4">
-                    <div className="text-sm font-semibold text-black">Send payment to Finance</div>
-                    <p className="mt-1 text-xs text-black/55">
-                      This creates a <span className="font-semibold">Pending</span> transaction. Balance and payroll status only update when marked paid.
-                    </p>
-                    <div className="mt-3 grid grid-cols-1 gap-2">
-                      <label className="text-xs font-semibold text-black/60">
-                        Amount (NGN)
-                        <input
-                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                          inputMode="decimal"
-                          placeholder="0"
-                          value={mPayAmt}
-                          onChange={(e) => setMPayAmt(e.target.value)}
-                        />
-                      </label>
-                      <label className="text-xs font-semibold text-black/60">
-                        Note (optional)
-                        <input
-                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                          value={mPayNote}
-                          onChange={(e) => setMPayNote(e.target.value)}
-                        />
-                      </label>
-                      <div className="mt-1">
-                        <Button
-                          isLoading={mSending}
-                          disabled={!selectedPeriod?.is_active}
-                          onClick={() => {
-                            const amt = parseMoneyInput(mPayAmt);
-                            if (mPayAmt.trim() && !isValidThousandsCommaNumber(mPayAmt)) {
-                              toast.push("error", "Fix comma formatting in amount.");
-                              return;
-                            }
-                            if (amt === null || Number.isNaN(amt) || amt <= 0) {
-                              toast.push("error", "Enter a valid amount (> 0).");
-                              return;
-                            }
-                            setMSending(true);
-                            void employeesApi
-                              .sendPaymentToFinance(monthlyDetail.id, { amount: amt, note: mPayNote.trim() || null }, periodParams)
-                              .then(() => employeesApi.transactions(monthlyDetail.id, periodParams))
-                              .then((tx) => setMonthlyTxns(tx))
-                              .then(() => toast.push("success", "Sent to Finance."))
-                              .catch((e) => toast.push("error", getErrorMessage(e)))
-                              .finally(() => setMSending(false));
-                          }}
-                        >
-                          Send to Finance
-                        </Button>
-                      </div>
-                      {!selectedPeriod?.is_active ? (
-                        <div className="text-xs font-semibold text-amber-900">
-                          You’re viewing an archived month; you can’t send payments from here.
-                        </div>
-                      ) : null}
-                    </div>
-                  </Card>
-
-                  <Card className="!p-4">
-                    <div className="flex items-end justify-between gap-2">
-                      <div className="text-sm font-semibold text-black">Transactions ({monthlyDetail.period.label})</div>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          void employeePaymentsApi
-                            .exportTransactions({ employee_id: monthlyDetail.id })
-                            .then(() => toast.push("success", "Export downloaded."))
-                            .catch((e) => toast.push("error", getErrorMessage(e)));
-                        }}
-                      >
-                        Export CSV
-                      </Button>
-                    </div>
-                    {(monthlyTxns || []).length === 0 ? (
-                      <div className="mt-2 text-sm text-black/60">No transactions yet.</div>
-                    ) : (
-                      <ul className="mt-3 divide-y divide-black/10 rounded-xl border border-black/10">
-                        {monthlyTxns.map((t) => (
-                          <li
-                            key={t.id}
-                            className={[
-                              "px-3 py-2 text-sm",
-                              t.status === "pending"
-                                ? "bg-black/[0.03]"
-                                : t.status === "cancelled"
-                                  ? "bg-black/[0.015] opacity-70"
-                                  : "bg-emerald-50/40"
-                            ].join(" ")}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="font-semibold">
-                                {t.txn_type === "payment" ? "Payment" : t.txn_type === "reversal" ? "Reversal" : "Owed increase"}
-                              </div>
-                              <div className="font-bold tabular-nums">{formatMoney(t.amount)}</div>
-                            </div>
-                            <div className="mt-0.5 text-xs text-black/55">
-                              {new Date(t.created_at).toLocaleString()} •{" "}
-                              <span className="font-semibold">
-                                {t.status === "pending" ? "Pending" : t.status === "cancelled" ? "Cancelled" : "Paid"}
-                              </span>
-                              {t.receipt_url ? " • Receipt attached" : ""}
-                            </div>
-                            <div className="mt-2 flex justify-end gap-2">
-                              {auth.role === "admin" && t.status === "pending" && t.txn_type === "payment" ? (
-                                <Button variant="danger" onClick={() => setCancelTargetId(t.id)}>
-                                  Cancel
-                                </Button>
-                              ) : null}
-                              {t.status === "paid" && t.txn_type !== "reversal" ? (
-                                <Button
-                                  variant="danger"
-                                  onClick={() =>
-                                    setReverseTarget({ id: t.id, kind: "monthly", employeeId: monthlyDetail.id })
-                                  }
-                                >
-                                  Reverse
-                                </Button>
-                              ) : null}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </Card>
-
-                  <div className="text-xs text-black/50">
-                    Tip: the legacy payroll editor is still available via{" "}
-                    <Link
-                      className="font-semibold underline decoration-black/30 underline-offset-2"
-                      to={`/employees/${monthlyDetail.id}?year=${periodParams.period_year}&month=${periodParams.period_month}`}
-                    >
-                      open full editor
-                    </Link>
-                    .
-                  </div>
-                </>
-              ) : drawerKind === "contract" ? (
-                <div className="text-sm text-black/60">
-                  Contract employee profiles now open as a full page. Close this panel and use the list “Open” link.
-                </div>
-              ) : (
-                <div className="text-sm text-black/60">Not found.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* Side panel/drawer removed (monthly employees use dedicated detail page). */}
 
       <Modal open={receiptPreviewUrl !== null} title="Receipt preview" onClose={() => setReceiptPreviewUrl(null)}>
         {receiptPreviewUrl ? (
@@ -1509,12 +1306,6 @@ export function EmployeesPage() {
                   setReversing(true);
                   void employeePaymentsApi
                     .reverse(reverseTarget.id, { reason: reverseReason.trim() || undefined })
-                    .then(() => {
-                      if (periodParams) {
-                        return employeesApi.transactions(reverseTarget.employeeId, periodParams).then((tx) => setMonthlyTxns(tx));
-                      }
-                      return Promise.resolve();
-                    })
                     .then(() => toast.push("success", "Reversed."))
                     .then(() => {
                       setReverseTarget(null);
@@ -1547,12 +1338,10 @@ export function EmployeesPage() {
                 variant="danger"
                 isLoading={cancelling}
                 onClick={() => {
-                  if (!cancelTargetId || !periodParams || !monthlyDetail?.id) return;
+                  if (!cancelTargetId) return;
                   setCancelling(true);
                   void employeePaymentsApi
                     .cancelPending(cancelTargetId)
-                    .then(() => employeesApi.transactions(monthlyDetail.id, periodParams))
-                    .then((tx) => setMonthlyTxns(tx))
                     .then(() => toast.push("success", "Cancelled."))
                     .then(() => setCancelTargetId(null))
                     .catch((e) => toast.push("error", getErrorMessage(e)))

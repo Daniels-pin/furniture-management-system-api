@@ -19,7 +19,7 @@ export function ExpensesPage() {
 
   usePageHeader({
     title: "Expense / Petty Cash",
-    subtitle: "Admin and Finance can add entries. Records are append-only."
+    subtitle: "Admin and Finance can add, edit, and delete entries. Summaries update immediately."
   });
 
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -31,6 +31,15 @@ export function ExpensesPage() {
   const [receiptFor, setReceiptFor] = useState<ExpenseEntry | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const [editFor, setEditFor] = useState<ExpenseEntry | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editType, setEditType] = useState<ExpenseEntryType>("expense");
+  const [editNote, setEditNote] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const [deleteFor, setDeleteFor] = useState<ExpenseEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const canPreview = useMemo(() => Boolean(previewUrl), [previewUrl]);
 
@@ -222,6 +231,22 @@ export function ExpensesPage() {
                         Upload receipt
                       </Button>
                     )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setEditFor(r);
+                          setEditAmount(String(r.amount ?? ""));
+                          setEditType(r.entry_type);
+                          setEditNote(r.note ?? "");
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button variant="danger" onClick={() => setDeleteFor(r)}>
+                        Delete
+                      </Button>
+                    </div>
                     <div className="text-right text-xs font-semibold text-black/45">
                       {r.processed_by_role ?? "—"}
                     </div>
@@ -278,7 +303,30 @@ export function ExpensesPage() {
                         </Button>
                       )}
                     </td>
-                    <td className="py-3 pr-0 text-right text-xs text-black/50">{r.processed_by_role ?? "—"}</td>
+                    <td className="py-3 pr-0 text-right">
+                      <div className="inline-flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-black underline decoration-black/30 underline-offset-2"
+                          onClick={() => {
+                            setEditFor(r);
+                            setEditAmount(String(r.amount ?? ""));
+                            setEditType(r.entry_type);
+                            setEditNote(r.note ?? "");
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-red-700 underline decoration-red-700/30 underline-offset-2"
+                          onClick={() => setDeleteFor(r)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <div className="mt-1 text-xs text-black/50">{r.processed_by_role ?? "—"}</div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -330,6 +378,107 @@ export function ExpensesPage() {
             >
               Open in new tab
             </a>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal open={editFor !== null} title="Edit entry" onClose={() => (editSaving ? null : setEditFor(null))}>
+        {editFor ? (
+          <div className="space-y-4">
+            <div className="text-sm text-black/70">
+              Entry #{editFor.id} • {new Date(editFor.entry_date).toLocaleDateString()}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-black/60">Type</label>
+              <select
+                className="w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                value={editType}
+                onChange={(e) => setEditType(e.target.value as ExpenseEntryType)}
+              >
+                <option value="expense">Expense</option>
+                <option value="credit">Credit</option>
+              </select>
+            </div>
+            <label className="text-xs font-semibold text-black/60">
+              Amount (NGN)
+              <input
+                className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+              />
+            </label>
+            <label className="text-xs font-semibold text-black/60">
+              Note / description (optional)
+              <input
+                className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                value={editNote}
+                onChange={(e) => setEditNote(e.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="secondary"
+                isLoading={editSaving}
+                onClick={() => {
+                  const amt = parseMoneyInput(editAmount);
+                  if (editAmount.trim() && !isValidThousandsCommaNumber(editAmount)) {
+                    toast.push("error", "Fix comma formatting in amount.");
+                    return;
+                  }
+                  if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                    toast.push("error", "Enter a valid amount (> 0).");
+                    return;
+                  }
+                  setEditSaving(true);
+                  void expensesApi
+                    .update(editFor.id, { amount: amt, entry_type: editType, note: editNote.trim() || null })
+                    .then(() => refresh())
+                    .then(() => toast.push("success", "Entry updated."))
+                    .then(() => setEditFor(null))
+                    .catch((e) => toast.push("error", getErrorMessage(e)))
+                    .finally(() => setEditSaving(false));
+                }}
+              >
+                Save
+              </Button>
+              <Button variant="ghost" disabled={editSaving} onClick={() => setEditFor(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal open={deleteFor !== null} title="Delete entry?" onClose={() => (deleting ? null : setDeleteFor(null))}>
+        {deleteFor ? (
+          <div className="space-y-4">
+            <div className="text-sm text-black/70">
+              Are you sure you want to delete entry #{deleteFor.id} ({new Date(deleteFor.entry_date).toLocaleDateString()} •{" "}
+              {formatMoney(deleteFor.amount)})?
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="danger"
+                isLoading={deleting}
+                onClick={() => {
+                  setDeleting(true);
+                  void expensesApi
+                    .remove(deleteFor.id)
+                    .then(() => refresh())
+                    .then(() => toast.push("success", "Entry deleted."))
+                    .then(() => setDeleteFor(null))
+                    .catch((e) => toast.push("error", getErrorMessage(e)))
+                    .finally(() => setDeleting(false));
+                }}
+              >
+                Delete
+              </Button>
+              <Button variant="ghost" disabled={deleting} onClick={() => setDeleteFor(null)}>
+                Cancel
+              </Button>
+            </div>
           </div>
         ) : null}
       </Modal>

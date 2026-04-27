@@ -529,6 +529,29 @@ def upload_contract_job_image(
     return {"image_url": url}
 
 
+@router.get("/pending-negotiations-count")
+def pending_negotiations_count(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+):
+    """Count jobs awaiting admin review/response for price negotiation.
+
+    Note: this route MUST be declared before `/{job_id}` so it isn't parsed as a job_id path param.
+    """
+    count = (
+        db.query(models.ContractJob)
+        .filter(
+            models.ContractJob.status == "pending",
+            models.ContractJob.price_accepted_at.is_(None),
+            models.ContractJob.final_price.is_(None),
+            models.ContractJob.price_offer.isnot(None),
+            models.ContractJob.last_offer_by_role == "contract_employee",
+        )
+        .count()
+    )
+    return {"count": int(count or 0)}
+
+
 @router.get("/{job_id}", response_model=ContractJobOut)
 def get_job_detail(
     job_id: int,
@@ -804,26 +827,5 @@ def cancel_job(
     return _job_out(db, j)
 
 
-@router.get("/pending-negotiations-count")
-def pending_negotiations_count(
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
-):
-    """Count jobs awaiting admin review/response for price negotiation.
-
-    We define "pending negotiation" as: pending jobs where the last offer came from the contract employee
-    and the price isn't locked yet.
-    """
-    count = (
-        db.query(models.ContractJob)
-        .filter(
-            models.ContractJob.status == "pending",
-            models.ContractJob.price_accepted_at.is_(None),
-            models.ContractJob.final_price.is_(None),
-            models.ContractJob.price_offer.isnot(None),
-            models.ContractJob.last_offer_by_role == "contract_employee",
-        )
-        .count()
-    )
-    return {"count": int(count or 0)}
+## NOTE: moved to be declared before `/{job_id}` to avoid FastAPI path-param matching.
 

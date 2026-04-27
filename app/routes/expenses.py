@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth.auth import normalize_role, require_role
 from app.database import get_db
-from app.schemas import ExpenseEntryCreate, ExpenseEntryOut, ExpenseSummaryOut
+from app.schemas import ExpenseEntryCreate, ExpenseEntryOut, ExpenseSummaryOut, ExpenseEntryUpdate
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 
@@ -173,6 +173,78 @@ def create_expense(
         processed_by=processed_by,
         created_at=row.created_at,
     )
+
+
+@router.patch("/{entry_id}", response_model=ExpenseEntryOut)
+def update_expense(
+    entry_id: int,
+    body: ExpenseEntryUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+):
+    row = db.query(models.ExpenseEntry).filter(models.ExpenseEntry.id == entry_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Expense entry not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "amount" in data and data["amount"] is not None:
+        row.amount = data["amount"]
+    if "entry_type" in data and data["entry_type"] is not None:
+        row.entry_type = data["entry_type"]
+    if "note" in data:
+        row.note = (data["note"] or "").strip() or None
+
+    role = normalize_role(getattr(current_user, "role", None))
+    row.processed_by_id = current_user.id
+    row.processed_by_role = role
+
+    log_financial_action(
+        db,
+        action="expense_update",
+        entity_type="expense_entry",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"entry_type": row.entry_type, "amount": str(_as_decimal(row.amount)), "entry_date": row.entry_date.isoformat()},
+    )
+    db.commit()
+    db.refresh(row)
+    processed_by = None
+    if row.processed_by_user:
+        processed_by = (row.processed_by_user.email or "").split("@")[0] if row.processed_by_user.email else None
+    return ExpenseEntryOut(
+        id=row.id,
+        entry_date=row.entry_date,
+        amount=_as_decimal(row.amount),
+        entry_type=row.entry_type,
+        note=row.note,
+        receipt_url=row.receipt_url,
+        processed_by_role=row.processed_by_role,
+        processed_by=processed_by,
+        created_at=row.created_at,
+    )
+
+
+@router.delete("/{entry_id}")
+def delete_expense(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+):
+    row = db.query(models.ExpenseEntry).filter(models.ExpenseEntry.id == entry_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Expense entry not found")
+
+    log_financial_action(
+        db,
+        action="expense_delete",
+        entity_type="expense_entry",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"entry_type": row.entry_type, "amount": str(_as_decimal(row.amount)), "entry_date": row.entry_date.isoformat()},
+    )
+    db.delete(row)
+    db.commit()
+    return {"message": "Deleted"}
 
 
 @router.post("/{entry_id}/receipt", response_model=ExpenseEntryOut)

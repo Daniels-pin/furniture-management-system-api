@@ -23,6 +23,7 @@ export function ContractEmployeeCreatePage() {
   const [username, setUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -40,15 +41,23 @@ export function ContractEmployeeCreatePage() {
     }
     setIsSubmitting(true);
     try {
-      await contractEmployeesApi.createWithLogin({
+      if (accountNumber.trim() && !/^\d+$/.test(accountNumber.trim())) {
+        toast.push("error", "Account number must contain digits only.");
+        return;
+      }
+      const payload = {
         username: username.trim(),
         password: loginPassword,
         full_name: fullName.trim() || "",
+        bank_name: bankName.trim() || null,
         account_number: accountNumber.trim() || null,
         phone: phone.trim() || null,
         address: address.trim() || null,
         status
-      });
+      };
+      console.log("[contract-employees.create-with-login] payload", payload);
+      const res = await contractEmployeesApi.createWithLogin(payload);
+      console.log("[contract-employees.create-with-login] response", res);
       toast.push("success", "Contract employee created.");
       const r = Date.now();
       nav(`${backTo}${backTo.includes("?") ? "&" : "?"}r=${r}`, { replace: true });
@@ -108,6 +117,14 @@ export function ContractEmployeeCreatePage() {
               className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
+            />
+          </label>
+          <label className="text-xs font-semibold text-black/60">
+            Bank name
+            <input
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
             />
           </label>
           <label className="text-xs font-semibold text-black/60">

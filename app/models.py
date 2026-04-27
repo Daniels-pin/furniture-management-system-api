@@ -456,6 +456,7 @@ class Employee(Base):
     full_name = Column(String, nullable=False)
     address = Column(Text, nullable=True)
     phone = Column(String, nullable=True)
+    bank_name = Column(String, nullable=True)
     account_number = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     base_salary = Column(Numeric(14, 2), nullable=False, default=0)
@@ -502,6 +503,14 @@ class EmployeePeriodPayroll(Base):
     payment_status = Column(String(16), nullable=False, default="unpaid")
     payment_date = Column(DateTime, nullable=True)
     payment_reference = Column(String(500), nullable=True)
+    # Payroll adjustments (per period). These are optional and additive to the base payroll system.
+    # - period_base_salary overrides Employee.base_salary for this period only when set.
+    # - bonus/deduction/late_penalty are stored as positive numbers; they are applied in salary calculation.
+    period_base_salary = Column(Numeric(14, 2), nullable=True)
+    adjustment_bonus = Column(Numeric(14, 2), nullable=False, default=0)
+    adjustment_deduction = Column(Numeric(14, 2), nullable=False, default=0)
+    adjustment_late_penalty = Column(Numeric(14, 2), nullable=False, default=0)
+    adjustment_note = Column(Text, nullable=True)
     updated_at = Column(DateTime, nullable=True)
     updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 

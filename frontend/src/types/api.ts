@@ -473,10 +473,17 @@ export type FactoryToolDetail = {
 
 /** HR / payroll (admin); amounts often arrive as numeric strings from the API */
 export type EmployeeSalaryBreakdown = {
+  base_salary_used?: string | number;
   base_salary: string | number;
+  period_base_salary?: string | number | null;
   lateness_count: number;
   lateness_deduction: string | number;
   lateness_rate_naira: string | number;
+  penalties_entries_total?: string | number;
+  bonuses_entries_total?: string | number;
+  adjustment_bonus?: string | number;
+  adjustment_deduction?: string | number;
+  adjustment_late_penalty?: string | number;
   penalties_total: string | number;
   bonuses_total: string | number;
   total_deductions: string | number;
@@ -546,6 +553,7 @@ export type EmployeeDetail = {
   full_name: string;
   address?: string | null;
   phone?: string | null;
+  bank_name?: string | null;
   account_number?: string | null;
   notes?: string | null;
   base_salary: string | number;
@@ -565,7 +573,9 @@ export type EmployeeDetail = {
 export type EmployeeListItem = {
   id: number;
   full_name: string;
+  notes?: string | null;
   phone?: string | null;
+  bank_name?: string | null;
   account_number?: string | null;
   base_salary: string | number;
   user_id?: number | null;
@@ -578,6 +588,7 @@ export type EmployeeCreatePayload = {
   full_name: string;
   address?: string | null;
   phone?: string | null;
+  bank_name: string;
   account_number?: string | null;
   notes?: string | null;
   base_salary: number;
@@ -588,6 +599,7 @@ export type EmployeeAdminUpdatePayload = {
   full_name?: string;
   address?: string | null;
   phone?: string | null;
+  bank_name?: string | null;
   account_number?: string | null;
   notes?: string | null;
   base_salary?: number;
@@ -598,6 +610,7 @@ export type EmployeeSelfUpdatePayload = {
   full_name?: string;
   address?: string | null;
   phone?: string | null;
+  bank_name?: string | null;
   account_number?: string | null;
   notes?: string | null;
 };
@@ -610,6 +623,7 @@ export type EmployeeTxnStatus =
   | "requested"
   | "approved_by_admin"
   | "sent_to_finance"
+  | "resolved"
   | "pending" // legacy
   | "paid"
   | "cancelled";
@@ -623,6 +637,7 @@ export type EmployeeTransaction = {
   id: number;
   created_at: string;
   paid_at?: string | null;
+  contract_job_id?: number | null;
   amount: string | number;
   txn_type: EmployeeTxnType;
   status: EmployeeTxnStatus;
@@ -733,10 +748,14 @@ export type PendingEmployeePaymentItem = {
   account_number?: string | null;
   phone?: string | null;
   period_label?: string | null;
+  sent_to_finance_at?: string | null;
 };
 
 export type PendingEmployeePayments = {
   total_pending_amount: string | number;
+  total: number;
+  limit: number;
+  offset: number;
   items: PendingEmployeePaymentItem[];
 };
 

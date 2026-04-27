@@ -360,9 +360,9 @@ export function AppLayout() {
     let alive = true;
     (async () => {
       try {
-        const res = await employeePaymentsApi.pending({ kind: "contract", sort: "oldest" });
+        const res = await employeePaymentsApi.pending({ kind: "contract", sort: "oldest", limit: 1, offset: 0 });
         if (!alive) return;
-        setPendingMoneyCount(Array.isArray(res?.items) ? res.items.length : 0);
+        setPendingMoneyCount(typeof res?.total === "number" ? res.total : Array.isArray(res?.items) ? res.items.length : 0);
       } catch {
         if (!alive) return;
         setPendingMoneyCount(0);

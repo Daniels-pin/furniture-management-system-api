@@ -91,6 +91,38 @@ def mark_job_assigned_read(
     return {"updated": int(updated or 0)}
 
 
+@router.post("/finance/mark-read")
+def mark_finance_read(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Mark finance-related unread notifications as read for the current user.
+
+    This is intentionally scoped to specific kinds so other badges/counters remain untouched.
+    """
+    now = datetime.utcnow()
+    finance_kinds = [
+        "job_cancelled",
+        "price_updated",
+        "price_accepted",
+        "payment_request_submitted",
+        "payment_approved",
+        "payment_sent_to_finance",
+        "payment_completed",
+    ]
+    updated = (
+        db.query(models.Notification)
+        .filter(
+            models.Notification.recipient_user_id == current_user.id,
+            models.Notification.kind.in_(finance_kinds),
+            models.Notification.read_at.is_(None),
+        )
+        .update({"read_at": now})
+    )
+    db.commit()
+    return {"updated": int(updated or 0)}
+
+
 # Admin helper (optional): send a system notification to a specific user id.
 @router.post("/admin/send")
 def admin_send_notification(

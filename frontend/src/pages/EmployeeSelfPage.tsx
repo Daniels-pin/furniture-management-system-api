@@ -18,6 +18,7 @@ export function EmployeeSelfPage() {
   const [fullName, setFullName] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
+  const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [docLabel, setDocLabel] = useState("");
@@ -35,6 +36,7 @@ export function EmployeeSelfPage() {
         setFullName(d.full_name);
         setAddress(d.address ?? "");
         setPhone(d.phone ?? "");
+        setBankName(d.bank_name ?? "");
         setAccountNumber(d.account_number ?? "");
         setNotes(d.notes ?? "");
       } catch (e: any) {
@@ -58,6 +60,7 @@ export function EmployeeSelfPage() {
     setFullName(d.full_name);
     setAddress(d.address ?? "");
     setPhone(d.phone ?? "");
+    setBankName(d.bank_name ?? "");
     setAccountNumber(d.account_number ?? "");
     setNotes(d.notes ?? "");
   }
@@ -67,18 +70,31 @@ export function EmployeeSelfPage() {
       toast.push("error", "Full name is required.");
       return;
     }
+    if (!bankName.trim()) {
+      toast.push("error", "Bank name is required.");
+      return;
+    }
+    if (accountNumber.trim() && !/^\d+$/.test(accountNumber.trim())) {
+      toast.push("error", "Account number must contain digits only.");
+      return;
+    }
     setSaving(true);
     try {
-      const d = await employeesApi.patchMe({
+      const payload = {
         full_name: fullName.trim(),
         address: address.trim() || undefined,
         phone: phone.trim() || undefined,
+        bank_name: bankName.trim() || undefined,
         account_number: accountNumber.trim() || undefined,
         notes: notes.trim() || undefined
-      });
+      };
+      console.log("[employees.patchMe] payload", payload);
+      const d = await employeesApi.patchMe(payload);
+      console.log("[employees.patchMe] response", d);
       applyDetail(d);
       toast.push("success", "Saved.");
     } catch (e) {
+      console.error("[employees.patchMe] error", e);
       toast.push("error", getErrorMessage(e));
     } finally {
       setSaving(false);
@@ -138,7 +154,8 @@ export function EmployeeSelfPage() {
           <div className="md:col-span-2">
             <Input label="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
           </div>
-          <Input label="Account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
+          <Input label="Bank name" value={bankName} onChange={(e) => setBankName(e.target.value)} required />
+          <Input label="Account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} inputMode="numeric" />
           <div className="md:col-span-2">
             <label className="mb-1 block text-xs font-semibold text-black/60">Notes</label>
             <textarea
@@ -149,7 +166,7 @@ export function EmployeeSelfPage() {
           </div>
         </div>
         <div className="mt-6">
-          <Button isLoading={saving} onClick={() => void save()}>
+          <Button isLoading={saving} disabled={saving} onClick={() => void save()}>
             Save changes
           </Button>
         </div>

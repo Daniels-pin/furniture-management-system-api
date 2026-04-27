@@ -10,6 +10,12 @@ import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import type { ContractEmployeeDetail, ContractJob } from "../types/api";
+import {
+  getFinancialActivityClasses,
+  getFinancialActivityColor,
+  getFinancialActivityStatusLabel,
+  getFinancialActivityTypeLabel
+} from "../utils/financialActivity";
 
 function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset";
@@ -56,8 +62,9 @@ export function ContractEmployeeDetailPage() {
   const [owedNote, setOwedNote] = useState("");
   const [owedDecAmt, setOwedDecAmt] = useState("");
   const [owedDecNote, setOwedDecNote] = useState("");
-  const [payAmt, setPayAmt] = useState("");
   const [payNote, setPayNote] = useState("");
+  const [payRequestId, setPayRequestId] = useState<number | null>(null);
+  const [payNowAmt, setPayNowAmt] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [reverseTargetId, setReverseTargetId] = useState<number | null>(null);
@@ -107,6 +114,39 @@ export function ContractEmployeeDetailPage() {
   const title = useMemo(() => detail?.full_name ?? "Contract employee", [detail?.full_name]);
   const inProgressJobs = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
   const completedJobs = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
+  const eligiblePaymentRequests = useMemo(() => {
+    const txns = Array.isArray(detail?.transactions) ? detail!.transactions : [];
+    return txns
+      .filter((t) => t?.txn_type === "payment" && (t.status === "requested" || t.status === "approved_by_admin"))
+      .slice()
+      .sort((a, b) => Number(b.id) - Number(a.id));
+  }, [detail]);
+
+  const selectedPayRequest = useMemo(() => {
+    if (!eligiblePaymentRequests.length || payRequestId === null) return null;
+    return eligiblePaymentRequests.find((t) => Number(t.id) === Number(payRequestId)) ?? null;
+  }, [eligiblePaymentRequests, payRequestId]);
+
+  useEffect(() => {
+    // Keep a stable default selection (newest eligible request).
+    if (!eligiblePaymentRequests.length) {
+      setPayRequestId(null);
+      return;
+    }
+    setPayRequestId((prev) => {
+      if (prev && eligiblePaymentRequests.some((t) => Number(t.id) === Number(prev))) return prev;
+      return Number(eligiblePaymentRequests[0].id);
+    });
+  }, [eligiblePaymentRequests]);
+
+  useEffect(() => {
+    // Default "amount to pay" to the selected request amount.
+    if (!selectedPayRequest) {
+      setPayNowAmt("");
+      return;
+    }
+    setPayNowAmt(String(selectedPayRequest.amount ?? ""));
+  }, [selectedPayRequest?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedJob = useMemo(
     () => (Number.isFinite(selectedJobId) ? jobs.find((j) => j.id === selectedJobId) ?? null : null),
     [jobs, selectedJobId]
@@ -485,14 +525,49 @@ export function ContractEmployeeDetailPage() {
                   <div className="text-sm font-semibold text-black">Send payment to Finance</div>
                   <div className="mt-3 grid grid-cols-1 gap-2">
                     <label className="text-xs font-semibold text-black/60">
-                      Amount (NGN)
+                      Request
+                      <select
+                        className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                        value={payRequestId ?? ""}
+                        onChange={(e) => setPayRequestId(e.target.value ? Number(e.target.value) : null)}
+                        disabled={busy || eligiblePaymentRequests.length === 0}
+                      >
+                        {eligiblePaymentRequests.length === 0 ? (
+                          <option value="">No eligible requests</option>
+                        ) : (
+                          eligiblePaymentRequests.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              #{t.id} • {formatMoney(t.amount)} • {t.status === "requested" ? "Requested" : "Approved"}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold text-black/60">
+                      Amount to Pay (NGN)
                       <input
                         className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                        value={payAmt}
-                        onChange={(e) => setPayAmt(e.target.value)}
+                        value={payNowAmt}
+                        onChange={(e) => setPayNowAmt(e.target.value)}
                         inputMode="decimal"
                         placeholder="0"
+                        disabled={busy || payRequestId === null}
                       />
+                      {selectedPayRequest && payNowAmt.trim() ? (
+                        (() => {
+                          const req = Number(selectedPayRequest.amount ?? 0);
+                          const v = parseMoneyInput(payNowAmt);
+                          if (v === null || Number.isNaN(v)) return null;
+                          if (v < req) {
+                            return (
+                              <div className="mt-1 text-[12px] font-semibold text-amber-800">
+                                Partial payment • Remaining stays in employee balance (request will be closed)
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()
+                      ) : null}
                     </label>
                     <label className="text-xs font-semibold text-black/60">
                       Note (optional)
@@ -504,9 +579,12 @@ export function ContractEmployeeDetailPage() {
                     </label>
                     <Button
                       isLoading={busy}
+                      disabled={eligiblePaymentRequests.length === 0 || payRequestId === null}
                       onClick={() => {
-                        const amt = parseMoneyInput(payAmt);
-                        if (payAmt.trim() && !isValidThousandsCommaNumber(payAmt)) {
+                        if (payRequestId === null) return;
+                        if (!selectedPayRequest) return;
+                        const amt = parseMoneyInput(payNowAmt);
+                        if (payNowAmt.trim() && !isValidThousandsCommaNumber(payNowAmt)) {
                           toast.push("error", "Fix comma formatting in amount.");
                           return;
                         }
@@ -514,14 +592,24 @@ export function ContractEmployeeDetailPage() {
                           toast.push("error", "Enter a valid amount (> 0).");
                           return;
                         }
+                        const reqAmt = Number(selectedPayRequest.amount ?? 0);
+                        const balance = Number(detail.balance ?? 0);
+                        if (amt > reqAmt) {
+                          toast.push("error", "Amount cannot exceed request amount.");
+                          return;
+                        }
+                        if (amt > balance) {
+                          toast.push("error", "Amount cannot exceed remaining balance.");
+                          return;
+                        }
                         setBusy(true);
                         void contractEmployeesApi
-                          .sendPaymentToFinance(detail.id, { amount: amt, note: payNote.trim() || null })
+                          .sendPaymentToFinance(detail.id, { request_id: payRequestId, amount: amt, note: payNote.trim() || null })
                           .then(() => contractEmployeesApi.get(detail.id))
                           .then((d) => {
                             setDetail(d);
-                            setPayAmt("");
                             setPayNote("");
+                            setPayNowAmt("");
                             toast.push("success", "Sent to Finance.");
                           })
                           .catch((e) => toast.push("error", getErrorMessage(e)))
@@ -643,46 +731,45 @@ export function ContractEmployeeDetailPage() {
                 {detail.transactions
                   .slice()
                   .reverse()
-                  .map((t) => (
-                    <li
+                  .map((t) => {
+                    const color = getFinancialActivityColor(t);
+                    const cls = getFinancialActivityClasses(color);
+                    const typeLabel = getFinancialActivityTypeLabel(t);
+                    const statusLabel = getFinancialActivityStatusLabel(t);
+                    const relatedJob =
+                      typeof (t as any)?.contract_job_id !== "undefined" && (t as any)?.contract_job_id !== null
+                        ? `Job #${Number((t as any).contract_job_id)}`
+                        : Array.isArray((t as any)?.allocations) && (t as any).allocations.length
+                          ? `Jobs: ${(t as any).allocations
+                              .slice(0, 4)
+                              .map((a: any) => `#${Number(a.contract_job_id)}`)
+                              .join(", ")}${(t as any).allocations.length > 4 ? "…" : ""}`
+                          : null;
+
+                    return (
+                      <li
                       key={t.id}
                       className={[
                         "px-3 py-2 text-sm",
-                        t.status === "pending" || t.status === "requested" || t.status === "approved_by_admin" || t.status === "sent_to_finance"
-                          ? "bg-black/[0.03]"
-                          : t.status === "cancelled"
-                            ? "bg-black/[0.015] opacity-70"
-                            : "bg-emerald-50/40"
+                        cls.bg,
+                        cls.text
                       ].join(" ")}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold">
-                          {t.txn_type === "owed_increase"
-                            ? "Owed increase"
-                            : t.txn_type === "owed_decrease"
-                              ? "Owed decrease"
-                              : t.txn_type === "reversal"
-                                ? "Reversal"
-                                : "Payment"}
-                        </div>
+                        <div className="font-semibold">{typeLabel}</div>
                         <div className="font-bold tabular-nums">{formatMoney(t.amount)}</div>
                       </div>
                       <div className="mt-0.5 text-xs text-black/55">
-                        {new Date(t.created_at).toLocaleString()} •{" "}
-                        <span className="font-semibold">
-                          {t.status === "requested"
-                            ? "Requested"
-                            : t.status === "approved_by_admin"
-                              ? "Approved"
-                              : t.status === "sent_to_finance" || t.status === "pending"
-                                ? "Sent to Finance"
-                                : t.status === "cancelled"
-                                  ? "Cancelled"
-                                  : "Paid"}
-                        </span>
+                        {new Date(t.created_at).toLocaleString()} • <span className="font-semibold">{statusLabel}</span>
+                        {relatedJob ? ` • ${relatedJob}` : ""}
                         {typeof t.running_balance !== "undefined" && t.running_balance !== null
                           ? ` • Balance: ${formatMoney(t.running_balance)}`
                           : ""}
+                      </div>
+                      <div className="mt-2">
+                        <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset", cls.ring].join(" ")}>
+                          {statusLabel}
+                        </span>
                       </div>
                       {typeof t.running_balance !== "undefined" && t.running_balance !== null && Number(t.running_balance) < 0 ? (
                         <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900">
@@ -708,7 +795,8 @@ export function ContractEmployeeDetailPage() {
                         ) : null}
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
               </ul>
             )}
           </Card>

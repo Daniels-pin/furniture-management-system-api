@@ -955,6 +955,21 @@ export const employeesApi = {
   async transactions(employeeId: number, params?: EmployeePeriodParams) {
     const { data } = await api.get<EmployeeTransaction[]>(`/employees/${employeeId}/transactions`, { params });
     return data;
+  },
+  async savePayrollAdjustments(
+    employeeId: number,
+    body: {
+      period_base_salary?: string | number | null;
+      bonus?: string | number | null;
+      deduction?: string | number | null;
+      late_penalty?: string | number | null;
+      note?: string | null;
+      confirm_financial_edit?: boolean;
+    },
+    period: { period_year: number; period_month: number }
+  ) {
+    const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}/payroll-adjustments`, body, { params: period });
+    return data;
   }
 };
 
@@ -991,7 +1006,7 @@ export const contractEmployeesApi = {
     const { data } = await api.get<ContractEmployeeFinance>(`/contract-employees/${employeeId}/finances`);
     return data;
   },
-  async sendPaymentToFinance(employeeId: number, body: { amount: string | number; note?: string | null }) {
+  async sendPaymentToFinance(employeeId: number, body: { request_id: number; amount: string | number; note?: string | null }) {
     const { data } = await api.post<EmployeeTransaction>(`/contract-employees/${employeeId}/payments/send-to-finance`, body);
     return data;
   },
@@ -1025,6 +1040,10 @@ export const contractEmployeePortalApi = {
     const { data } = await api.get<{ items: Array<{ id: number; completed_at?: string | null; final_price?: string | null }> }>(
       "/contract-employee/jobs/unpaid-completed"
     );
+    return data;
+  },
+  async transactions() {
+    const { data } = await api.get<EmployeeTransaction[]>("/contract-employee/transactions");
     return data;
   }
 };
@@ -1121,6 +1140,10 @@ export const notificationsApi = {
   async markJobAssignedRead() {
     const { data } = await api.post<{ updated: number }>("/notifications/job-assigned/mark-read");
     return data;
+  },
+  async markFinanceRead() {
+    const { data } = await api.post<{ updated: number }>("/notifications/finance/mark-read");
+    return data;
   }
 };
 
@@ -1130,8 +1153,21 @@ export const employeePaymentsApi = {
     kind?: "monthly" | "contract";
     overpaid?: boolean;
     sort?: "oldest" | "newest" | "amount_desc" | "amount_asc";
+    queue_only?: boolean;
+    limit?: number;
+    offset?: number;
   }) {
     const { data } = await api.get<PendingEmployeePayments>("/employee-payments/pending", { params });
+    return data;
+  },
+  async history(params?: {
+    search?: string;
+    kind?: "monthly" | "contract";
+    sort?: "oldest" | "newest" | "amount_desc" | "amount_asc";
+    limit?: number;
+    offset?: number;
+  }) {
+    const { data } = await api.get<PendingEmployeePayments>("/employee-payments/history", { params });
     return data;
   },
   async uploadReceipt(transactionId: number, file: File) {
@@ -1165,6 +1201,19 @@ export const employeePaymentsApi = {
   },
   async sendToFinance(transactionId: number, body?: { note?: string | null }) {
     const { data } = await api.post<EmployeeTransaction>(`/employee-payments/${transactionId}/send-to-finance`, body ?? {});
+    return data;
+  },
+  async detail(transactionId: number) {
+    const { data } = await api.get<{
+      transaction: EmployeeTransaction;
+      employee_name: string;
+      bank_name?: string | null;
+      account_number?: string | null;
+      requested_amount: string | number;
+      adjusted_amount?: string | number | null;
+      jobs: Array<{ id: number; status: string; final_price?: string | number | null }>;
+      note?: string | null;
+    }>(`/employee-payments/${transactionId}/detail`);
     return data;
   },
   async reverse(transactionId: number, params?: { reason?: string }) {
@@ -1217,6 +1266,18 @@ export const expensesApi = {
   },
   async create(body: { entry_date: string; amount: string | number; entry_type: "expense" | "credit"; note?: string | null }) {
     const { data } = await api.post<ExpenseEntry>("/expenses", body);
+    return data;
+  },
+  async update(entryId: number, body: { amount?: string | number | null; entry_type?: "expense" | "credit"; note?: string | null }) {
+    const payload: Record<string, any> = {};
+    if (typeof body.amount !== "undefined") payload.amount = body.amount;
+    if (typeof body.entry_type !== "undefined") payload.entry_type = body.entry_type;
+    if (typeof body.note !== "undefined") payload.note = body.note;
+    const { data } = await api.patch<ExpenseEntry>(`/expenses/${entryId}`, payload);
+    return data;
+  },
+  async remove(entryId: number) {
+    const { data } = await api.delete<{ message: string }>(`/expenses/${entryId}`);
     return data;
   },
   async uploadReceipt(entryId: number, file: File) {

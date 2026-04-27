@@ -107,6 +107,18 @@ class ContractEmployeeCreateWithLogin(BaseModel):
         s = str(v).strip()
         return s or None
 
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -1017,10 +1029,23 @@ class EmployeeBonusOut(BaseModel):
 
 
 class EmployeeSalaryBreakdown(BaseModel):
+    # base_salary_used: actual base used for this period (period override or employee base).
+    base_salary_used: Decimal
+    # base_salary: kept for backward compatibility (same as base_salary_used).
     base_salary: Decimal
+    # Optional per-period override (when set on EmployeePeriodPayroll).
+    period_base_salary: Optional[Decimal] = None
     lateness_count: int
     lateness_deduction: Decimal
     lateness_rate_naira: Decimal
+    # Entry totals (raw entries, excluding manual adjustments)
+    penalties_entries_total: Decimal = Decimal("0")
+    bonuses_entries_total: Decimal = Decimal("0")
+    # Manual adjustments (stored on payroll row; positive numbers)
+    adjustment_bonus: Decimal = Decimal("0")
+    adjustment_deduction: Decimal = Decimal("0")
+    adjustment_late_penalty: Decimal = Decimal("0")
+    # Totals used in final payable (entries + adjustments)
     penalties_total: Decimal
     bonuses_total: Decimal
     total_deductions: Decimal
@@ -1056,6 +1081,7 @@ class EmployeeOut(BaseModel):
     full_name: str
     address: Optional[str] = None
     phone: Optional[str] = None
+    bank_name: Optional[str] = None
     account_number: Optional[str] = None
     notes: Optional[str] = None
     base_salary: Decimal
@@ -1078,13 +1104,37 @@ class EmployeeOut(BaseModel):
 class EmployeeListItemOut(BaseModel):
     id: int
     full_name: str
+    # Optional note shown on the monthly list UI.
+    notes: Optional[str] = None
+    # Keep these for backward compatibility (frontend may still rely on them elsewhere).
     phone: Optional[str] = None
+    bank_name: Optional[str] = None
     account_number: Optional[str] = None
     base_salary: Decimal
     user_id: Optional[int] = None
     period: SalaryPeriodOut
     payment: EmployeePaymentOut
     salary: EmployeeSalaryBreakdown
+
+
+class EmployeePayrollAdjustmentIn(BaseModel):
+    """Admin-only per-period payroll adjustments (monthly employees)."""
+
+    period_base_salary: Optional[Decimal] = Field(None, ge=0)
+    bonus: Optional[Decimal] = Field(None, ge=0)
+    deduction: Optional[Decimal] = Field(None, ge=0)
+    late_penalty: Optional[Decimal] = Field(None, ge=0)
+    note: Optional[str] = Field(None, max_length=8000)
+    confirm_financial_edit: bool = False
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
 
 
 class PayrollSummaryOut(BaseModel):
@@ -1099,31 +1149,119 @@ class PayrollSummaryOut(BaseModel):
 
 
 class EmployeeCreate(BaseModel):
-    full_name: str = Field(..., min_length=1, max_length=500)
+    # Conditional requirements:
+    # - If user_id is provided (linked employee), all profile fields are optional (employee completes after login).
+    # - If user_id is not provided (standalone employee), required: full_name, phone, address, bank_name, account_number.
+    full_name: Optional[str] = Field(None, max_length=500)
     address: Optional[str] = Field(None, max_length=4000)
     phone: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=200)
     account_number: Optional[str] = Field(None, max_length=100)
     notes: Optional[str] = Field(None, max_length=8000)
     base_salary: Decimal = Field(default=Decimal("0"), ge=0)
     user_id: Optional[int] = Field(None, description="Link to existing app user (optional)")
+
+    @field_validator("full_name", "address", "phone", "bank_name", "account_number", "notes", mode="before")
+    @classmethod
+    def _strip_optional_strs(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
+
+    @model_validator(mode="after")
+    def _conditional_required_fields(self):
+        linked = self.user_id is not None
+        if linked:
+            return self
+
+        missing: list[str] = []
+        if not (self.full_name or "").strip():
+            missing.append("full_name")
+        if not (self.phone or "").strip():
+            missing.append("phone")
+        if not (self.address or "").strip():
+            missing.append("address")
+        if not (self.bank_name or "").strip():
+            missing.append("bank_name")
+        if not (self.account_number or "").strip():
+            missing.append("account_number")
+
+        if missing:
+            raise ValueError(f"Missing required fields for standalone employee: {', '.join(missing)}")
+        return self
 
 
 class EmployeeAdminUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=500)
     address: Optional[str] = Field(None, max_length=4000)
     phone: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=200)
     account_number: Optional[str] = Field(None, max_length=100)
     notes: Optional[str] = Field(None, max_length=8000)
     base_salary: Optional[Decimal] = Field(None, ge=0)
     user_id: Optional[int] = None
+
+    @field_validator("bank_name", mode="before")
+    @classmethod
+    def _strip_bank_name_opt(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
 
 
 class EmployeeSelfUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=500)
     address: Optional[str] = Field(None, max_length=4000)
     phone: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=200)
     account_number: Optional[str] = Field(None, max_length=100)
     notes: Optional[str] = Field(None, max_length=8000)
+
+    @field_validator("bank_name", mode="before")
+    @classmethod
+    def _strip_bank_name_self(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
 
 
 class EmployeePenaltyCreate(BaseModel):
@@ -1161,6 +1299,8 @@ EmployeeTxnStatus = Literal[
     "requested",
     "approved_by_admin",
     "sent_to_finance",
+    # Request resolution rule: once Admin sends any amount to finance, the request intent is closed (even if partial).
+    "resolved",
     "pending",
     "paid",
     "cancelled",
@@ -1190,6 +1330,18 @@ class ContractEmployeeCreate(BaseModel):
             return v
         return str(v).strip()
 
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
+
 
 class ContractEmployeeUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=500)
@@ -1198,6 +1350,18 @@ class ContractEmployeeUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = Field(None, max_length=4000)
     status: Optional[ContractEmployeeStatus] = None
+
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
 
 
 class ContractEmployeeListItemOut(BaseModel):
@@ -1221,6 +1385,7 @@ class EmployeeTransactionOut(BaseModel):
     id: int
     created_at: datetime
     paid_at: Optional[datetime] = None
+    contract_job_id: Optional[int] = None
     amount: Decimal
     txn_type: EmployeeTxnType
     status: EmployeeTxnStatus
@@ -1272,6 +1437,19 @@ class ContractEmployeeMeUpdate(BaseModel):
     account_number: Optional[str] = Field(None, max_length=100)
     phone: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = Field(None, max_length=4000)
+
+    @field_validator("account_number", mode="before")
+    @classmethod
+    def _digits_only_account_number(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.isdigit():
+            raise ValueError("account_number must contain digits only")
+        return s
+
 
 
 class ContractEmployeeLinkUser(BaseModel):
@@ -1425,6 +1603,22 @@ class EmployeeSendPaymentToFinance(BaseModel):
         return s or None
 
 
+class ContractEmployeeSendPaymentToFinanceIn(BaseModel):
+    """Admin step: send a specific contract payment request to Finance."""
+
+    request_id: int = Field(..., gt=0, description="EmployeeTransaction.id of the payment request to send.")
+    amount: Decimal = Field(..., gt=0, description="Amount to pay now (can be partial, must be <= request amount).")
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note_req(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
 class EmployeePaymentAllocationIn(BaseModel):
     contract_job_id: int = Field(..., gt=0)
     amount: Decimal = Field(..., gt=0)
@@ -1462,11 +1656,23 @@ class PendingEmployeePaymentItem(BaseModel):
     account_number: Optional[str] = None
     phone: Optional[str] = None
     period_label: Optional[str] = None
+    # When the item entered the finance queue (best-effort; falls back to transaction.created_at).
+    sent_to_finance_at: Optional[datetime] = None
 
 
-class PendingEmployeePaymentsOut(BaseModel):
-    total_pending_amount: Decimal
+class EmployeePaymentsPageOut(BaseModel):
+    """Paginated list of employee payment transactions (pending or history)."""
+
+    total_pending_amount: Decimal = Field(default=Decimal("0"), description="Sum of amounts across ALL matching items (not just this page).")
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
     items: List[PendingEmployeePaymentItem]
+
+
+# Backward-compatible alias (older frontend expects this name).
+class PendingEmployeePaymentsOut(EmployeePaymentsPageOut):
+    pass
 
 
 class AdminApprovePaymentRequestIn(BaseModel):
@@ -1482,6 +1688,23 @@ class AdminSendPaymentToFinanceIn(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
 
 
+class ContractJobMiniOut(BaseModel):
+    id: int
+    status: str
+    final_price: Optional[Decimal] = None
+
+
+class PaymentRequestDetailOut(BaseModel):
+    transaction: EmployeeTransactionOut
+    employee_name: str
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    requested_amount: Decimal
+    adjusted_amount: Optional[Decimal] = None
+    jobs: list[ContractJobMiniOut] = []
+    note: Optional[str] = None
+
+
 # --- Expense / petty cash ---
 
 ExpenseEntryType = Literal["expense", "credit"]
@@ -1491,6 +1714,12 @@ class ExpenseEntryCreate(BaseModel):
     entry_date: datetime
     amount: Decimal = Field(..., gt=0)
     entry_type: ExpenseEntryType
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+class ExpenseEntryUpdate(BaseModel):
+    amount: Optional[Decimal] = Field(None, gt=0)
+    entry_type: Optional[ExpenseEntryType] = None
     note: Optional[str] = Field(None, max_length=4000)
 
 

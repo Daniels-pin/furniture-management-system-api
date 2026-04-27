@@ -136,6 +136,23 @@ def request_payment(
     return EmployeeTransactionOut.model_validate(txn)
 
 
+@router.get("/transactions", response_model=list[EmployeeTransactionOut])
+def my_transactions(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["contract_employee"])),
+):
+    ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.user_id == current_user.id).first()
+    if ce is None:
+        raise HTTPException(status_code=404, detail="No contract employee profile linked to your account.")
+    rows = (
+        db.query(models.EmployeeTransaction)
+        .filter(models.EmployeeTransaction.contract_employee_id == ce.id)
+        .order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
+        .all()
+    )
+    return [EmployeeTransactionOut.model_validate(t) for t in rows]
+
+
 @router.get("/jobs/unpaid-completed")
 def list_unpaid_completed_jobs(
     db: Session = Depends(get_db),

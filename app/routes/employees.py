@@ -28,6 +28,7 @@ from app.schemas import (
     EmployeeOut,
     EmployeePaymentOut,
     EmployeePaymentUpdate,
+    EmployeePayrollAdjustmentIn,
     EmployeePenaltyCreate,
     EmployeePenaltyOut,
     EmployeeSalaryBreakdown,
@@ -178,18 +179,35 @@ def _salary_breakdown(
     lateness_count: int,
     penalties_total: Decimal,
     bonuses_total: Decimal,
+    *,
+    period_base_salary: Optional[Decimal] = None,
+    adjustment_bonus: Decimal = Decimal("0"),
+    adjustment_deduction: Decimal = Decimal("0"),
+    adjustment_late_penalty: Decimal = Decimal("0"),
 ) -> EmployeeSalaryBreakdown:
     rate = LATENESS_DEDUCTION_NAIRA
     lateness_ded = rate * Decimal(lateness_count)
-    total_ded = lateness_ded + penalties_total
-    final = base - lateness_ded - penalties_total + bonuses_total
+    base_used = period_base_salary if period_base_salary is not None else base
+    penalties_entries_total = penalties_total
+    bonuses_entries_total = bonuses_total
+    bonuses_total_all = bonuses_entries_total + (adjustment_bonus or Decimal("0"))
+    penalties_total_all = penalties_entries_total + (adjustment_deduction or Decimal("0")) + (adjustment_late_penalty or Decimal("0"))
+    total_ded = lateness_ded + penalties_total_all
+    final = base_used - lateness_ded - penalties_total_all + bonuses_total_all
     return EmployeeSalaryBreakdown(
-        base_salary=base,
+        base_salary_used=base_used,
+        base_salary=base_used,
+        period_base_salary=period_base_salary,
         lateness_count=lateness_count,
         lateness_deduction=lateness_ded,
         lateness_rate_naira=rate,
-        penalties_total=penalties_total,
-        bonuses_total=bonuses_total,
+        penalties_entries_total=penalties_entries_total,
+        bonuses_entries_total=bonuses_entries_total,
+        adjustment_bonus=(adjustment_bonus or Decimal("0")),
+        adjustment_deduction=(adjustment_deduction or Decimal("0")),
+        adjustment_late_penalty=(adjustment_late_penalty or Decimal("0")),
+        penalties_total=penalties_total_all,
+        bonuses_total=bonuses_total_all,
         total_deductions=total_ded,
         final_payable=final,
     )
@@ -269,7 +287,16 @@ def _employee_to_out(
     n = len(lateness)
     pen = sum((p.amount for p in penalties), Decimal("0"))
     bon = sum((b.amount for b in bonuses), Decimal("0"))
-    salary = _salary_breakdown(base, n, pen, bon)
+    salary = _salary_breakdown(
+        base,
+        n,
+        pen,
+        bon,
+        period_base_salary=getattr(payroll, "period_base_salary", None) if payroll else None,
+        adjustment_bonus=Decimal(str(getattr(payroll, "adjustment_bonus", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_deduction=Decimal(str(getattr(payroll, "adjustment_deduction", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_late_penalty=Decimal(str(getattr(payroll, "adjustment_late_penalty", 0) or 0)) if payroll else Decimal("0"),
+    )
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -280,6 +307,7 @@ def _employee_to_out(
         full_name=emp.full_name,
         address=emp.address,
         phone=emp.phone,
+        bank_name=getattr(emp, "bank_name", None),
         account_number=emp.account_number,
         notes=emp.notes,
         base_salary=emp.base_salary,
@@ -306,7 +334,16 @@ def _list_item(
     payroll: Optional[models.EmployeePeriodPayroll],
 ) -> EmployeeListItemOut:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
-    salary = _salary_breakdown(base, lateness_count, penalties_total, bonuses_total)
+    salary = _salary_breakdown(
+        base,
+        lateness_count,
+        penalties_total,
+        bonuses_total,
+        period_base_salary=getattr(payroll, "period_base_salary", None) if payroll else None,
+        adjustment_bonus=Decimal(str(getattr(payroll, "adjustment_bonus", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_deduction=Decimal(str(getattr(payroll, "adjustment_deduction", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_late_penalty=Decimal(str(getattr(payroll, "adjustment_late_penalty", 0) or 0)) if payroll else Decimal("0"),
+    )
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -315,7 +352,9 @@ def _list_item(
     return EmployeeListItemOut(
         id=emp.id,
         full_name=emp.full_name,
+        notes=getattr(emp, "notes", None),
         phone=emp.phone,
+        bank_name=getattr(emp, "bank_name", None),
         account_number=emp.account_number,
         base_salary=base,
         user_id=emp.user_id,
@@ -595,10 +634,18 @@ def create_employee(
         taken = db.query(models.Employee).filter(models.Employee.user_id == body.user_id).first()
         if taken:
             raise HTTPException(status_code=400, detail="That user is already linked to another employee")
+        # Ensure DB-required employee.full_name is present even if omitted (linked user completes later).
+        full_name = (body.full_name or "").strip() or (getattr(u, "name", None) or "").strip() or (getattr(u, "email", None) or "").strip()
+    else:
+        full_name = (body.full_name or "").strip()
+        if not full_name:
+            # This should be caught by schema validation, but keep a clear API error for safety.
+            raise HTTPException(status_code=400, detail="full_name is required for standalone employees")
     emp = models.Employee(
-        full_name=body.full_name.strip(),
+        full_name=full_name,
         address=body.address,
         phone=body.phone,
+        bank_name=body.bank_name,
         account_number=body.account_number,
         notes=body.notes,
         base_salary=body.base_salary,
@@ -650,6 +697,10 @@ def patch_employee_period_payment(
         len(lateness),
         sum((p.amount for p in penalties), Decimal("0")),
         sum((b.amount for b in bonuses), Decimal("0")),
+        period_base_salary=getattr(payroll, "period_base_salary", None) if payroll else None,
+        adjustment_bonus=Decimal(str(getattr(payroll, "adjustment_bonus", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_deduction=Decimal(str(getattr(payroll, "adjustment_deduction", 0) or 0)) if payroll else Decimal("0"),
+        adjustment_late_penalty=Decimal(str(getattr(payroll, "adjustment_late_penalty", 0) or 0)) if payroll else Decimal("0"),
     )
     _validate_breakdown(salary)
 
@@ -685,6 +736,78 @@ def patch_employee_period_payment(
         )
 
     db.commit()
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.patch("/{employee_id}/payroll-adjustments", response_model=EmployeeOut)
+def patch_employee_payroll_adjustments(
+    employee_id: int,
+    body: EmployeePayrollAdjustmentIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+):
+    """Update per-period payroll adjustments (base override, bonuses, deductions, late penalties)."""
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    period = get_or_create_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
+
+    payroll = _get_or_create_payroll_row(db, employee_id, period.id)
+    if body.period_base_salary is not None:
+        payroll.period_base_salary = body.period_base_salary
+    if body.bonus is not None:
+        payroll.adjustment_bonus = body.bonus
+    if body.deduction is not None:
+        payroll.adjustment_deduction = body.deduction
+    if body.late_penalty is not None:
+        payroll.adjustment_late_penalty = body.late_penalty
+    if body.note is not None:
+        payroll.adjustment_note = body.note
+
+    payroll.updated_at = datetime.utcnow()
+    payroll.updated_by_id = current_user.id
+    emp.updated_at = datetime.utcnow()
+
+    # Validate projected salary cannot go negative.
+    lateness, penalties, bonuses, _ = _load_rows_for_period(db, employee_id, period)
+    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+    pen_entries = sum((p.amount for p in penalties), Decimal("0"))
+    bon_entries = sum((b.amount for b in bonuses), Decimal("0"))
+    projected = _salary_breakdown(
+        base,
+        len(lateness),
+        pen_entries,
+        bon_entries,
+        period_base_salary=payroll.period_base_salary,
+        adjustment_bonus=Decimal(str(payroll.adjustment_bonus or 0)),
+        adjustment_deduction=Decimal(str(payroll.adjustment_deduction or 0)),
+        adjustment_late_penalty=Decimal(str(payroll.adjustment_late_penalty or 0)),
+    )
+    _validate_breakdown(projected)
+
+    _log_payroll(
+        db,
+        "employee_payroll_adjustments_update",
+        payroll.id,
+        current_user,
+        {
+            "employee_id": employee_id,
+            "period_id": period.id,
+            "period_label": period.label,
+            "period_base_salary": str(payroll.period_base_salary) if payroll.period_base_salary is not None else None,
+            "bonus": str(payroll.adjustment_bonus or 0),
+            "deduction": str(payroll.adjustment_deduction or 0),
+            "late_penalty": str(payroll.adjustment_late_penalty or 0),
+        },
+    )
+
+    db.commit()
+    db.refresh(emp)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
 

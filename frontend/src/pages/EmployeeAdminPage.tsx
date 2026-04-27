@@ -22,7 +22,8 @@ export function EmployeeAdminPage() {
   const month = Number(searchParams.get("month")) || new Date().getMonth() + 1;
   const periodParams = useMemo((): EmployeePeriodParams => ({ period_year: year, period_month: month }), [year, month]);
 
-  const isNew = employeeId === "new";
+  // Route `employees/new` does not provide a param; treat missing id as "new".
+  const isNew = employeeId == null || employeeId === "new";
   const idNum = employeeId && !isNew ? Number(employeeId) : NaN;
 
   const [loading, setLoading] = useState(!isNew);
@@ -33,6 +34,7 @@ export function EmployeeAdminPage() {
   const [fullName, setFullName] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
+  const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [baseSalary, setBaseSalary] = useState("");
@@ -149,6 +151,7 @@ export function EmployeeAdminPage() {
     setFullName(d.full_name);
     setAddress(d.address ?? "");
     setPhone(d.phone ?? "");
+    setBankName(d.bank_name ?? "");
     setAccountNumber(d.account_number ?? "");
     setNotes(d.notes ?? "");
     const bs = String(d.base_salary ?? "");
@@ -165,8 +168,31 @@ export function EmployeeAdminPage() {
   }
 
   async function saveProfile() {
-    if (!fullName.trim()) {
-      toast.push("error", "Full name is required.");
+    const linked = Boolean(userId);
+    if (!linked) {
+      if (!fullName.trim()) {
+        toast.push("error", "Full name is required.");
+        return;
+      }
+      if (!phone.trim()) {
+        toast.push("error", "Phone is required.");
+        return;
+      }
+      if (!address.trim()) {
+        toast.push("error", "Address is required.");
+        return;
+      }
+      if (!bankName.trim()) {
+        toast.push("error", "Bank name is required.");
+        return;
+      }
+      if (!accountNumber.trim()) {
+        toast.push("error", "Account number is required.");
+        return;
+      }
+    }
+    if (accountNumber.trim() && !/^\d+$/.test(accountNumber.trim())) {
+      toast.push("error", "Account number must contain digits only.");
       return;
     }
     const bs = parseMoneyInput(baseSalary);
@@ -185,40 +211,50 @@ export function EmployeeAdminPage() {
     setSaving(true);
     try {
       if (isNew) {
-        const created = await employeesApi.create({
-          full_name: fullName.trim(),
+        const payload = {
+          full_name: fullName.trim() || undefined,
           address: address.trim() || undefined,
           phone: phone.trim() || undefined,
+          bank_name: bankName.trim() || undefined,
           account_number: accountNumber.trim() || undefined,
           notes: notes.trim() || undefined,
           base_salary: bs !== null && !Number.isNaN(bs) ? bs : 0,
           user_id: userId ? Number(userId) : undefined
-        });
+        };
+        // Debug requirement: log payload + response
+        console.log("[employees.create] payload", payload);
+        const created = await employeesApi.create(payload);
+        console.log("[employees.create] response", created);
         toast.push("success", "Employee created.");
         if (auth.role === "factory") {
           nav("/dashboard", { replace: true });
         } else {
-          nav(`/employees/${created.id}?year=${year}&month=${month}`, { replace: true });
+          nav(`/employees?tab=monthly&year=${year}&month=${month}&r=${Date.now()}`, { replace: true });
         }
         return;
       }
       if (!Number.isFinite(idNum)) return;
+      const payload = {
+        full_name: fullName.trim(),
+        address: address.trim() || undefined,
+        phone: phone.trim() || undefined,
+        bank_name: bankName.trim() || undefined,
+        account_number: accountNumber.trim() || undefined,
+        notes: notes.trim() || undefined,
+        base_salary: bs !== null && !Number.isNaN(bs) ? bs : undefined,
+        user_id: userId ? Number(userId) : null
+      };
+      console.log("[employees.update] employeeId", idNum, "payload", payload, "period", periodParams);
       const updated = await employeesApi.update(
         idNum,
-        {
-          full_name: fullName.trim(),
-          address: address.trim() || undefined,
-          phone: phone.trim() || undefined,
-          account_number: accountNumber.trim() || undefined,
-          notes: notes.trim() || undefined,
-          base_salary: bs !== null && !Number.isNaN(bs) ? bs : undefined,
-          user_id: userId ? Number(userId) : null
-        },
+        payload,
         periodParams
       );
+      console.log("[employees.update] response", updated);
       applyDetail(updated);
       toast.push("success", "Saved.");
     } catch (e) {
+      console.error("[employees.saveProfile] error", e);
       toast.push("error", getErrorMessage(e));
     } finally {
       setSaving(false);
@@ -426,13 +462,56 @@ export function EmployeeAdminPage() {
 
       <Card>
         <div className="text-sm font-semibold text-black">Profile</div>
+        <div className="mt-2 rounded-2xl border border-black/10 bg-black/[0.02] px-4 py-3 text-xs text-black/70">
+          {userId ? (
+            <span>
+              <span className="font-semibold">Linked employee.</span> Employee will complete their details after login.
+            </span>
+          ) : (
+            <span>
+              <span className="font-semibold">Standalone employee.</span> Full profile details are required to create this record.
+            </span>
+          )}
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-          <Input label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input
+            label="Full name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required={!userId}
+            hint={!userId ? "Required" : "Optional"}
+          />
+          <Input
+            label="Phone"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            required={!userId}
+            hint={!userId ? "Required" : "Optional"}
+          />
           <div className="md:col-span-2">
-            <Input label="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
+            <Input
+              label="Address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              required={!userId}
+              hint={!userId ? "Required" : "Optional"}
+            />
           </div>
-          <Input label="Account number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
+          <Input
+            label="Bank name"
+            value={bankName}
+            onChange={(e) => setBankName(e.target.value)}
+            required={!userId}
+            hint={!userId ? "Required" : "Optional"}
+          />
+          <Input
+            label="Account number"
+            value={accountNumber}
+            onChange={(e) => setAccountNumber(e.target.value)}
+            inputMode="numeric"
+            required={!userId}
+            hint={!userId ? "Required (digits only)" : "Optional (digits only)"}
+          />
           <Input
             label="Base salary (NGN)"
             value={baseSalary}
@@ -463,12 +542,13 @@ export function EmployeeAdminPage() {
               ))}
             </select>
             <div className="mt-1 text-xs text-black/50">
-              Linking lets this person open Employee Details to edit their own profile fields.
+              Linking lets this person open Employee Details to edit their own profile fields.{" "}
+              {userId ? <span className="font-semibold">Employee will complete their details after login.</span> : null}
             </div>
           </div>
         </div>
         <div className="mt-6">
-          <Button isLoading={saving} onClick={() => void saveProfile()}>
+          <Button isLoading={saving} disabled={saving} onClick={() => void saveProfile()}>
             {isNew ? "Create employee" : "Save profile"}
           </Button>
         </div>
