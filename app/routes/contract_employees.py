@@ -41,7 +41,6 @@ def _to_out(emp: models.ContractEmployee) -> ContractEmployeeOut:
         phone=emp.phone,
         address=emp.address,
         status=emp.status,
-        total_owed=Decimal(str(emp.total_owed or 0)),
         total_paid=Decimal(str(emp.total_paid or 0)),
         balance=Decimal(str(emp.balance or 0)),
         transactions=[EmployeeTransactionOut.model_validate(t) for t in (emp.transactions or [])],
@@ -429,7 +428,6 @@ def get_contract_employee_finances(
     return ContractEmployeeFinanceOut(
         id=emp.id,
         full_name=emp.full_name,
-        total_owed=Decimal(str(emp.total_owed or 0)),
         total_paid=Decimal(str(emp.total_paid or 0)),
         balance=Decimal(str(emp.balance or 0)),
         pending_payment=(EmployeeTransactionOut.model_validate(pending) if pending else None),

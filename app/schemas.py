@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, computed_field, field_validator, model_validator
 from datetime import datetime
 from typing import List, Literal, Optional
 from enum import Enum
@@ -1371,11 +1371,16 @@ class ContractEmployeeListItemOut(BaseModel):
     account_number: Optional[str] = None
     phone: Optional[str] = None
     status: ContractEmployeeStatus
-    total_owed: Decimal
     total_paid: Decimal
     balance: Decimal
     active_jobs_count: int = 0
     pending_requests: int = 0
+
+    @computed_field(return_type=Decimal)
+    @property
+    def total(self) -> Decimal:
+        # Total lifetime earnings: what has been paid + what remains in balance.
+        return (self.total_paid or Decimal("0")) + (self.balance or Decimal("0"))
 
     class Config:
         from_attributes = True
@@ -1419,13 +1424,17 @@ class ContractEmployeeMeOut(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     status: ContractEmployeeStatus
-    total_owed: Decimal
     total_paid: Decimal
     balance: Decimal
     needs_profile_completion: bool = False
     needs_password_change: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
+
+    @computed_field(return_type=Decimal)
+    @property
+    def total(self) -> Decimal:
+        return (self.total_paid or Decimal("0")) + (self.balance or Decimal("0"))
 
     class Config:
         from_attributes = True
@@ -1640,12 +1649,16 @@ class ContractJobFinanceRow(BaseModel):
 class ContractEmployeeFinanceOut(BaseModel):
     id: int
     full_name: str
-    total_owed: Decimal
     total_paid: Decimal
     balance: Decimal
     pending_payment: Optional[EmployeeTransactionOut] = None
     jobs: List[ContractJobFinanceRow] = []
     transactions: List[EmployeeTransactionOut] = []
+
+    @computed_field(return_type=Decimal)
+    @property
+    def total(self) -> Decimal:
+        return (self.total_paid or Decimal("0")) + (self.balance or Decimal("0"))
 
 
 class PendingEmployeePaymentItem(BaseModel):

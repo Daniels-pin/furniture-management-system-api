@@ -19,6 +19,15 @@ import {
   getFinancialActivityTypeLabel
 } from "../utils/financialActivity";
 
+function getNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
 function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset";
   const cls =
@@ -419,8 +428,8 @@ export function ContractEmployeeDashboardPage() {
       ) : tab === "summary" ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card className="!p-4">
-            <div className="text-xs font-semibold text-black/55">Total owed</div>
-            <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(me.total_owed)}</div>
+            <div className="text-xs font-semibold text-black/55">Total</div>
+            <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(getNumber((me as any).total))}</div>
           </Card>
           <Card className="!p-4">
             <div className="text-xs font-semibold text-black/55">Total paid</div>

@@ -1040,8 +1040,8 @@ export function EmployeesPage() {
 
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
-                          <div className="font-semibold text-black/55">Owed</div>
-                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(r.total_owed)}</div>
+                          <div className="font-semibold text-black/55">Total</div>
+                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney((r as any).total ?? 0)}</div>
                         </div>
                         <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
                           <div className="font-semibold text-black/55">Paid</div>
@@ -1096,7 +1096,7 @@ export function EmployeesPage() {
                       <th className="py-3 pr-4 font-semibold">Status</th>
                       <th className="py-3 pr-4 text-right font-semibold">Active jobs</th>
                       <th className="py-3 pr-4 text-right font-semibold">Pending requests</th>
-                      <th className="py-3 pr-4 text-right font-semibold">Total owed</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Total</th>
                       <th className="py-3 pr-4 text-right font-semibold">Total paid</th>
                       <th className="py-3 pr-4 text-right font-semibold">Balance</th>
                       <th className="py-3 pr-0 text-right font-semibold"> </th>
@@ -1158,7 +1158,7 @@ export function EmployeesPage() {
                             {typeof r.pending_requests === "number" ? r.pending_requests : 0}
                           </span>
                         </td>
-                        <td className="py-3 pr-4 text-right tabular-nums">{formatMoney(r.total_owed)}</td>
+                        <td className="py-3 pr-4 text-right tabular-nums">{formatMoney((r as any).total ?? 0)}</td>
                         <td className="py-3 pr-4 text-right tabular-nums">{formatMoney(r.total_paid)}</td>
                         <td className="py-3 pr-4 text-right font-semibold tabular-nums">{formatMoney(r.balance)}</td>
                         <td className="py-3 pr-0 text-right">

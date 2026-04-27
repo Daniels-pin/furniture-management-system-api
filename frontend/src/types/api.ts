@@ -658,7 +658,7 @@ export type ContractEmployeeListItem = {
   account_number?: string | null;
   phone?: string | null;
   status: ContractEmployeeStatus;
-  total_owed: string | number;
+  total: string | number;
   total_paid: string | number;
   balance: string | number;
   active_jobs_count?: number;
@@ -693,7 +693,7 @@ export type ContractEmployeeMe = {
   phone?: string | null;
   address?: string | null;
   status: ContractEmployeeStatus;
-  total_owed: string | number;
+  total: string | number;
   total_paid: string | number;
   balance: string | number;
   needs_profile_completion: boolean;
@@ -770,7 +770,7 @@ export type ContractJobFinanceRow = {
 export type ContractEmployeeFinance = {
   id: number;
   full_name: string;
-  total_owed: string | number;
+  total: string | number;
   total_paid: string | number;
   balance: string | number;
   pending_payment?: EmployeeTransaction | null;
