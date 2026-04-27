@@ -354,15 +354,23 @@ export function ContractEmployeeDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="-mx-4 md:mx-0">
+      <div
+        className={[
+          "-mx-4 md:mx-0",
+          "sticky top-[calc(3.25rem+env(safe-area-inset-top))] z-20 md:static",
+          "bg-white/95 backdrop-blur-md supports-[backdrop-filter]:bg-white/85",
+          "pt-2 pb-2"
+        ].join(" ")}
+      >
         <div
           className={[
-            "overflow-x-auto overscroll-x-contain",
             "px-4 md:px-0",
+            "overflow-x-auto overflow-y-hidden overscroll-x-contain",
+            "whitespace-nowrap flex items-center",
             "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           ].join(" ")}
         >
-          <div className="inline-flex max-w-full rounded-2xl border border-black/10 bg-white p-1 whitespace-nowrap">
+          <div className="inline-flex max-w-full rounded-2xl border border-black/10 bg-white p-1">
             {(
               [
                 ["summary", "Financial Summary"],
