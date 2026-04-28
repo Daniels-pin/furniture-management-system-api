@@ -397,6 +397,7 @@ def get_contract_employee_finances(
             models.EmployeeTransaction.contract_employee_id == employee_id,
             models.EmployeeTransaction.txn_type == "payment",
             models.EmployeeTransaction.status == "paid",
+            models.EmployeePaymentAllocation.voided_at.is_(None),
         )
         .all()
     )

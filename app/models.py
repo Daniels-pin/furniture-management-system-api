@@ -773,9 +773,13 @@ class EmployeePaymentAllocation(Base):
     )
     amount = Column(Numeric(14, 2), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    void_reason = Column(String(4000), nullable=True)
 
     transaction = relationship("EmployeeTransaction", backref=backref("allocations", cascade="all, delete-orphan"))
     contract_job = relationship("ContractJob")
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
     __table_args__ = (
         UniqueConstraint("transaction_id", "contract_job_id", name="uq_employee_payment_allocations_txn_job"),

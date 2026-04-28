@@ -56,6 +56,7 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
         .filter(
             models.EmployeePaymentAllocation.contract_job_id == j.id,
+            models.EmployeePaymentAllocation.voided_at.is_(None),
             models.EmployeeTransaction.txn_type == "payment",
             models.EmployeeTransaction.status == "paid",
         )
@@ -315,6 +316,109 @@ def _reverse_owed_increase_for_job(db: Session, job: models.ContractJob, actor: 
         actor_user=actor,
         meta={"original_transaction_id": orig.id, "contract_job_id": job.id, "amount": str(amt)},
     )
+
+
+def _reverse_paid_allocations_for_job(db: Session, job: models.ContractJob, actor: models.User, note: str) -> None:
+    """Cancel job should also reverse any PAID payment allocations tied to it.
+
+    This is audit-safe (append-only) and idempotent:
+    - allocations are soft-voided (not deleted)
+    - each originating payment txn gets at most one reversal row for this job
+    """
+    # Find allocation sums per paid payment txn for this job.
+    rows = (
+        db.query(
+            models.EmployeePaymentAllocation.transaction_id,
+            func.coalesce(func.sum(models.EmployeePaymentAllocation.amount), 0),
+        )
+        .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
+        .filter(
+            models.EmployeePaymentAllocation.contract_job_id == job.id,
+            models.EmployeePaymentAllocation.voided_at.is_(None),
+            models.EmployeeTransaction.txn_type == "payment",
+            models.EmployeeTransaction.status == "paid",
+        )
+        .group_by(models.EmployeePaymentAllocation.transaction_id)
+        .all()
+    )
+    if not rows:
+        return
+
+    now = datetime.utcnow()
+    role = normalize_role(getattr(actor, "role", None))
+
+    # Soft-void allocation lines (audit retention).
+    alloc_lines = (
+        db.query(models.EmployeePaymentAllocation)
+        .filter(models.EmployeePaymentAllocation.contract_job_id == job.id, models.EmployeePaymentAllocation.voided_at.is_(None))
+        .all()
+    )
+    for a in alloc_lines:
+        a.voided_at = now
+        a.voided_by_id = getattr(actor, "id", None)
+        a.void_reason = (note or "").strip() or "Voided due to job cancellation"
+
+    # Reverse the financial effect of the allocated portions.
+    # Payment confirmation rule (contract employees): total_paid += amt and total_owed -= amt.
+    # Reversal undoes that: total_paid -= amt and total_owed += amt.
+    for txn_id, amt_sum in rows:
+        amt = _as_decimal(amt_sum)
+        if amt <= 0:
+            continue
+        # Idempotency: avoid duplicate reversal for same payment txn + job.
+        existing = (
+            db.query(models.EmployeeTransaction)
+            .filter(
+                models.EmployeeTransaction.reversal_of_id == int(txn_id),
+                models.EmployeeTransaction.contract_job_id == job.id,
+                models.EmployeeTransaction.txn_type == "reversal",
+                models.EmployeeTransaction.status == "paid",
+            )
+            .first()
+        )
+        if existing:
+            continue
+
+        orig = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == int(txn_id)).first()
+        if orig is None or orig.contract_employee_id is None:
+            continue
+
+        emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == orig.contract_employee_id).first()
+        if emp is None:
+            continue
+
+        rev = models.EmployeeTransaction(
+            contract_employee_id=orig.contract_employee_id,
+            contract_job_id=job.id,
+            txn_type="reversal",
+            amount=amt,
+            status="paid",
+            note=(note or "").strip() or None,
+            receipt_url=None,
+            created_at=now,
+            paid_at=now,
+            created_by_id=getattr(actor, "id", None),
+            processed_by_id=getattr(actor, "id", None),
+            processed_by_role=role,
+            reversal_of_id=int(txn_id),
+        )
+        db.add(rev)
+        db.flush()
+
+        emp.total_paid = _as_decimal(emp.total_paid) - amt
+        emp.total_owed = _as_decimal(emp.total_owed) + amt
+        emp.balance = _as_decimal(emp.total_owed) - _as_decimal(emp.total_paid)
+        emp.updated_at = now
+        rev.running_balance = emp.balance
+
+        log_financial_action(
+            db,
+            action="job_cancelled_payment_reversal",
+            entity_type="employee_transaction",
+            entity_id=rev.id,
+            actor_user=actor,
+            meta={"original_transaction_id": int(txn_id), "contract_job_id": job.id, "amount": str(amt)},
+        )
 
 
 @router.get("", response_model=list[ContractJobOut])
@@ -789,6 +893,8 @@ def cancel_job(
 
     # If accepted, remove from owed by reversing its owed_increase.
     _reverse_owed_increase_for_job(db, j, current_user, note=f"Job #{j.id} cancelled. {j.cancelled_note or ''}".strip())
+    # If paid allocations exist, void them and reverse their payment impact for this job.
+    _reverse_paid_allocations_for_job(db, j, current_user, note=f"Job #{j.id} cancelled. {j.cancelled_note or ''}".strip())
 
     db.commit()
     db.refresh(j)

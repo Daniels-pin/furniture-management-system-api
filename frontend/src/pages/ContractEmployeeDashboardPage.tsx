@@ -115,6 +115,7 @@ export function ContractEmployeeDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [me, setMe] = useState<ContractEmployeeMe | null>(null);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
+  const [jobStatusFilter, setJobStatusFilter] = useState<"active" | "all" | "pending" | "in_progress" | "completed">("active");
   const [txns, setTxns] = useState<EmployeeTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const initialTab = (searchParams.get("tab") || "summary") as
@@ -244,6 +245,11 @@ export function ContractEmployeeDashboardPage() {
 
   const inProgress = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
+  const filteredJobs = useMemo(() => {
+    if (jobStatusFilter === "all") return jobs;
+    if (jobStatusFilter === "active") return jobs.filter((j) => j.status === "pending" || j.status === "in_progress");
+    return jobs.filter((j) => j.status === jobStatusFilter);
+  }, [jobs, jobStatusFilter]);
   const pendingRequests = useMemo(
     () =>
       (txns || []).filter(
@@ -570,13 +576,39 @@ export function ContractEmployeeDashboardPage() {
               Refresh
             </Button>
           </div>
-          {jobs.length === 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
+              {(
+                [
+                  ["active", "Pending + In Progress"],
+                  ["pending", "Pending"],
+                  ["in_progress", "In Progress"],
+                  ["completed", "Completed"],
+                  ["all", "All"]
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={[
+                    "min-h-9 rounded-xl px-3 text-xs font-semibold transition",
+                    jobStatusFilter === k ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  onClick={() => setJobStatusFilter(k)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {filteredJobs.length === 0 ? (
             <div className="mt-3 text-sm text-black/60">No jobs yet.</div>
           ) : (
             <>
               {/* Mobile: cards to avoid horizontal scrolling + cramped row actions */}
               <div className="mt-3 space-y-3 md:hidden">
-                {jobs.map((j) => {
+                {filteredJobs.map((j) => {
                   const needsBoth = Boolean((j as any).negotiation_occurred);
                   const lastBy = ((j as any).last_offer_by_role ?? null) as any;
                   const empAccepted = Boolean((j as any).employee_accepted_at);
@@ -692,7 +724,7 @@ export function ContractEmployeeDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {jobs.map((j) => (
+                    {filteredJobs.map((j) => (
                       <tr
                         key={j.id}
                         className={[

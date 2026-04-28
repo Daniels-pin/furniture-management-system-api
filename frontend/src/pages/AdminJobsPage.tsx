@@ -142,9 +142,12 @@ export function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
   const [summary, setSummary] = useState<AdminJobsSummary | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"active" | "all" | "pending" | "in_progress" | "completed">("active");
   const [assignOpen, setAssignOpen] = useState(false);
   const [employees, setEmployees] = useState<ContractEmployeeListItem[]>([]);
   const [assignEmployeeId, setAssignEmployeeId] = useState<string>("");
+  const [assignEmployeeQuery, setAssignEmployeeQuery] = useState("");
+  const [assignEmployeeDropdownOpen, setAssignEmployeeDropdownOpen] = useState(false);
   const [assignDesc, setAssignDesc] = useState("");
   const [assignPrice, setAssignPrice] = useState("");
   const [assignImageFile, setAssignImageFile] = useState<File | null>(null);
@@ -206,7 +209,34 @@ export function AdminJobsPage() {
     };
   }, [assignOpen]);
 
-  const rows = useMemo(() => jobs, [jobs]);
+  const rows = useMemo(() => {
+    if (statusFilter === "all") return jobs;
+    if (statusFilter === "active") return jobs.filter((j) => j.status === "pending" || j.status === "in_progress");
+    return jobs.filter((j) => j.status === statusFilter);
+  }, [jobs, statusFilter]);
+
+  const assignEmpSelected = useMemo(() => {
+    const id = Number(assignEmployeeId);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    return employees.find((e) => Number(e.id) === id) || null;
+  }, [assignEmployeeId, employees]);
+
+  const assignEmpDebouncedQuery = useDebouncedValue(assignEmployeeQuery, 160);
+  const assignEmpSuggestions = useMemo(() => {
+    const q = (assignEmpDebouncedQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    const starts: ContractEmployeeListItem[] = [];
+    const partial: ContractEmployeeListItem[] = [];
+    for (const e of employees) {
+      const name = String(e.full_name || "").trim();
+      const hay = name.toLowerCase();
+      if (!hay) continue;
+      if (hay.startsWith(q)) starts.push(e);
+      else if (hay.includes(q)) partial.push(e);
+    }
+    const out = [...starts, ...partial];
+    return out.slice(0, 12);
+  }, [assignEmpDebouncedQuery, employees]);
 
   return (
     <div className="space-y-4">
@@ -265,6 +295,31 @@ export function AdminJobsPage() {
                 Refresh
               </Button>
               <Button onClick={() => setAssignOpen(true)}>Assign job</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
+              {(
+                [
+                  ["active", "Pending + In Progress"],
+                  ["pending", "Pending"],
+                  ["in_progress", "In Progress"],
+                  ["completed", "Completed"],
+                  ["all", "All"]
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={[
+                    "min-h-9 rounded-xl px-3 text-xs font-semibold transition",
+                    statusFilter === k ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  onClick={() => setStatusFilter(k)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -371,21 +426,59 @@ export function AdminJobsPage() {
 
       <Modal open={assignOpen} title="Assign job" onClose={() => (assigning ? null : setAssignOpen(false))}>
         <div className="space-y-3">
-          <label className="text-xs font-semibold text-black/60">
-            Assign to employee <span className="text-red-600">*</span>
-            <select
-              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-              value={assignEmployeeId}
-              onChange={(e) => setAssignEmployeeId(e.target.value)}
-            >
-              <option value="">Select employee…</option>
-              {employees.map((e) => (
-                <option key={e.id} value={String(e.id)}>
-                  {e.full_name} (#{e.id})
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="relative">
+            <Input
+              label={
+                <span>
+                  Assign to employee <span className="text-red-600">*</span>
+                </span>
+              }
+              value={assignEmployeeQuery}
+              onChange={(e) => {
+                setAssignEmployeeQuery(e.target.value);
+                setAssignEmployeeDropdownOpen(true);
+                // If they edit after selecting, clear the selection.
+                if (assignEmployeeId) setAssignEmployeeId("");
+              }}
+              placeholder="Search employee…"
+              onFocus={() => setAssignEmployeeDropdownOpen(true)}
+              onBlur={() => {
+                // Allow click selection before closing.
+                window.setTimeout(() => setAssignEmployeeDropdownOpen(false), 120);
+              }}
+            />
+
+            {assignEmpSelected ? (
+              <div className="mt-1 text-xs font-semibold text-black/60">
+                Selected: <span className="text-black">{assignEmpSelected.full_name}</span> (#{assignEmpSelected.id})
+              </div>
+            ) : null}
+
+            {assignEmployeeDropdownOpen && assignEmpSuggestions.length > 0 ? (
+              <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-soft">
+                <div className="max-h-72 overflow-auto p-1">
+                  {assignEmpSuggestions.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-black/80 hover:bg-black/5"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setAssignEmployeeId(String(e.id));
+                        setAssignEmployeeQuery(String(e.full_name || "").trim());
+                        setAssignEmployeeDropdownOpen(false);
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 truncate">{e.full_name}</div>
+                        <div className="shrink-0 text-xs font-semibold text-black/45">#{e.id}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
           <label className="text-xs font-semibold text-black/60">
             Description <span className="text-red-600">*</span>
             <textarea
@@ -453,6 +546,7 @@ export function AdminJobsPage() {
                   .then(() => refresh())
                   .then(() => {
                     setAssignEmployeeId("");
+                    setAssignEmployeeQuery("");
                     setAssignDesc("");
                     setAssignPrice("");
                     setAssignImageFile(null);
@@ -503,5 +597,14 @@ export function AdminJobsPage() {
       </Modal>
     </div>
   );
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return v;
 }
 

@@ -896,7 +896,11 @@ def reverse_transaction(
         if emp is None:
             raise HTTPException(status_code=404, detail="Contract employee not found")
         if orig.txn_type == "payment":
+            # Undo core rule applied when payment was confirmed:
+            # - payment increased total_paid
+            # - payment decreased total_owed
             emp.total_paid = _as_decimal(emp.total_paid) - amt
+            emp.total_owed = _as_decimal(emp.total_owed) + amt
         elif orig.txn_type == "owed_increase":
             emp.total_owed = _as_decimal(emp.total_owed) - amt
         elif orig.txn_type == "owed_decrease":
