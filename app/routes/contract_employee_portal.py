@@ -13,6 +13,7 @@ from app.schemas import ContractEmployeeMeOut, ContractEmployeeMeUpdate
 from app.schemas import EmployeeSendPaymentToFinance, EmployeeTransactionOut
 from app.utils.financial_audit import log_financial_action
 from app.utils.notifications import create_notifications
+from app.utils.contract_financials import compute_contract_employee_financials
 
 router = APIRouter(prefix="/contract-employee", tags=["Contract Employee Portal"])
 
@@ -37,6 +38,9 @@ def me(
     if ce is None:
         raise HTTPException(status_code=404, detail="No contract employee profile linked to your account.")
     out = ContractEmployeeMeOut.model_validate(ce)
+    derived, _debug = compute_contract_employee_financials(db, ce.id, debug=False)
+    out.total_paid = derived.total_paid
+    out.balance = derived.balance
     out.needs_profile_completion = _needs_completion(ce)
     out.needs_password_change = bool(getattr(current_user, "must_change_password", False))
     return out
@@ -58,6 +62,9 @@ def patch_me(
     db.commit()
     db.refresh(ce)
     out = ContractEmployeeMeOut.model_validate(ce)
+    derived, _debug = compute_contract_employee_financials(db, ce.id, debug=False)
+    out.total_paid = derived.total_paid
+    out.balance = derived.balance
     out.needs_profile_completion = _needs_completion(ce)
     out.needs_password_change = bool(getattr(current_user, "must_change_password", False))
     return out
@@ -89,8 +96,9 @@ def request_payment(
     if existing:
         raise HTTPException(status_code=409, detail="You already have a pending payment request.")
 
-    # `total_owed` is the live/net owed amount (positive => company owes employee).
-    bal = Decimal(str(ce.total_owed or 0))
+    derived, _debug = compute_contract_employee_financials(db, ce.id, debug=False)
+    # `balance` is the live/net amount (positive => company owes employee).
+    bal = derived.balance
     amt = Decimal(str(body.amount))
     if bal <= 0:
         raise HTTPException(status_code=409, detail="You have no outstanding balance to request.")

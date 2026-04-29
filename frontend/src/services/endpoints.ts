@@ -323,10 +323,11 @@ export const ordersApi = {
 };
 
 export const invoicesApi = {
-  async list(params?: { limit?: number; offset?: number }) {
+  async list(params?: { limit?: number; offset?: number; search?: string }) {
     const qp: Record<string, any> = {};
     if (typeof params?.limit === "number") qp.limit = params.limit;
     if (typeof params?.offset === "number") qp.offset = params.offset;
+    if (params?.search?.trim()) qp.search = params.search.trim();
     const { data } = await api.get<Paginated<InvoiceListItem>>("/invoices", { params: qp });
     return data;
   },

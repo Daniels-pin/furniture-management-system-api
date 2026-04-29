@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -26,6 +26,10 @@ from app.schemas import (
 )
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
+from app.utils.contract_financials import (
+    compute_contract_employee_financials,
+    recalculate_contract_employee_financials,
+)
 
 router = APIRouter(prefix="/employee-payments", tags=["Employee Payments"])
 
@@ -135,15 +139,18 @@ def list_pending_payments(
     # Filter overpaid for contract employees (post-query because it depends on joined employee data).
     filtered: list[models.EmployeeTransaction] = []
     total = Decimal("0")
+    derived_balance_cache: dict[int, Decimal] = {}
     for t in rows:
         if t.contract_employee_id is not None and overpaid is not None:
-            ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
-            if ce:
-                bal = _as_decimal(getattr(ce, "balance", 0))
-                if overpaid is True and bal >= 0:
-                    continue
-                if overpaid is False and bal < 0:
-                    continue
+            ce_id = int(t.contract_employee_id)
+            if ce_id not in derived_balance_cache:
+                derived, _debug = compute_contract_employee_financials(db, ce_id, debug=False)
+                derived_balance_cache[ce_id] = derived.balance
+            bal = derived_balance_cache[ce_id]
+            if overpaid is True and bal >= 0:
+                continue
+            if overpaid is False and bal < 0:
+                continue
         filtered.append(t)
         total += _as_decimal(t.amount)
 
@@ -297,13 +304,11 @@ def admin_send_payment_to_finance(
     # - Amount must be <= total owed (contract employees only; monthly payroll uses a different system)
     # - Payment must not already be processed (covered by allowed statuses above)
     if t.contract_employee_id is not None:
-        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
-        if ce is None:
-            raise HTTPException(status_code=404, detail="Contract employee not found")
-        owed = _as_decimal(getattr(ce, "total_owed", 0))
+        derived, _debug = compute_contract_employee_financials(db, int(t.contract_employee_id), debug=False)
+        owed = derived.balance
         amt = _as_decimal(t.amount)
         if amt > owed:
-            raise HTTPException(status_code=400, detail=f"amount cannot exceed total owed ({owed}).")
+            raise HTTPException(status_code=400, detail=f"amount cannot exceed remaining balance ({owed}).")
 
     # If admin sends directly without explicit approval, we still move it through approved state.
     if t.status == "requested":
@@ -642,23 +647,103 @@ def mark_payment_as_paid(
         """
         if amount <= 0:
             return []
+        # Compute which jobs are financially valid (accepted/in_progress/completed; not cancelled).
         job_rows = (
-            db.query(models.ContractJob)
-            .filter(models.ContractJob.contract_employee_id == int(contract_employee_id), models.ContractJob.status != "cancelled")
+            db.query(
+                models.ContractJob.id,
+                models.ContractJob.status,
+                models.ContractJob.final_price,
+                models.ContractJob.price_accepted_at,
+            )
+            .filter(
+                models.ContractJob.contract_employee_id == int(contract_employee_id),
+                models.ContractJob.status != "cancelled",
+                models.ContractJob.final_price.isnot(None),
+            )
+            .filter(
+                (models.ContractJob.final_price > 0)
+                & (
+                    (models.ContractJob.status.in_(["in_progress", "completed"]))
+                    | models.ContractJob.price_accepted_at.isnot(None)
+                )
+            )
             .order_by(models.ContractJob.id.asc())
             .all()
         )
+        valid_job_ids = [int(j[0]) for j in job_rows]
+        if not valid_job_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Allocations are required: no sufficient job balances found to auto-allocate this payment amount.",
+            )
+
+        # Identify payment transactions that have been reversed.
+        rev = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.reversal_of_id.isnot(None), models.EmployeeTransaction.txn_type == "reversal", models.EmployeeTransaction.status == "paid").all()
+        reversed_payment_ids = {int(r.reversal_of_id) for r in rev if r.reversal_of_id is not None}
+
+        # Sum already confirmed finance payments per job.
+        paid_by_job: dict[int, Decimal] = {}
+        paid_rows = (
+            db.query(
+                models.EmployeePaymentAllocation.contract_job_id,
+                func.coalesce(func.sum(models.EmployeePaymentAllocation.amount), 0),
+            )
+            .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
+            .filter(
+                models.EmployeeTransaction.contract_employee_id == int(contract_employee_id),
+                models.EmployeeTransaction.txn_type == "payment",
+                models.EmployeeTransaction.status == "paid",
+                models.EmployeePaymentAllocation.voided_at.is_(None),
+                models.EmployeePaymentAllocation.contract_job_id.in_(valid_job_ids),
+                or_(
+                    models.EmployeeTransaction.processed_by_role == "finance",
+                    models.EmployeeTransaction.receipt_url.isnot(None),
+                ),
+            )
+            .group_by(models.EmployeePaymentAllocation.contract_job_id)
+            .all()
+        )
+        # Exclude reversed payments by subtracting their allocations.
+        if reversed_payment_ids:
+            reversed_alloc_rows = (
+                db.query(
+                    models.EmployeePaymentAllocation.contract_job_id,
+                    func.coalesce(func.sum(models.EmployeePaymentAllocation.amount), 0),
+                )
+                .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
+                .filter(
+                    models.EmployeeTransaction.contract_employee_id == int(contract_employee_id),
+                    models.EmployeeTransaction.txn_type == "payment",
+                    models.EmployeeTransaction.status == "paid",
+                    models.EmployeePaymentAllocation.voided_at.is_(None),
+                    models.EmployeePaymentAllocation.contract_job_id.in_(valid_job_ids),
+                    models.EmployeeTransaction.id.in_(list(reversed_payment_ids)),
+                    or_(
+                        models.EmployeeTransaction.processed_by_role == "finance",
+                        models.EmployeeTransaction.receipt_url.isnot(None),
+                    ),
+                )
+                .group_by(models.EmployeePaymentAllocation.contract_job_id)
+                .all()
+            )
+        else:
+            reversed_alloc_rows = []
+
+        for job_id, amt in paid_rows:
+            paid_by_job[int(job_id)] = _as_decimal(amt)
+        for job_id, amt in reversed_alloc_rows:
+            jid = int(job_id)
+            paid_by_job[jid] = _as_decimal(paid_by_job.get(jid, 0)) - _as_decimal(amt)
+
         candidates: list[tuple[int, Decimal]] = []
-        for j in job_rows:
-            fp = _as_decimal(getattr(j, "final_price", None))
-            if fp <= 0:
-                continue
-            paid = _as_decimal(getattr(j, "amount_paid", 0))
-            remaining = fp - paid
-            if remaining <= 0:
-                continue
-            candidates.append((int(j.id), remaining))
-        # Smallest balances first.
+        for job_id, status, final_price, price_accepted_at in job_rows:
+            jid = int(job_id)
+            fp = _as_decimal(final_price)
+            paid_amt = _as_decimal(paid_by_job.get(jid, 0))
+            remaining = fp - paid_amt
+            if remaining > 0:
+                candidates.append((jid, remaining))
+
         candidates.sort(key=lambda x: (x[1], x[0]))
         allocations: list[dict] = []
         remaining_to_allocate = _as_decimal(amount)
@@ -670,9 +755,8 @@ def mark_payment_as_paid(
                 continue
             allocations.append({"contract_job_id": int(job_id), "amount": a_amt})
             remaining_to_allocate -= a_amt
+
         if remaining_to_allocate != 0:
-            # Not enough outstanding job balances to cover this payment amount.
-            # Keep consistent with strict allocation rule (sum must match payment amount).
             raise HTTPException(
                 status_code=400,
                 detail="Allocations are required: no sufficient job balances found to auto-allocate this payment amount.",
@@ -714,6 +798,9 @@ def mark_payment_as_paid(
         if emp is None:
             raise HTTPException(status_code=404, detail="Contract employee not found")
 
+        derived, _debug = compute_contract_employee_financials(db, int(t.contract_employee_id), debug=False)
+        current_balance = derived.balance
+
         # Enforce allocation to one or more jobs.
         allocations_in = body.allocations if body else []
         if not allocations_in:
@@ -745,8 +832,13 @@ def mark_payment_as_paid(
             job = db.query(models.ContractJob).filter(models.ContractJob.id == job_id).first()
             if job is None or job.contract_employee_id != int(t.contract_employee_id):
                 raise HTTPException(status_code=400, detail=f"Job #{job_id} does not belong to this employee.")
-            if job.status == "cancelled":
-                raise HTTPException(status_code=409, detail=f"Job #{job_id} is cancelled and cannot receive payments.")
+            fp = _as_decimal(getattr(job, "final_price", None))
+            is_accepted_like = (
+                job.status in ("in_progress", "completed")
+                or getattr(job, "price_accepted_at", None) is not None
+            )
+            if job.status == "cancelled" or not is_accepted_like or fp <= 0:
+                raise HTTPException(status_code=409, detail=f"Job #{job_id} is not valid for payments.")
             db.add(
                 models.EmployeePaymentAllocation(
                     transaction_id=t.id,
@@ -754,24 +846,39 @@ def mark_payment_as_paid(
                     amount=_as_decimal(a["amount"] if isinstance(a, dict) else getattr(a, "amount", 0)),
                 )
             )
-        projected_total_owed = _as_decimal(emp.total_owed) - amt
-        if projected_total_owed < 0 and not confirm_overpay:
+
+        projected_balance = current_balance - amt
+        if projected_balance < 0 and not confirm_overpay:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "OVERPAY_CONFIRM_REQUIRED",
                     "message": "This payment will overpay the employee (employee will owe the company). पुष्टि confirm_overpay=true to proceed.",
-                    "current_balance": str(_as_decimal(emp.total_owed)),
+                    "current_balance": str(current_balance),
                     "amount": str(amt),
-                    "projected_balance": str(projected_total_owed),
+                    "projected_balance": str(projected_balance),
                 },
             )
-        # Core rule: confirmed payment increases total_paid and decreases total_owed.
-        emp.total_paid = _as_decimal(emp.total_paid) + amt
-        emp.total_owed = _as_decimal(emp.total_owed) - amt
-        emp.balance = _as_decimal(emp.total_owed)
+
+        # Core rule under derived semantics:
+        # - total_owed is the sum of accepted-job final prices (gross, unchanged by payments)
+        # - total_paid increases by confirmed payment amount
+        # - balance = owed - paid
+        emp.total_owed = derived.total_owed
+        emp.total_paid = derived.total_paid + amt
+        emp.balance = derived.balance - amt
         emp.updated_at = paid_at
         t.running_balance = emp.balance
+
+        # Hard overwrite totals + cached running balances from the derived source-of-truth.
+        # This also corrects for legacy/stale totals and ignores any invalid allocations/jobs.
+        recalculate_contract_employee_financials(
+            db,
+            int(t.contract_employee_id),
+            actor_user=None,
+            debug=False,
+            commit=False,
+        )
     else:
         # Monthly payroll: also mark the period paid to prevent duplicates.
         if t.employee_id is None or t.period_id is None:
@@ -910,6 +1017,16 @@ def reverse_transaction(
         emp.balance = _as_decimal(emp.total_owed) - _as_decimal(emp.total_paid)
         emp.updated_at = now
         rev.running_balance = emp.balance
+
+        # Overwrite cached totals from the derived source-of-truth.
+        # This prevents legacy running-total logic from corrupting balances.
+        recalculate_contract_employee_financials(
+            db,
+            int(orig.contract_employee_id),
+            actor_user=None,
+            debug=False,
+            commit=False,
+        )
 
     log_financial_action(
         db,

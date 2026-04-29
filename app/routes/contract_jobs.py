@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -22,6 +22,11 @@ from app.schemas import (
 from app.utils.cloudinary import upload_image
 from app.utils.financial_audit import log_financial_action
 from app.utils.notifications import create_notifications
+from app.utils.contract_financials import (
+    _get_reversed_payment_ids,
+    compute_contract_employee_financials,
+    recalculate_contract_employee_financials,
+)
 
 router = APIRouter(prefix="/contract-jobs", tags=["Contract Jobs"])
 
@@ -31,19 +36,9 @@ def _as_decimal(v) -> Decimal:
 
 
 def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = None) -> ContractJobOut:
-    # paid_flag:
-    # - manual informational flag set by the daily reminder modal
-    # - OR any PAID payment txn linked to this job (legacy/inferred)
-    inferred_paid = (
-        db.query(models.EmployeeTransaction)
-        .filter(
-            models.EmployeeTransaction.contract_job_id == j.id,
-            models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "paid",
-        )
-        .count()
-        > 0
-    )
+    # We only treat finance-confirmed, non-reversed payment allocations as having financial impact.
+    reversed_payment_ids = _get_reversed_payment_ids(db, int(j.contract_employee_id))
+
     tx = (
         db.query(models.EmployeeTransaction)
         .filter(models.EmployeeTransaction.contract_job_id == j.id)
@@ -51,7 +46,7 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         .all()
     )
 
-    paid_alloc_sum = (
+    paid_alloc_q = (
         db.query(models.EmployeePaymentAllocation)
         .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
         .filter(
@@ -59,10 +54,15 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
             models.EmployeePaymentAllocation.voided_at.is_(None),
             models.EmployeeTransaction.txn_type == "payment",
             models.EmployeeTransaction.status == "paid",
+            or_(
+                models.EmployeeTransaction.processed_by_role == "finance",
+                models.EmployeeTransaction.receipt_url.isnot(None),
+            ),
         )
-        .with_entities(models.EmployeePaymentAllocation.amount)
-        .all()
     )
+    if reversed_payment_ids:
+        paid_alloc_q = paid_alloc_q.filter(models.EmployeeTransaction.id.notin_(reversed_payment_ids))
+    paid_alloc_sum = paid_alloc_q.with_entities(models.EmployeePaymentAllocation.amount).all()
     amount_paid = sum((_as_decimal(a) for (a,) in paid_alloc_sum), Decimal("0"))
     bal = _as_decimal(j.final_price) - amount_paid if j.final_price is not None else None
     payment_state = "not_paid"
@@ -104,7 +104,7 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         completed_at=j.completed_at,
         cancelled_at=j.cancelled_at,
         cancelled_note=j.cancelled_note,
-        paid_flag=bool(getattr(j, "paid_flag", False) or inferred_paid),
+        paid_flag=bool(getattr(j, "paid_flag", False) or amount_paid > 0),
         linked_transactions=[EmployeeTransactionOut.model_validate(t) for t in tx],
     )
 
@@ -456,10 +456,13 @@ def admin_jobs_summary(
     total_pending = db.query(models.ContractJob).filter(models.ContractJob.status == "pending").count()
     total_in_progress = db.query(models.ContractJob).filter(models.ContractJob.status == "in_progress").count()
 
-    owed_sum = db.query(func.coalesce(func.sum(models.ContractEmployee.total_owed), 0)).scalar() or 0
-    paid_sum = db.query(func.coalesce(func.sum(models.ContractEmployee.total_paid), 0)).scalar() or 0
-    total_owed = _as_decimal(owed_sum)
-    total_paid = _as_decimal(paid_sum)
+    # Financial totals are derived from valid jobs + finance-confirmed payments only.
+    total_owed = Decimal("0")
+    total_paid = Decimal("0")
+    for (cid,) in db.query(models.ContractEmployee.id).all():
+        derived, _debug = compute_contract_employee_financials(db, int(cid), debug=False)
+        total_owed += derived.total_owed
+        total_paid += derived.total_paid
     balance = total_owed - total_paid
     return {
         "jobs": {
@@ -734,6 +737,14 @@ def accept_price_me(
 
     j.employee_accepted_at = now
     _lock_price_if_ready(db, j, ce, current_user)
+    # Keep cached contract-employee balances consistent (prevents stale running_balance in the UI).
+    recalculate_contract_employee_financials(
+        db,
+        int(j.contract_employee_id),
+        actor_user=None,
+        debug=False,
+        commit=False,
+    )
     db.commit()
     db.refresh(j)
     # Notify admins when employee accepts (price accepted event).
@@ -780,6 +791,14 @@ def admin_accept_offer(
 
     j.admin_accepted_at = datetime.utcnow()
     _lock_price_if_ready(db, j, ce, current_user)
+    # Keep cached contract-employee balances consistent (prevents stale running_balance in the UI).
+    recalculate_contract_employee_financials(
+        db,
+        int(j.contract_employee_id),
+        actor_user=None,
+        debug=False,
+        commit=False,
+    )
     db.commit()
     db.refresh(j)
     # Notify employee when admin accepts.
@@ -895,6 +914,15 @@ def cancel_job(
     _reverse_owed_increase_for_job(db, j, current_user, note=f"Job #{j.id} cancelled. {j.cancelled_note or ''}".strip())
     # If paid allocations exist, void them and reverse their payment impact for this job.
     _reverse_paid_allocations_for_job(db, j, current_user, note=f"Job #{j.id} cancelled. {j.cancelled_note or ''}".strip())
+
+    # Keep cached contract-employee balances consistent.
+    recalculate_contract_employee_financials(
+        db,
+        int(j.contract_employee_id),
+        actor_user=None,
+        debug=False,
+        commit=False,
+    )
 
     db.commit()
     db.refresh(j)

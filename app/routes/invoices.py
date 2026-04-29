@@ -6,7 +6,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import func
+from sqlalchemy import String as SQLString, cast, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 import logging
@@ -287,6 +287,7 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
 def list_invoices(
     limit: int = 20,
     offset: int = 0,
+    search: str | None = Query(None),
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
@@ -295,10 +296,30 @@ def list_invoices(
     q = (
         db.query(models.Invoice)
         .join(models.Order, models.Invoice.order_id == models.Order.id)
+        .join(models.Customer, models.Invoice.customer_id == models.Customer.id)
         .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
         .filter(invoice_alive())
         .filter(order_alive())
     )
+
+    if search and search.strip():
+        term = search.strip()
+        order_term = term.lstrip("#").strip()
+        like_term = f"%{term}%"
+        order_like_term = f"%{order_term}%" if order_term else None
+
+        # Case-insensitive partial match across:
+        # - customer name
+        # - customer phone
+        # - displayed order number (currently `order_id`, e.g. "#12" => 12)
+        conds = [
+            models.Customer.name.ilike(like_term),
+            models.Customer.phone.ilike(like_term),
+        ]
+        if order_like_term:
+            conds.append(cast(models.Invoice.order_id, SQLString).ilike(order_like_term))
+        q = q.filter(or_(*conds))
+
     total = q.count()
     rows = q.order_by(models.Invoice.id.desc()).offset(off).limit(lim).all()
     return {"items": [_invoice_to_list_item(db, inv, user) for inv in rows], "total": total}

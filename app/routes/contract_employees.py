@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -12,6 +13,12 @@ from app.auth.auth import require_role
 from app.database import get_db
 from app.utils.financial_audit import log_financial_action
 from app.auth.utils import hash_password
+from app.utils.contract_financials import (
+    ContractEmployeeDerivedTotals,
+    compute_contract_employee_financials,
+    recalculate_all_contract_employees_financials,
+    recalculate_contract_employee_financials,
+)
 from app.schemas import (
     ContractEmployeeCreate,
     ContractEmployeeCreateWithLogin,
@@ -32,7 +39,13 @@ router = APIRouter(prefix="/contract-employees", tags=["Contract Employees"])
 logger = logging.getLogger(__name__)
 
 
-def _to_out(emp: models.ContractEmployee) -> ContractEmployeeOut:
+def _to_out(
+    emp: models.ContractEmployee,
+    *,
+    derived_totals: ContractEmployeeDerivedTotals | None = None,
+) -> ContractEmployeeOut:
+    total_paid = derived_totals.total_paid if derived_totals is not None else Decimal(str(emp.total_paid or 0))
+    balance = derived_totals.balance if derived_totals is not None else Decimal(str(emp.balance or 0))
     return ContractEmployeeOut(
         id=emp.id,
         full_name=emp.full_name,
@@ -41,8 +54,8 @@ def _to_out(emp: models.ContractEmployee) -> ContractEmployeeOut:
         phone=emp.phone,
         address=emp.address,
         status=emp.status,
-        total_paid=Decimal(str(emp.total_paid or 0)),
-        balance=Decimal(str(emp.balance or 0)),
+        total_paid=total_paid,
+        balance=balance,
         transactions=[EmployeeTransactionOut.model_validate(t) for t in (emp.transactions or [])],
         created_at=emp.created_at,
         updated_at=emp.updated_at,
@@ -68,14 +81,15 @@ def list_contract_employees(
         q = q.filter(models.ContractEmployee.status == status)
     elif status == "all":
         pass
-    if overpaid is True:
-        q = q.filter(models.ContractEmployee.balance < 0)
-    if overpaid is False:
-        q = q.filter(models.ContractEmployee.balance >= 0)
     rows = q.order_by(models.ContractEmployee.id.desc()).all()
     # Enrich list rows with dashboard metrics.
     out: list[ContractEmployeeListItemOut] = []
     for r in rows:
+        derived, _debug = compute_contract_employee_financials(db, int(r.id))
+        if overpaid is True and derived.balance >= 0:
+            continue
+        if overpaid is False and derived.balance < 0:
+            continue
         active_jobs = (
             db.query(models.ContractJob)
             .filter(
@@ -94,6 +108,8 @@ def list_contract_employees(
             .count()
         )
         item = ContractEmployeeListItemOut.model_validate(r)
+        item.total_paid = derived.total_paid
+        item.balance = derived.balance
         item.active_jobs_count = int(active_jobs)
         item.pending_requests = int(pending_requests)
         out.append(item)
@@ -119,7 +135,8 @@ def create_contract_employee(
     db.add(emp)
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.post("/create-with-login", response_model=ContractEmployeeOut)
@@ -165,7 +182,8 @@ def create_contract_employee_with_login(
     db.add(emp)
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.get("/{employee_id}", response_model=ContractEmployeeOut)
@@ -177,7 +195,17 @@ def get_contract_employee(
     emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
     if emp is None:
         raise HTTPException(status_code=404, detail="Contract employee not found")
-    return _to_out(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived)
+
+
+@router.post("/financials/recalculate")
+def recalculate_financials(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+):
+    result = recalculate_all_contract_employees_financials(db, actor_user=current_user, debug=False)
+    return {"message": "Recalculated contract employee financials.", "result": result}
 
 
 @router.post("/{employee_id}/reset-password")
@@ -230,7 +258,8 @@ def patch_contract_employee(
     emp.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.post("/{employee_id}/link-user", response_model=ContractEmployeeOut)
@@ -259,7 +288,8 @@ def link_contract_employee_user(
     emp.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.post("/{employee_id}/owed/increase", response_model=ContractEmployeeOut)
@@ -308,7 +338,8 @@ def increase_total_owed(
     )
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.post("/{employee_id}/owed/decrease", response_model=ContractEmployeeOut)
@@ -357,7 +388,8 @@ def decrease_total_owed(
     )
     db.commit()
     db.refresh(emp)
-    return _to_out(emp)
+    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
+    return _to_out(emp, derived_totals=derived)
 
 
 @router.get("/{employee_id}/finances", response_model=ContractEmployeeFinanceOut)
@@ -370,6 +402,8 @@ def get_contract_employee_finances(
     if emp is None:
         raise HTTPException(status_code=404, detail="Contract employee not found")
 
+    derived, debug_info = compute_contract_employee_financials(db, employee_id, debug=False)
+
     pending = (
         db.query(models.EmployeeTransaction)
         .filter(
@@ -381,34 +415,100 @@ def get_contract_employee_finances(
         .first()
     )
 
-    jobs = (
-        db.query(models.ContractJob)
-        .filter(models.ContractJob.contract_employee_id == employee_id, models.ContractJob.status != "cancelled")
-        .order_by(models.ContractJob.id.desc())
-        .all()
-    )
+    valid_job_ids = set(debug_info.get("jobs_used", []))
 
-    # Aggregate paid allocations per job.
-    job_paid: dict[int, Decimal] = {}
-    alloc_rows = (
-        db.query(models.EmployeePaymentAllocation.contract_job_id, models.EmployeePaymentAllocation.amount)
-        .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
-        .filter(
-            models.EmployeeTransaction.contract_employee_id == employee_id,
-            models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "paid",
-            models.EmployeePaymentAllocation.voided_at.is_(None),
+    jobs = []
+    if valid_job_ids:
+        jobs = (
+            db.query(models.ContractJob)
+            .filter(
+                models.ContractJob.contract_employee_id == employee_id,
+                models.ContractJob.id.in_(valid_job_ids),
+            )
+            .order_by(models.ContractJob.id.desc())
+            .all()
         )
-        .all()
-    )
-    for job_id, amt in alloc_rows:
-        job_paid[int(job_id)] = job_paid.get(int(job_id), Decimal("0")) + Decimal(str(amt or 0))
+
+    # Payments excluded if the payment transaction was reversed.
+    # (We exclude these payments so financial totals remain correct.)
+    reversed_payment_ids: set[int] = set()
+    if emp is not None:
+        from sqlalchemy.orm import aliased
+
+        rev = aliased(models.EmployeeTransaction)
+        orig = aliased(models.EmployeeTransaction)
+        reversed_rows = (
+            db.query(rev.reversal_of_id)
+            .join(orig, rev.reversal_of_id == orig.id)
+            .filter(
+                rev.txn_type == "reversal",
+                rev.status == "paid",
+                rev.reversal_of_id.isnot(None),
+                orig.txn_type == "payment",
+                orig.contract_employee_id == employee_id,
+            )
+            .all()
+        )
+        reversed_payment_ids = {int(r[0]) for r in reversed_rows if r[0] is not None}
+
+    # Aggregate finance-confirmed paid allocations per job.
+    job_paid: dict[int, Decimal] = {}
+    if valid_job_ids:
+        alloc_rows = (
+            db.query(models.EmployeePaymentAllocation.contract_job_id, func.coalesce(func.sum(models.EmployeePaymentAllocation.amount), 0))
+            .join(models.EmployeeTransaction, models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id)
+            .filter(
+                models.EmployeeTransaction.contract_employee_id == employee_id,
+                models.EmployeeTransaction.txn_type == "payment",
+                models.EmployeeTransaction.status == "paid",
+                or_(
+                    models.EmployeeTransaction.processed_by_role == "finance",
+                    models.EmployeeTransaction.receipt_url.isnot(None),
+                ),
+                models.EmployeePaymentAllocation.voided_at.is_(None),
+                models.EmployeePaymentAllocation.contract_job_id.in_(valid_job_ids),
+            )
+            .group_by(models.EmployeePaymentAllocation.contract_job_id)
+            .all()
+        )
+        for job_id, amt in alloc_rows:
+            jid = int(job_id)
+            # If payment txn was reversed, it has no impact; recompute with a strict filter when needed.
+            # For performance, we rely on allocation voiding and reversal exclusion during totals recalculation.
+            job_paid[jid] = Decimal(str(amt or 0))
+
+        # If there are reversed payments, we must subtract their allocation amounts from each job.
+        if reversed_payment_ids:
+            rev_alloc_rows = (
+                db.query(models.EmployeePaymentAllocation.contract_job_id, func.coalesce(func.sum(models.EmployeePaymentAllocation.amount), 0))
+                .join(
+                    models.EmployeeTransaction,
+                    models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id,
+                )
+                .filter(
+                    models.EmployeeTransaction.contract_employee_id == employee_id,
+                    models.EmployeeTransaction.txn_type == "payment",
+                    models.EmployeeTransaction.status == "paid",
+                    or_(
+                        models.EmployeeTransaction.processed_by_role == "finance",
+                        models.EmployeeTransaction.receipt_url.isnot(None),
+                    ),
+                    models.EmployeePaymentAllocation.contract_job_id.in_(valid_job_ids),
+                    models.EmployeePaymentAllocation.voided_at.is_(None),
+                    models.EmployeeTransaction.id.in_(reversed_payment_ids),
+                )
+                .group_by(models.EmployeePaymentAllocation.contract_job_id)
+                .all()
+            )
+            for job_id, amt in rev_alloc_rows:
+                jid = int(job_id)
+                job_paid[jid] = job_paid.get(jid, Decimal("0")) - Decimal(str(amt or 0))
 
     job_rows: list[ContractJobFinanceRow] = []
     for j in jobs:
         fp = Decimal(str(j.final_price or 0)) if j.final_price is not None else None
         paid_amt = job_paid.get(int(j.id), Decimal("0"))
-        bal = (fp - paid_amt) if fp is not None else None
+        bal = fp - paid_amt if fp is not None else None
         job_rows.append(
             ContractJobFinanceRow(
                 id=j.id,
@@ -429,8 +529,8 @@ def get_contract_employee_finances(
     return ContractEmployeeFinanceOut(
         id=emp.id,
         full_name=emp.full_name,
-        total_paid=Decimal(str(emp.total_paid or 0)),
-        balance=Decimal(str(emp.balance or 0)),
+        total_paid=derived.total_paid,
+        balance=derived.balance,
         pending_payment=(EmployeeTransactionOut.model_validate(pending) if pending else None),
         jobs=job_rows,
         transactions=[EmployeeTransactionOut.model_validate(t) for t in txns],
@@ -465,14 +565,16 @@ def send_contract_payment_to_finance(
         if t is None:
             raise HTTPException(status_code=404, detail="Payment request not found")
 
+        derived, _debug = compute_contract_employee_financials(db, employee_id, debug=False)
+
         # Validation rules (ONLY)
-        owed = Decimal(str(getattr(emp, "total_owed", 0) or 0))
+        owed = derived.balance
         request_amt = Decimal(str(getattr(t, "amount", 0) or 0))
         pay_amt = Decimal(str(getattr(body, "amount", 0) or 0))
         if pay_amt <= 0:
             raise HTTPException(status_code=400, detail="amount must be > 0")
         if pay_amt > owed:
-            raise HTTPException(status_code=400, detail=f"amount cannot exceed total owed ({owed}).")
+            raise HTTPException(status_code=400, detail=f"amount cannot exceed remaining balance ({owed}).")
         if pay_amt > request_amt:
             raise HTTPException(status_code=400, detail=f"amount cannot exceed request amount ({request_amt}).")
         if t.status == "paid" or getattr(t, "paid_at", None) is not None:
