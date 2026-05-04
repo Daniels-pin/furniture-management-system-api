@@ -642,6 +642,8 @@ export type EmployeeTransaction = {
   txn_type: EmployeeTxnType;
   status: EmployeeTxnStatus;
   processed_by_role?: string | null;
+  processed_by?: string | null;
+  initiated_by?: "admin" | "employee" | null;
   note?: string | null;
   receipt_url?: string | null;
   running_balance?: string | number | null;
@@ -749,6 +751,7 @@ export type PendingEmployeePaymentItem = {
   phone?: string | null;
   period_label?: string | null;
   sent_to_finance_at?: string | null;
+  initiated_by?: "admin" | "employee" | null;
 };
 
 export type PendingEmployeePayments = {
@@ -821,6 +824,13 @@ export type ExpenseEntry = {
   processed_by_role?: Role | null;
   processed_by?: string | null;
   created_at: string;
+};
+
+export type ExpenseEntriesPage = {
+  items: ExpenseEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type ExpenseSummary = {

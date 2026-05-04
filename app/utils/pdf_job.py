@@ -8,6 +8,14 @@ from app.utils.browser_pdf import build_pdf_export_page_url, render_url_to_pdf_b
 from app.utils.pdf_token import create_pdf_render_token
 
 
+def _is_production_env() -> bool:
+    # Explicit signal that should be set in real deployments.
+    if (os.getenv("ENV") or "").strip().lower() == "production":
+        return True
+    # Back-compat: Render sets this and existing deployments may rely on it.
+    return (os.getenv("RENDER") or "").strip().lower() in ("1", "true", "yes")
+
+
 def _frontend_pdf_base() -> str:
     raw = (os.getenv("FRONTEND_PDF_BASE_URL", "") or "").strip()
     if raw:
@@ -23,6 +31,10 @@ def _frontend_pdf_base() -> str:
     dev = (os.getenv("FRONTEND_DEV_URL", "") or "").strip().rstrip("/")
     if dev:
         return dev
+    if _is_production_env():
+        raise RuntimeError(
+            "FRONTEND_PDF_BASE_URL is required in production for PDF rendering (must be your deployed SPA origin)."
+        )
     return "http://127.0.0.1:5173"
 
 

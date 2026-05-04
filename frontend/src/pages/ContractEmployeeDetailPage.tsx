@@ -3,13 +3,13 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Modal } from "../components/ui/Modal";
-import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi, employeePaymentsApi } from "../services/endpoints";
+import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi, employeePaymentsApi, notificationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
-import type { ContractEmployeeDetail, ContractJob } from "../types/api";
+import type { ContractEmployeeDetail, ContractJob, NotificationItem } from "../types/api";
 import {
   getFinancialActivityClasses,
   getFinancialActivityColor,
@@ -47,6 +47,76 @@ function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   return <span className={[base, cls].join(" ")}>{label}</span>;
 }
 
+function NegotiationBadge({ state }: { state: "none" | "negotiating" | "accepted" }) {
+  if (state === "none") return null;
+  if (state === "accepted") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900 ring-1 ring-inset ring-emerald-200">
+        Accepted
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-900 ring-1 ring-inset ring-yellow-200">
+      Negotiating
+    </span>
+  );
+}
+
+function AcceptanceIndicator({ label }: { label: string | null }) {
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 ring-1 ring-inset ring-emerald-200">
+      {label}
+    </span>
+  );
+}
+
+function NewNegotiationBadge({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200">
+      New Negotiation
+    </span>
+  );
+}
+
+function firstNameFromFullName(fullName: string | null | undefined): string | null {
+  const s = String(fullName || "").trim();
+  if (!s) return null;
+  const first = s.split(/\\s+/)[0];
+  return first || null;
+}
+
+function getNegotiationUi(j: ContractJob) {
+  const needsBoth = Boolean((j as any).negotiation_occurred || (j as any).hasNegotiation);
+  const adminAccepted = Boolean((j as any).admin_accepted_at || (j as any).adminAccepted);
+  const empAccepted = Boolean((j as any).employee_accepted_at || (j as any).employeeAccepted);
+  const hasOffer = Boolean(j.price_offer != null);
+
+  const bothAccepted = hasOffer && needsBoth && adminAccepted && empAccepted;
+  const negotiating = hasOffer && needsBoth && !bothAccepted;
+  const state: "none" | "negotiating" | "accepted" = bothAccepted ? "accepted" : negotiating ? "negotiating" : "none";
+
+  const empFirst = firstNameFromFullName(j.contract_employee_name);
+  const acceptanceLabel =
+    state === "negotiating" && adminAccepted !== empAccepted
+      ? adminAccepted
+        ? "Accepted by Admin"
+        : `Accepted by ${empFirst || "Employee"}`
+      : null;
+
+  return { state, acceptanceLabel };
+}
+
+function isNegotiationNotification(n: NotificationItem): boolean {
+  return n.entity_type === "contract_job" && (n.kind === "price_updated" || n.kind === "price_accepted");
+}
+
+function getUnreadNotifsForJob(jobId: number, unreadNotifs: NotificationItem[]): NotificationItem[] {
+  return unreadNotifs.filter((n) => isNegotiationNotification(n) && Number(n.entity_id) === Number(jobId));
+}
+
 export function ContractEmployeeDetailPage() {
   const auth = useAuth();
   const toast = useToast();
@@ -61,6 +131,7 @@ export function ContractEmployeeDetailPage() {
   const [detail, setDetail] = useState<ContractEmployeeDetail | null>(null);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
+  const [unreadNotifs, setUnreadNotifs] = useState<NotificationItem[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignDesc, setAssignDesc] = useState("");
   const [assignPrice, setAssignPrice] = useState("");
@@ -75,6 +146,10 @@ export function ContractEmployeeDetailPage() {
   const [payRequestId, setPayRequestId] = useState<number | null>(null);
   const [payNowAmt, setPayNowAmt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [adminPayAmt, setAdminPayAmt] = useState("");
+  const [adminPayJobId, setAdminPayJobId] = useState<number | null>(null);
+  const [adminPayNote, setAdminPayNote] = useState("");
+  const [adminPayBusy, setAdminPayBusy] = useState(false);
 
   const [reverseTargetId, setReverseTargetId] = useState<number | null>(null);
   const [reverseReason, setReverseReason] = useState("");
@@ -119,6 +194,34 @@ export function ContractEmployeeDetailPage() {
       alive = false;
     };
   }, [id, toast]);
+
+  useEffect(() => {
+    if (auth.role !== "admin") {
+      setUnreadNotifs([]);
+      return;
+    }
+    let alive = true;
+    async function refreshNotifs() {
+      try {
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
+        if (!alive) return;
+        setUnreadNotifs(Array.isArray(res?.items) ? (res.items as NotificationItem[]) : []);
+      } catch {
+        if (!alive) return;
+        setUnreadNotifs([]);
+      }
+    }
+
+    const onUpdated = () => void refreshNotifs();
+    window.addEventListener("furniture:notifications-updated", onUpdated as any);
+    void refreshNotifs();
+    const iv = window.setInterval(() => void refreshNotifs(), 12_000);
+    return () => {
+      alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as any);
+      window.clearInterval(iv);
+    };
+  }, [auth.role]);
 
   const title = useMemo(() => detail?.full_name ?? "Contract employee", [detail?.full_name]);
   const inProgressJobs = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
@@ -323,8 +426,21 @@ export function ContractEmployeeDetailPage() {
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="font-semibold">Job #{j.id}</div>
-                                <JobStatusBadge status={j.status} />
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  <JobStatusBadge status={j.status} />
+                                  <NewNegotiationBadge show={getUnreadNotifsForJob(j.id, unreadNotifs).length > 0} />
+                                </div>
                               </div>
+                              {(() => {
+                                const ui = getNegotiationUi(j);
+                                if (ui.state === "none") return null;
+                                return (
+                                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                                    <NegotiationBadge state={ui.state} />
+                                    <AcceptanceIndicator label={ui.acceptanceLabel} />
+                                  </div>
+                                );
+                              })()}
                               <div className="mt-1 text-xs text-black/60">
                                 {j.description ? `Desc: ${j.description}` : ""}
                                 {j.description ? " • " : ""}
@@ -356,8 +472,21 @@ export function ContractEmployeeDetailPage() {
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="font-semibold">Job #{j.id}</div>
-                                <JobStatusBadge status={j.status} />
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  <JobStatusBadge status={j.status} />
+                                  <NewNegotiationBadge show={getUnreadNotifsForJob(j.id, unreadNotifs).length > 0} />
+                                </div>
                               </div>
+                              {(() => {
+                                const ui = getNegotiationUi(j);
+                                if (ui.state === "none") return null;
+                                return (
+                                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                                    <NegotiationBadge state={ui.state} />
+                                    <AcceptanceIndicator label={ui.acceptanceLabel} />
+                                  </div>
+                                );
+                              })()}
                               <div className="mt-1 text-xs text-black/60">
                                 {j.description ? `Desc: ${j.description}` : ""}
                                 {j.description ? " • " : ""}
@@ -392,9 +521,22 @@ export function ContractEmployeeDetailPage() {
                   <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="font-semibold">Job #{selectedJob.id}</div>
-                      <JobStatusBadge status={selectedJob.status} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <JobStatusBadge status={selectedJob.status} />
+                        <NewNegotiationBadge show={getUnreadNotifsForJob(selectedJob.id, unreadNotifs).length > 0} />
+                      </div>
                     </div>
                     <div className="mt-1 text-xs text-black/60 line-clamp-2">{(selectedJob.description || "").trim() || "—"}</div>
+                    {(() => {
+                      const ui = getNegotiationUi(selectedJob);
+                      if (ui.state === "none") return null;
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <NegotiationBadge state={ui.state} />
+                          <AcceptanceIndicator label={ui.acceptanceLabel} />
+                        </div>
+                      );
+                    })()}
                     <div className="mt-2 text-xs text-black/60">
                       Price:{" "}
                       <span className="font-semibold text-black tabular-nums">
@@ -629,6 +771,97 @@ export function ContractEmployeeDetailPage() {
                     </Button>
                   </div>
                 </Card>
+
+                {auth.role === "admin" ? (
+                  <Card className="!p-4">
+                    <div className="text-sm font-semibold text-black">Admin initiated payment (no request)</div>
+                    <div className="mt-2 text-xs text-black/55">
+                      Creates a payment in the Finance queue even when no employee request exists. Finance must still upload a receipt and confirm it.
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      <label className="text-xs font-semibold text-black/60">
+                        Amount (NGN)
+                        <input
+                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                          value={adminPayAmt}
+                          onChange={(e) => setAdminPayAmt(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          disabled={adminPayBusy}
+                        />
+                      </label>
+                      <label className="text-xs font-semibold text-black/60">
+                        Related job (optional)
+                        <select
+                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                          value={adminPayJobId ?? ""}
+                          onChange={(e) => setAdminPayJobId(e.target.value ? Number(e.target.value) : null)}
+                          disabled={adminPayBusy || jobs.length === 0}
+                        >
+                          <option value="">No job</option>
+                          {jobs
+                            .filter((j) => j.status !== "cancelled")
+                            .slice()
+                            .sort((a, b) => Number(b.id) - Number(a.id))
+                            .map((j) => (
+                              <option key={j.id} value={j.id}>
+                                Job #{j.id} • {j.status} • {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold text-black/60">
+                        Note (optional)
+                        <input
+                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                          value={adminPayNote}
+                          onChange={(e) => setAdminPayNote(e.target.value)}
+                          disabled={adminPayBusy}
+                          placeholder="Reference…"
+                        />
+                      </label>
+                      <Button
+                        isLoading={adminPayBusy}
+                        disabled={adminPayBusy}
+                        onClick={() => {
+                          const amt = parseMoneyInput(adminPayAmt);
+                          if (adminPayAmt.trim() && !isValidThousandsCommaNumber(adminPayAmt)) {
+                            toast.push("error", "Fix comma formatting in amount.");
+                            return;
+                          }
+                          if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                            toast.push("error", "Enter a valid amount (> 0).");
+                            return;
+                          }
+                          const balance = Number(detail.balance ?? 0);
+                          if (amt > balance) {
+                            toast.push("error", "Amount cannot exceed remaining balance.");
+                            return;
+                          }
+                          setAdminPayBusy(true);
+                          void contractEmployeesApi
+                            .initiatePaymentToFinance(detail.id, {
+                              amount: amt,
+                              contract_job_id: adminPayJobId ?? null,
+                              note: adminPayNote.trim() || null
+                            })
+                            .then(() => contractEmployeesApi.get(detail.id))
+                            .then((d) => {
+                              setDetail(d);
+                              setAdminPayAmt("");
+                              setAdminPayJobId(null);
+                              setAdminPayNote("");
+                              toast.push("success", "Sent to Finance.");
+                            })
+                            .catch((e) => toast.push("error", getErrorMessage(e)))
+                            .finally(() => setAdminPayBusy(false));
+                        }}
+                      >
+                        Send to Finance
+                      </Button>
+                    </div>
+                  </Card>
+                ) : null}
               </div>
 
               <Card className="!p-4">
@@ -779,6 +1012,18 @@ export function ContractEmployeeDetailPage() {
                         <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset", cls.ring].join(" ")}>
                           {statusLabel}
                         </span>
+                        {t.txn_type === "payment" && (t as any).initiated_by ? (
+                          <span
+                            className={[
+                              "ml-2 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+                              (t as any).initiated_by === "admin"
+                                ? "bg-blue-100 text-blue-900 ring-blue-200"
+                                : "bg-purple-100 text-purple-900 ring-purple-200"
+                            ].join(" ")}
+                          >
+                            {(t as any).initiated_by === "admin" ? "Admin initiated" : "Employee requested"}
+                          </span>
+                        ) : null}
                       </div>
                       {typeof t.running_balance !== "undefined" && t.running_balance !== null && Number(t.running_balance) < 0 ? (
                         <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900">

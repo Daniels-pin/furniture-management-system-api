@@ -130,8 +130,8 @@ def compute_contract_employee_financials(
         total_owed = _as_decimal(owed_sum)
 
     # Payments:
-    # Only include finance-confirmed (best-effort).
-    # - Primary: processed_by_role='finance'
+    # Include "confirmed" paid payments (best-effort).
+    # - Primary: processed_by_role in ('finance', 'admin')
     # - Legacy fallback: receipt_url present
     reversed_payment_ids = _get_reversed_payment_ids(db, contract_employee_id)
 
@@ -142,7 +142,7 @@ def compute_contract_employee_financials(
             models.EmployeeTransaction.txn_type == "payment",
             models.EmployeeTransaction.status == "paid",
             or_(
-                models.EmployeeTransaction.processed_by_role == "finance",
+                models.EmployeeTransaction.processed_by_role.in_(["finance", "admin"]),
                 models.EmployeeTransaction.receipt_url.isnot(None),
             ),
         )

@@ -15,6 +15,7 @@ from app import models
 from app.auth.auth import normalize_role, require_role
 from app.database import get_db
 from app.schemas import ExpenseEntryCreate, ExpenseEntryOut, ExpenseSummaryOut, ExpenseEntryUpdate
+from app.schemas import ExpenseEntriesPageOut
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 
@@ -58,6 +59,42 @@ def list_expenses(
             )
         )
     return out
+
+
+@router.get("/page", response_model=ExpenseEntriesPageOut)
+def list_expenses_page(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    total = int(db.query(func.count(models.ExpenseEntry.id)).scalar() or 0)
+    rows = (
+        db.query(models.ExpenseEntry)
+        .order_by(models.ExpenseEntry.entry_date.desc(), models.ExpenseEntry.id.desc())
+        .offset(int(offset))
+        .limit(int(limit))
+        .all()
+    )
+    items: list[ExpenseEntryOut] = []
+    for r in rows:
+        processed_by = None
+        if r.processed_by_user:
+            processed_by = (r.processed_by_user.email or "").split("@")[0] if r.processed_by_user.email else None
+        items.append(
+            ExpenseEntryOut(
+                id=r.id,
+                entry_date=r.entry_date,
+                amount=_as_decimal(r.amount),
+                entry_type=r.entry_type,
+                note=r.note,
+                receipt_url=r.receipt_url,
+                processed_by_role=r.processed_by_role,
+                processed_by=processed_by,
+                created_at=r.created_at,
+            )
+        )
+    return ExpenseEntriesPageOut(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/summary", response_model=ExpenseSummaryOut)

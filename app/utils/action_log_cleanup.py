@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -35,16 +36,26 @@ def purge_action_logs_older_than(
     removed = 0
 
     while True:
-        ids = (
-            db.execute(
-                select(models.ActionLog.id)
-                .where(models.ActionLog.created_at < cutoff)
-                .order_by(models.ActionLog.id)
-                .limit(batch_size)
+        try:
+            ids = (
+                db.execute(
+                    select(models.ActionLog.id)
+                    .where(models.ActionLog.created_at < cutoff)
+                    .order_by(models.ActionLog.id)
+                    .limit(batch_size)
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+        except ProgrammingError as e:
+            # If migrations haven't been applied yet, `action_logs` may not exist.
+            # Treat this as a no-op so startup/background tasks don't error-loop.
+            msg = str(e).lower()
+            if "action_logs" in msg and ("does not exist" in msg or "undefinedtable" in msg):
+                db.rollback()
+                logger.warning("Skipping action_logs cleanup because table does not exist yet")
+                return 0
+            raise
         if not ids:
             break
         res = db.execute(delete(models.ActionLog).where(models.ActionLog.id.in_(ids)))

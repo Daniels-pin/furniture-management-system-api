@@ -56,8 +56,7 @@ import type {
   ContractEmployeeMe,
   EmployeeTransaction,
   ContractJob,
-  PendingEmployeePayments
-  ,
+  PendingEmployeePayments,
   ContractEmployeeFinance,
   AdminJobsSummary,
   ExpenseEntry,
@@ -66,7 +65,8 @@ import type {
   DraftLatestResponse,
   DraftModule,
   DraftSummary,
-  NotificationsPage
+  NotificationsPage,
+  ExpenseEntriesPage
 } from "../types/api";
 
 export const authApi = {
@@ -1011,6 +1011,13 @@ export const contractEmployeesApi = {
     const { data } = await api.post<EmployeeTransaction>(`/contract-employees/${employeeId}/payments/send-to-finance`, body);
     return data;
   },
+  async initiatePaymentToFinance(
+    employeeId: number,
+    body: { amount: string | number; contract_job_id?: number | null; note?: string | null }
+  ) {
+    const { data } = await api.post<EmployeeTransaction>(`/contract-employees/${employeeId}/payments/send-to-finance`, body);
+    return data;
+  },
   async remove(employeeId: number) {
     const { data } = await api.delete<{ action: "deleted" | "inactivated"; message: string }>(`/contract-employees/${employeeId}`);
     return data;
@@ -1259,6 +1266,13 @@ export const employeePaymentsApi = {
 export const expensesApi = {
   async list(params?: { limit?: number; offset?: number }) {
     const { data } = await api.get<ExpenseEntry[]>("/expenses", { params });
+    return data;
+  },
+  async page(params?: { limit?: number; offset?: number }) {
+    const qp: Record<string, any> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<ExpenseEntriesPage>("/expenses/page", { params: qp });
     return data;
   },
   async summary() {

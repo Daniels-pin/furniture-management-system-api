@@ -4,9 +4,9 @@
 
 1. Create env file:
    - Copy `.env.example` to `.env`
-   - Set `VITE_API_BASE_URL`:
-     - Dev: `http://localhost:8000`
-     - Prod: your deployed backend URL
+   - Set `VITE_API_URL` (or `VITE_API_BASE_URL`):
+     - Dev: `http://localhost:8000` (or use `.env.development`)
+     - Prod: your deployed backend URL (Vercel env recommended)
 
 2. Install and run:
 

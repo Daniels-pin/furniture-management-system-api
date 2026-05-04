@@ -43,9 +43,12 @@ def _to_out(
     emp: models.ContractEmployee,
     *,
     derived_totals: ContractEmployeeDerivedTotals | None = None,
+    initiated_by_by_txn_id: dict[int, str] | None = None,
 ) -> ContractEmployeeOut:
     total_paid = derived_totals.total_paid if derived_totals is not None else Decimal(str(emp.total_paid or 0))
     balance = derived_totals.balance if derived_totals is not None else Decimal(str(emp.balance or 0))
+    initiated_by_by_txn_id = initiated_by_by_txn_id or {}
+
     return ContractEmployeeOut(
         id=emp.id,
         full_name=emp.full_name,
@@ -56,7 +59,12 @@ def _to_out(
         status=emp.status,
         total_paid=total_paid,
         balance=balance,
-        transactions=[EmployeeTransactionOut.model_validate(t) for t in (emp.transactions or [])],
+        transactions=[
+            EmployeeTransactionOut.model_validate(
+                (setattr(t, "initiated_by", initiated_by_by_txn_id.get(int(t.id))) or t) if getattr(t, "id", None) else t
+            )
+            for t in (emp.transactions or [])
+        ],
         created_at=emp.created_at,
         updated_at=emp.updated_at,
     )
@@ -195,8 +203,28 @@ def get_contract_employee(
     emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
     if emp is None:
         raise HTTPException(status_code=404, detail="Contract employee not found")
+    initiated_by_by_txn_id: dict[int, str] = {}
+    try:
+        txns = list(emp.transactions or [])
+        payment_ids = [int(t.id) for t in txns if getattr(t, "txn_type", None) == "payment" and getattr(t, "id", None)]
+        if payment_ids:
+            requested_ids = {
+                int(eid)
+                for (eid,) in db.query(models.FinancialAuditLog.entity_id)
+                .filter(
+                    models.FinancialAuditLog.entity_type == "employee_transaction",
+                    models.FinancialAuditLog.action == "contract_employee_payment_requested",
+                    models.FinancialAuditLog.entity_id.in_(payment_ids),
+                )
+                .all()
+                if eid is not None
+            }
+            for tid in payment_ids:
+                initiated_by_by_txn_id[tid] = "employee" if tid in requested_ids else "admin"
+    except Exception:
+        initiated_by_by_txn_id = {}
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, initiated_by_by_txn_id=initiated_by_by_txn_id)
 
 
 @router.post("/financials/recalculate")
@@ -605,11 +633,14 @@ def send_contract_payment_to_finance(
             raise HTTPException(status_code=409, detail="This employee already has a payment pending in Finance.")
 
         base_note = str(body.note).strip() if (body.note is not None and str(body.note).strip()) else None
+        link_job_id = int(getattr(body, "contract_job_id", 0) or 0)
 
         # Full payment: transition the same request into Finance queue.
         if pay_amt == request_amt:
             if base_note is not None:
                 t.note = base_note
+            if link_job_id > 0:
+                t.contract_job_id = link_job_id
             # Allow same-record transition requested/approved_by_admin -> sent_to_finance
             t.status = "sent_to_finance"
             txn = t
@@ -630,6 +661,7 @@ def send_contract_payment_to_finance(
                 amount=pay_amt,
                 status="sent_to_finance",
                 note=finance_note,
+                contract_job_id=(link_job_id if link_job_id > 0 else None),
                 created_by_id=current_user.id,
                 processed_by_id=current_user.id,
                 processed_by_role="admin",
@@ -677,6 +709,7 @@ def send_contract_payment_to_finance(
             amount=amt,
             status="sent_to_finance",
             note=body.note,
+            contract_job_id=(int(getattr(body, "contract_job_id", 0) or 0) or None),
             created_by_id=current_user.id,
         )
         db.add(txn)

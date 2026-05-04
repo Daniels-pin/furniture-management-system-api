@@ -16,6 +16,9 @@ export function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<ExpenseEntry[]>([]);
   const [summary, setSummary] = useState<ExpenseSummary | null>(null);
+  const [offset, setOffset] = useState(0);
+  const pageLimit = 20;
+  const [total, setTotal] = useState(0);
 
   usePageHeader({
     title: "Expense / Petty Cash",
@@ -31,6 +34,7 @@ export function ExpensesPage() {
   const [receiptFor, setReceiptFor] = useState<ExpenseEntry | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<ExpenseEntry | null>(null);
 
   const [editFor, setEditFor] = useState<ExpenseEntry | null>(null);
   const [editAmount, setEditAmount] = useState("");
@@ -43,9 +47,12 @@ export function ExpensesPage() {
 
   const canPreview = useMemo(() => Boolean(previewUrl), [previewUrl]);
 
-  async function refresh() {
-    const [list, sum] = await Promise.all([expensesApi.list(), expensesApi.summary()]);
-    setRows(list);
+  async function refresh(next?: { offset?: number }) {
+    const nextOffset = typeof next?.offset === "number" ? next.offset : offset;
+    const [page, sum] = await Promise.all([expensesApi.page({ limit: pageLimit, offset: nextOffset }), expensesApi.summary()]);
+    setRows(page.items);
+    setTotal(page.total ?? 0);
+    setOffset(page.offset ?? nextOffset);
     setSummary(sum);
   }
 
@@ -54,7 +61,7 @@ export function ExpensesPage() {
     (async () => {
       setLoading(true);
       try {
-        await refresh();
+        await refresh({ offset: 0 });
       } catch (e) {
         toast.push("error", getErrorMessage(e));
       } finally {
@@ -65,6 +72,15 @@ export function ExpensesPage() {
       alive = false;
     };
   }, [toast]);
+
+  function isInteractiveTarget(target: EventTarget | null): boolean {
+    const el = target instanceof Element ? target : null;
+    if (!el) return false;
+    return Boolean(el.closest('a,button,input,select,textarea,label,[role="button"],[role="checkbox"]'));
+  }
+
+  const page = Math.floor(offset / pageLimit) + 1;
+  const totalPages = Math.max(1, Math.ceil((total || 0) / pageLimit));
 
   return (
     <div className="space-y-6">
@@ -192,7 +208,18 @@ export function ExpensesPage() {
           <>
             <div className="mt-3 md:hidden space-y-3">
               {rows.map((r) => (
-                <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div
+                  key={r.id}
+                  className="cursor-pointer rounded-2xl border border-black/10 bg-white p-4 hover:bg-black/[0.03]"
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => setDetailFor(r)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    setDetailFor(r);
+                  }}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-black/55">{new Date(r.entry_date).toLocaleDateString()}</div>
@@ -223,18 +250,33 @@ export function ExpensesPage() {
 
                   <div className="mt-3 space-y-2">
                     {r.receipt_url ? (
-                      <Button variant="secondary" className="w-full" onClick={() => setPreviewUrl(r.receipt_url ?? null)}>
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewUrl(r.receipt_url ?? null);
+                        }}
+                      >
                         Preview receipt
                       </Button>
                     ) : (
-                      <Button variant="secondary" className="w-full" onClick={() => setReceiptFor(r)}>
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReceiptFor(r);
+                        }}
+                      >
                         Upload receipt
                       </Button>
                     )}
                     <div className="grid grid-cols-2 gap-2">
                       <Button
                         variant="secondary"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setEditFor(r);
                           setEditAmount(String(r.amount ?? ""));
                           setEditType(r.entry_type);
@@ -243,11 +285,18 @@ export function ExpensesPage() {
                       >
                         Edit
                       </Button>
-                      <Button variant="danger" onClick={() => setDeleteFor(r)}>
+                      <Button
+                        variant="danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteFor(r);
+                        }}
+                      >
                         Delete
                       </Button>
                     </div>
                     <div className="text-right text-xs font-semibold text-black/45">
+                      {r.processed_by ? `${r.processed_by} • ` : ""}
                       {r.processed_by_role ?? "—"}
                     </div>
                   </div>
@@ -264,12 +313,27 @@ export function ExpensesPage() {
                   <th className="py-3 pr-4 text-right font-semibold">Amount</th>
                   <th className="py-3 pr-4 font-semibold">Note</th>
                   <th className="py-3 pr-4 font-semibold">Receipt</th>
+                  <th className="py-3 pr-4 font-semibold">Confirmed by</th>
                   <th className="py-3 pr-0 text-right font-semibold"> </th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-black/5">
+                  <tr
+                    key={r.id}
+                    className="border-b border-black/5 cursor-pointer hover:bg-black/[0.03]"
+                    role="link"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      if (isInteractiveTarget(e.target)) return;
+                      setDetailFor(r);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      setDetailFor(r);
+                    }}
+                  >
                     <td className="py-3 pr-4 text-xs font-semibold text-black/60">
                       {new Date(r.entry_date).toLocaleDateString()}
                     </td>
@@ -303,6 +367,9 @@ export function ExpensesPage() {
                         </Button>
                       )}
                     </td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">
+                      {r.processed_by ? r.processed_by : "—"} {r.processed_by_role ? `(${r.processed_by_role})` : ""}
+                    </td>
                     <td className="py-3 pr-0 text-right">
                       <div className="inline-flex flex-wrap justify-end gap-2">
                         <button
@@ -331,6 +398,40 @@ export function ExpensesPage() {
                 ))}
               </tbody>
             </table>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <div className="text-xs font-semibold text-black/55">
+                Page {page} of {totalPages}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={offset <= 0 || loading}
+                  onClick={() => {
+                    const next = Math.max(0, offset - pageLimit);
+                    setLoading(true);
+                    void refresh({ offset: next })
+                      .catch((e) => toast.push("error", getErrorMessage(e)))
+                      .finally(() => setLoading(false));
+                  }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={offset + pageLimit >= total || loading}
+                  onClick={() => {
+                    const next = offset + pageLimit;
+                    setLoading(true);
+                    void refresh({ offset: next })
+                      .catch((e) => toast.push("error", getErrorMessage(e)))
+                      .finally(() => setLoading(false));
+                  }}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </>
         )}
@@ -370,14 +471,53 @@ export function ExpensesPage() {
             <div className="rounded-2xl border border-black/10 overflow-hidden">
               <iframe title="Receipt preview" src={previewUrl} className="h-[70dvh] w-full" />
             </div>
-            <a
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
-              href={previewUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open in new tab
-            </a>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal open={detailFor !== null} title="Entry details" onClose={() => setDetailFor(null)}>
+        {detailFor ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-black/10 bg-white p-3 text-sm">
+              <div className="text-xs font-semibold text-black/55">Date/time</div>
+              <div className="mt-0.5 font-bold">{new Date(detailFor.entry_date).toLocaleString()}</div>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-black/55">Type</div>
+                  <div className="mt-0.5 font-semibold">{detailFor.entry_type === "credit" ? "Credit" : "Expense"}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-black/55">Amount</div>
+                  <div className="mt-0.5 font-extrabold tabular-nums">
+                    {detailFor.entry_type === "expense" ? "−" : "+"}
+                    {formatMoney(detailFor.amount)}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-xs font-semibold text-black/55">Confirmed by</div>
+                <div className="mt-0.5 font-semibold">
+                  {detailFor.processed_by ? detailFor.processed_by : "—"} {detailFor.processed_by_role ? `(${detailFor.processed_by_role})` : ""}
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-xs font-semibold text-black/55">Note</div>
+                <div className="mt-1 text-sm text-black/70 break-words">{detailFor.note ?? "—"}</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3 text-sm">
+              <div className="text-xs font-semibold text-black/55">Receipt</div>
+              <div className="mt-2">
+                {detailFor.receipt_url ? (
+                  <Button variant="secondary" onClick={() => setPreviewUrl(detailFor.receipt_url ?? null)}>
+                    Preview receipt
+                  </Button>
+                ) : (
+                  <div className="text-sm text-black/60">No receipt uploaded.</div>
+                )}
+              </div>
+            </div>
           </div>
         ) : null}
       </Modal>

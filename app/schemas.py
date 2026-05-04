@@ -1395,6 +1395,8 @@ class EmployeeTransactionOut(BaseModel):
     txn_type: EmployeeTxnType
     status: EmployeeTxnStatus
     processed_by_role: Optional[str] = None
+    processed_by: Optional[str] = None
+    initiated_by: Optional[Literal["admin", "employee"]] = None
     note: Optional[str] = None
     receipt_url: Optional[str] = None
     running_balance: Optional[Decimal] = None
@@ -1602,6 +1604,7 @@ class ContractEmployeeDecreaseOwed(BaseModel):
 class EmployeeSendPaymentToFinance(BaseModel):
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = Field(None, max_length=2000)
+    contract_job_id: Optional[int] = Field(None, gt=0)
 
     @field_validator("note", mode="before")
     @classmethod
@@ -1618,6 +1621,7 @@ class ContractEmployeeSendPaymentToFinanceIn(BaseModel):
     request_id: int = Field(..., gt=0, description="EmployeeTransaction.id of the payment request to send.")
     amount: Decimal = Field(..., gt=0, description="Amount to pay now (can be partial, must be <= request amount).")
     note: Optional[str] = Field(None, max_length=2000)
+    contract_job_id: Optional[int] = Field(None, gt=0)
 
     @field_validator("note", mode="before")
     @classmethod
@@ -1671,6 +1675,7 @@ class PendingEmployeePaymentItem(BaseModel):
     period_label: Optional[str] = None
     # When the item entered the finance queue (best-effort; falls back to transaction.created_at).
     sent_to_finance_at: Optional[datetime] = None
+    initiated_by: Optional[Literal["admin", "employee"]] = None
 
 
 class EmployeePaymentsPageOut(BaseModel):
@@ -1756,3 +1761,10 @@ class ExpenseSummaryOut(BaseModel):
     total_expenses: Decimal
     balance: Decimal
     today_total: Decimal
+
+
+class ExpenseEntriesPageOut(BaseModel):
+    items: List[ExpenseEntryOut]
+    total: int = 0
+    limit: int = 20
+    offset: int = 0

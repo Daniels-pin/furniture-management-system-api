@@ -39,6 +39,30 @@ def _as_decimal(v) -> Decimal:
 
 
 def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeePaymentItem:
+    # Expose "processed_by" as a friendly username (email local-part) when available.
+    processed_by = None
+    if getattr(t, "processed_by_user", None) is not None:
+        email = getattr(t.processed_by_user, "email", None)
+        if email:
+            processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
+    setattr(t, "processed_by", processed_by)
+
+    initiated_by: Optional[str] = None
+    if t.txn_type == "payment":
+        # Distinguish employee-requested vs admin-initiated:
+        # - Employee requests always create an audit log entry with action=contract_employee_payment_requested
+        # - Admin initiated payments (direct send-to-finance, bulk send, payroll, etc.) do not.
+        req_log = (
+            db.query(models.FinancialAuditLog.id)
+            .filter(
+                models.FinancialAuditLog.entity_type == "employee_transaction",
+                models.FinancialAuditLog.entity_id == t.id,
+                models.FinancialAuditLog.action == "contract_employee_payment_requested",
+            )
+            .first()
+        )
+        initiated_by = "employee" if req_log else "admin"
+
     # Prefer the audit log timestamp for when it was sent to Finance.
     sent_log = (
         db.query(models.FinancialAuditLog)
@@ -63,6 +87,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
             phone=(ce.phone if ce else None),
             period_label=None,
             sent_to_finance_at=sent_to_finance_at,
+            initiated_by=initiated_by,
         )
     emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
     period_label: Optional[str] = None
@@ -78,6 +103,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
         phone=(emp.phone if emp else None),
         period_label=period_label,
         sent_to_finance_at=sent_to_finance_at,
+        initiated_by=initiated_by,
     )
 
 
@@ -357,6 +383,26 @@ def payment_request_detail(
         raise HTTPException(status_code=404, detail="Transaction not found")
     if t.txn_type != "payment":
         raise HTTPException(status_code=400, detail="Only payment requests are supported here.")
+
+    # Augment transaction output with initiated_by (request vs admin initiated).
+    req_log = (
+        db.query(models.FinancialAuditLog.id)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id == t.id,
+            models.FinancialAuditLog.action == "contract_employee_payment_requested",
+        )
+        .first()
+    )
+    setattr(t, "initiated_by", "employee" if req_log else "admin")
+
+    # Augment transaction output with processed_by (who confirmed/processed it), when available.
+    processed_by = None
+    if getattr(t, "processed_by_user", None) is not None:
+        email = getattr(t.processed_by_user, "email", None)
+        if email:
+            processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
+    setattr(t, "processed_by", processed_by)
 
     employee_name = "Employee"
     bank_name: Optional[str] = None
