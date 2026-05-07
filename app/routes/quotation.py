@@ -369,7 +369,7 @@ def list_quotations(
 def create_quotation(
     payload: QuotationCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     email_val = str(payload.email).strip() if payload.email else None
     cid = _link_customer(db, payload.phone, email_val)
@@ -451,7 +451,7 @@ def update_quotation(
     quotation_id: int,
     payload: QuotationUpdate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     p = (
         db.query(models.Quotation)
@@ -537,7 +537,7 @@ def update_quotation(
 def finalize_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     p = (
         db.query(models.Quotation)

@@ -5,7 +5,7 @@ import { Input } from "../components/ui/Input";
 import { employeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import type { EmployeeDetail } from "../types/api";
+import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import { formatMoney } from "../utils/money";
 
 export function EmployeeSelfPage() {
@@ -23,6 +23,9 @@ export function EmployeeSelfPage() {
   const [notes, setNotes] = useState("");
   const [docLabel, setDocLabel] = useState("");
   const [docBusy, setDocBusy] = useState(false);
+  const [attBusy, setAttBusy] = useState(false);
+  const [attendance, setAttendance] = useState<EmployeeAttendanceEntry[]>([]);
+  const [clockRes, setClockRes] = useState<EmployeeClockInResponse | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -39,6 +42,13 @@ export function EmployeeSelfPage() {
         setBankName(d.bank_name ?? "");
         setAccountNumber(d.account_number ?? "");
         setNotes(d.notes ?? "");
+
+        try {
+          const rows = await employeesApi.myAttendance({ limit: 30, offset: 0 });
+          if (alive) setAttendance(rows);
+        } catch {
+          // non-fatal
+        }
       } catch (e: any) {
         const status = e?.response?.status;
         if (status === 404) {
@@ -54,6 +64,37 @@ export function EmployeeSelfPage() {
       alive = false;
     };
   }, [toast]);
+
+  async function refreshAttendance() {
+    try {
+      const rows = await employeesApi.myAttendance({ limit: 30, offset: 0 });
+      setAttendance(rows);
+    } catch (e) {
+      // non-fatal; show toast only when user explicitly interacts
+    }
+  }
+
+  async function clockIn() {
+    setAttBusy(true);
+    try {
+      const res = await employeesApi.clockInAttendance();
+      setClockRes(res);
+      await refreshAttendance();
+      if (res.status === "already_marked") {
+        toast.push("success", res.message || "Attendance already marked.");
+      } else if (res.status === "sunday") {
+        toast.push("success", res.message || "No attendance required today.");
+      } else if (res.status === "late") {
+        toast.push("success", "Clock-in recorded (Late). ₦500 lateness deduction applied.");
+      } else {
+        toast.push("success", "Clock-in recorded.");
+      }
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setAttBusy(false);
+    }
+  }
 
   function applyDetail(d: EmployeeDetail) {
     setEmp(d);
@@ -138,6 +179,9 @@ export function EmployeeSelfPage() {
   }
 
   const salary = emp.salary;
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const todayEntry = attendance.find((a) => a.attendance_date === todayKey) ?? null;
 
   return (
     <div className="space-y-6">
@@ -145,6 +189,68 @@ export function EmployeeSelfPage() {
         <div className="text-2xl font-bold tracking-tight">Employee Details</div>
         <div className="mt-1 text-sm text-black/60">Update your own contact and account information. Payroll lines are managed by admin.</div>
       </div>
+
+      <Card>
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+          <div>
+            <div className="text-sm font-semibold text-black">Attendance</div>
+            <p className="mt-1 text-xs text-black/55">
+              Mark attendance. Late coming attracts a ₦500 deduction.
+            </p>
+          </div>
+          <Button isLoading={attBusy} disabled={attBusy || Boolean(todayEntry)} onClick={() => void clockIn()}>
+            {todayEntry ? "Attendance already marked" : "Mark Attendance"}
+          </Button>
+        </div>
+
+        {todayEntry ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span
+              className={[
+                "rounded-full px-2 py-0.5 font-semibold",
+                todayEntry.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
+              ].join(" ")}
+            >
+              {todayEntry.is_late ? "Late" : "Present"}
+            </span>
+            <span className="text-black/60">
+              {new Date(todayEntry.check_in_at).toLocaleString()}
+              {todayEntry.is_late && typeof todayEntry.late_minutes === "number" ? ` · ${todayEntry.late_minutes} min late` : ""}
+            </span>
+          </div>
+        ) : clockRes?.status === "sunday" ? (
+          <div className="mt-3 text-sm font-semibold text-black/70">{clockRes.message ?? "Sundays are excluded."}</div>
+        ) : null}
+
+        <div className="mt-4">
+          <div className="text-xs font-semibold text-black/60">History</div>
+          {attendance.length === 0 ? (
+            <div className="mt-2 text-sm text-black/60">No attendance yet.</div>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {attendance.slice(0, 10).map((a) => (
+                <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/10 px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <div className="font-semibold">{a.attendance_date}</div>
+                    <div className="text-xs text-black/60">{new Date(a.check_in_at).toLocaleTimeString()}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={[
+                        "rounded-full px-2 py-0.5 text-xs font-semibold",
+                        a.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
+                      ].join(" ")}
+                    >
+                      {a.is_late ? "Late" : "Present"}
+                    </span>
+                    {a.is_late ? <span className="text-xs font-semibold text-red-800">₦500</span> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
 
       <Card>
         <div className="text-sm font-semibold text-black">Your profile</div>

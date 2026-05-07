@@ -119,7 +119,7 @@ export default function App() {
         <Route
           path="quotations/new"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <QuotationFormPage />
             </RequireAuth>
           }
@@ -127,7 +127,7 @@ export default function App() {
         <Route
           path="quotations/:quotationId/edit"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <QuotationFormPage />
             </RequireAuth>
           }
@@ -167,7 +167,7 @@ export default function App() {
         <Route
           path="proforma/new"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <ProformaFormPage />
             </RequireAuth>
           }
@@ -175,7 +175,7 @@ export default function App() {
         <Route
           path="proforma/:proformaId/edit"
           element={
-            <RequireAuth roles={["admin", "showroom"]}>
+            <RequireAuth roles={["admin", "showroom", "finance"]}>
               <ProformaFormPage />
             </RequireAuth>
           }

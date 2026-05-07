@@ -309,7 +309,7 @@ def list_proforma(
 def create_proforma(
     payload: ProformaCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     email_val = str(payload.email).strip() if payload.email else None
     cid = _link_customer(db, payload.phone, email_val)
@@ -390,7 +390,7 @@ def update_proforma(
     proforma_id: int,
     payload: ProformaUpdate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     p = (
         db.query(models.ProformaInvoice)
@@ -476,7 +476,7 @@ def update_proforma(
 def finalize_proforma(
     proforma_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     p = (
         db.query(models.ProformaInvoice)

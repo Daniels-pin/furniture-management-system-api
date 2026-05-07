@@ -337,7 +337,7 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
-            {auth.role === "admin" || auth.role === "showroom" ? (
+            {auth.role === "admin" || auth.role === "showroom" || auth.role === "finance" ? (
               <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>

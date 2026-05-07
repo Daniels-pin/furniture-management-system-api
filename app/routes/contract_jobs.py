@@ -77,6 +77,12 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
     if employee_name is None:
         ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == j.contract_employee_id).first()
         employee_name = (ce.full_name if ce else None)
+    events = (
+        db.query(models.ContractJobNegotiationEvent)
+        .filter(models.ContractJobNegotiationEvent.contract_job_id == j.id)
+        .order_by(models.ContractJobNegotiationEvent.created_at.asc(), models.ContractJobNegotiationEvent.id.asc())
+        .all()
+    )
     return ContractJobOut(
         id=j.id,
         contract_employee_id=j.contract_employee_id,
@@ -106,7 +112,21 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         cancelled_note=j.cancelled_note,
         paid_flag=bool(getattr(j, "paid_flag", False) or amount_paid > 0),
         linked_transactions=[EmployeeTransactionOut.model_validate(t) for t in tx],
+        negotiation_history=[models_to_schema_event(e) for e in events],
     )
+
+
+def models_to_schema_event(e: models.ContractJobNegotiationEvent):
+    # Avoid importing schema class at module import time; `ContractJobOut` resolves it.
+    return {
+        "id": e.id,
+        "kind": e.kind,
+        "offer_price": _as_decimal(e.offer_price),
+        "note": (e.note or None),
+        "actor_user_id": getattr(e, "actor_user_id", None),
+        "actor_role": (getattr(e, "actor_role", None) or None),
+        "created_at": e.created_at,
+    }
 
 
 def _get_job_or_404(db: Session, job_id: int) -> models.ContractJob:
@@ -148,7 +168,14 @@ def _role_key(user: models.User) -> str:
     return role
 
 
-def _set_offer(db: Session, job: models.ContractJob, *, new_offer: Decimal, actor: models.User) -> None:
+def _set_offer(
+    db: Session,
+    job: models.ContractJob,
+    *,
+    new_offer: Decimal,
+    actor: models.User,
+    note: str | None = None,
+) -> None:
     if new_offer <= 0:
         raise HTTPException(status_code=400, detail="price_offer must be > 0")
     if job.status == "cancelled":
@@ -169,6 +196,19 @@ def _set_offer(db: Session, job: models.ContractJob, *, new_offer: Decimal, acto
     # Any new offer resets acceptance (until final lock).
     job.admin_accepted_at = None
     job.employee_accepted_at = None
+
+    # Append-only negotiation history event (optional note).
+    db.add(
+        models.ContractJobNegotiationEvent(
+            contract_job_id=job.id,
+            kind="offer_update",
+            offer_price=_as_decimal(new_offer),
+            note=(note or "").strip() or None,
+            actor_user_id=getattr(actor, "id", None),
+            actor_role=_role_key(actor),
+            created_at=datetime.utcnow(),
+        )
+    )
 
 
 def _is_ready_to_lock(job: models.ContractJob) -> bool:
@@ -537,7 +577,7 @@ def admin_set_offer(
     current_user=Depends(require_role(["admin"])),
 ):
     j = _get_job_or_404(db, job_id)
-    _set_offer(db, j, new_offer=Decimal(str(body.price_offer)), actor=current_user)
+    _set_offer(db, j, new_offer=Decimal(str(body.price_offer)), actor=current_user, note=(body.note or None))
     db.commit()
     db.refresh(j)
     ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == j.contract_employee_id).first()
@@ -689,7 +729,7 @@ def set_price_me(
         _assert_contract_employee_ready(ce, current_user)
     if j.status == "cancelled":
         raise HTTPException(status_code=409, detail="Job is cancelled.")
-    _set_offer(db, j, new_offer=Decimal(str(body.price_offer)), actor=current_user)
+    _set_offer(db, j, new_offer=Decimal(str(body.price_offer)), actor=current_user, note=(body.note or None))
     db.commit()
     db.refresh(j)
     # Notify admins so renegotiations are visible on the admin side.

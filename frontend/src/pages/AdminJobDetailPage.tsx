@@ -8,7 +8,7 @@ import { contractJobsApi, notificationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { formatMoney } from "../utils/money";
-import type { ContractJob, EmployeeTransaction } from "../types/api";
+import type { ContractJob, ContractJobNegotiationEvent, EmployeeTransaction } from "../types/api";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
@@ -52,6 +52,29 @@ function isPaidPaymentTxn(t: EmployeeTransaction) {
   return t.txn_type === "payment" && t.status === "paid";
 }
 
+function NegotiationHistory({ items }: { items: ContractJobNegotiationEvent[] }) {
+  if (!items.length) return <div className="mt-2 text-sm text-black/60">No negotiation notes yet.</div>;
+  const rows = [...items].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  return (
+    <ul className="mt-3 space-y-2">
+      {rows.map((e) => (
+        <li key={e.id} className="rounded-2xl border border-black/10 bg-white p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-black/60">
+              {e.actor_role === "admin" ? "Admin" : e.actor_role === "contract_employee" ? "Employee" : (e.actor_role || "User")}
+            </div>
+            <div className="text-xs font-semibold text-black/60">{new Date(e.created_at).toLocaleString()}</div>
+          </div>
+          <div className="mt-1 text-xs text-black/70">
+            Offer: <span className="font-semibold tabular-nums text-black">{formatMoney(e.offer_price)}</span>
+          </div>
+          {e.note ? <div className="mt-2 whitespace-pre-wrap text-sm text-black/80">{e.note}</div> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function AdminJobDetailPage() {
   const toast = useToast();
   const nav = useNavigate();
@@ -62,6 +85,7 @@ export function AdminJobDetailPage() {
   const [job, setJob] = useState<ContractJob | null>(null);
   const [renegotiateOpen, setRenegotiateOpen] = useState(false);
   const [renegotiatePrice, setRenegotiatePrice] = useState("");
+  const [renegotiateNote, setRenegotiateNote] = useState("");
   const [renegotiating, setRenegotiating] = useState(false);
 
   useEffect(() => {
@@ -212,6 +236,7 @@ export function AdminJobDetailPage() {
                       variant="secondary"
                       onClick={() => {
                         setRenegotiatePrice("");
+                        setRenegotiateNote("");
                         setRenegotiateOpen(true);
                       }}
                     >
@@ -310,6 +335,12 @@ export function AdminJobDetailPage() {
         </Card>
       </div>
 
+      <Card className="!p-4">
+        <div className="text-xs font-semibold text-black/55">Negotiation history</div>
+        <div className="mt-1 text-xs text-black/50">Offer updates and optional notes are visible to both parties.</div>
+        <NegotiationHistory items={Array.isArray(job.negotiation_history) ? job.negotiation_history : []} />
+      </Card>
+
       <Modal open={renegotiateOpen} title={job ? `Renegotiate price (Job #${job.id})` : "Renegotiate price"} onClose={() => (renegotiating ? null : setRenegotiateOpen(false))}>
         <div className="space-y-3">
           <div className="text-sm text-black/70">Enter a new offer price.</div>
@@ -319,6 +350,12 @@ export function AdminJobDetailPage() {
             onChange={(e) => setRenegotiatePrice(e.target.value)}
             inputMode="decimal"
             placeholder="0"
+          />
+          <Input
+            label="Note (optional)"
+            value={renegotiateNote}
+            onChange={(e) => setRenegotiateNote(e.target.value)}
+            placeholder="Add a short note (optional)…"
           />
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="ghost" disabled={renegotiating} onClick={() => setRenegotiateOpen(false)}>
@@ -339,7 +376,7 @@ export function AdminJobDetailPage() {
                 }
                 setRenegotiating(true);
                 void contractJobsApi
-                  .adminSetOffer(job.id, { price_offer: amt })
+                  .adminSetOffer(job.id, { price_offer: amt, note: renegotiateNote.trim() ? renegotiateNote.trim() : undefined })
                   .then((j) => setJob(j))
                   .then(() => toast.push("success", "Offer updated."))
                   .then(() => setRenegotiateOpen(false))

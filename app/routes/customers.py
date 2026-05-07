@@ -11,9 +11,15 @@ from app import models
 from app.auth.auth import forbid_factory, require_role
 from app.database import get_db
 from app.db.alive import customer_alive
-from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse
+from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse, CustomerUpdate
 
-from app.utils.activity_log import log_activity, username_from_email, CUSTOMER_CREATED, CUSTOMER_DELETED
+from app.utils.activity_log import (
+    log_activity,
+    username_from_email,
+    CUSTOMER_CREATED,
+    CUSTOMER_DELETED,
+    CUSTOMER_UPDATED,
+)
 
 router = APIRouter()
 
@@ -210,3 +216,69 @@ def delete_customer(
     customer.deleted_by_id = user.id
     db.commit()
     return {"message": "Customer moved to Trash"}
+
+
+@router.patch("/customers/{customer_id}", response_model=CustomerResponse)
+def update_customer(
+    customer_id: int,
+    patch: CustomerUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    customer = (
+        db.query(models.Customer)
+        .filter(models.Customer.id == customer_id)
+        .filter(customer_alive())
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    # PATCH semantics: only update fields that were actually provided by the client.
+    updated: dict[str, object] = {}
+    for field in patch.model_fields_set:
+        val = getattr(patch, field)
+        if field == "email":
+            updated[field] = str(val) if val is not None else None
+        else:
+            updated[field] = val
+
+    if not updated:
+        # No changes requested; still return current record.
+        return {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+            "email": customer.email,
+            "birth_day": customer.birth_day,
+            "birth_month": customer.birth_month,
+            "created_by": _creator_username(db, customer),
+        }
+
+    for k, v in updated.items():
+        setattr(customer, k, v)
+
+    db.commit()
+    db.refresh(customer)
+
+    log_activity(
+        db,
+        action=CUSTOMER_UPDATED,
+        entity_type="customer",
+        entity_id=customer.id,
+        actor_user=user,
+        meta={"fields": sorted(list(updated.keys()))},
+    )
+    db.commit()
+
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "address": customer.address,
+        "email": customer.email,
+        "birth_day": customer.birth_day,
+        "birth_month": customer.birth_month,
+        "created_by": _creator_username(db, customer),
+    }

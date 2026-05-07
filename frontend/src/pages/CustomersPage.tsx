@@ -28,6 +28,17 @@ export function CustomersPage() {
   const canDelete = auth.role === "admin";
   const canExport = auth.role === "admin";
   const canCreate = auth.role === "admin" || auth.role === "showroom";
+  const canEdit = auth.role === "admin" || auth.role === "showroom";
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<Customer | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editBirthDay, setEditBirthDay] = useState("");
+  const [editBirthMonth, setEditBirthMonth] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -87,6 +98,58 @@ export function CustomersPage() {
     }
   }
 
+  function openEdit(c: Customer) {
+    setEditing(c);
+    setEditName(c.name ?? "");
+    setEditPhone(c.phone ?? "");
+    setEditAddress(c.address ?? "");
+    setEditEmail(c.email ?? "");
+    setEditBirthDay(c.birth_day != null ? String(c.birth_day) : "");
+    setEditBirthMonth(c.birth_month != null ? String(c.birth_month) : "");
+    setEditOpen(true);
+  }
+
+  async function submitEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+
+    const em = editEmail.trim();
+    if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      toast.push("error", "Enter a valid email or leave blank");
+      return;
+    }
+    const bd = editBirthDay.trim() ? Number(editBirthDay) : null;
+    const bm = editBirthMonth.trim() ? Number(editBirthMonth) : null;
+    if (bd !== null && (!Number.isFinite(bd) || bd < 1 || bd > 31)) {
+      toast.push("error", "Birth day must be between 1 and 31");
+      return;
+    }
+    if (bm !== null && (!Number.isFinite(bm) || bm < 1 || bm > 12)) {
+      toast.push("error", "Birth month must be between 1 and 12");
+      return;
+    }
+
+    setEditSubmitting(true);
+    try {
+      const updated = await customersApi.update(editing.id, {
+        name: editName.trim(),
+        phone: editPhone.trim(),
+        address: editAddress.trim(),
+        email: em ? em : null,
+        birth_day: bd,
+        birth_month: bm
+      });
+      setCustomers((xs) => xs.map((x) => (x.id === updated.id ? updated : x)));
+      toast.push("success", "Customer updated");
+      setEditOpen(false);
+      setEditing(null);
+    } catch (err) {
+      toast.push("error", getErrorMessage(err));
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
   function CustomerCard({ c, displayNumber }: { c: Customer; displayNumber: string }) {
     return (
       <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
@@ -98,8 +161,14 @@ export function CustomersPage() {
               <div className="mt-1 text-xs font-medium text-black/45">Added by {c.created_by}</div>
             ) : null}
           </div>
-          {canDelete ? (
-            <div className="shrink-0">
+          {canEdit || canDelete ? (
+            <div className="shrink-0 flex items-center gap-1">
+              {canEdit ? (
+                <Button variant="ghost" onClick={() => openEdit(c)}>
+                  Edit
+                </Button>
+              ) : null}
+              {canDelete ? (
               <Button
                 variant="ghost"
                 disabled={deletingId === c.id}
@@ -107,6 +176,7 @@ export function CustomersPage() {
               >
                 Delete
               </Button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -192,19 +262,25 @@ export function CustomersPage() {
                   ) : (
                     <th className="py-3 pr-0 font-semibold">Details</th>
                   )}
-                  {canDelete ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
+                  {canEdit || canDelete ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}>
+                    <td
+                      className="py-6 text-black/60"
+                      colSpan={canEdit || canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}
+                    >
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td className="py-6 text-black/60" colSpan={canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}>
+                    <td
+                      className="py-6 text-black/60"
+                      colSpan={canEdit || canDelete ? (canSeePrivate ? 6 : 4) : (canSeePrivate ? 5 : 3)}
+                    >
                       No customers found.
                     </td>
                   </tr>
@@ -229,11 +305,24 @@ export function CustomersPage() {
                         ) : (
                           <td className="py-3 pr-0 text-black/30">Hidden for factory role</td>
                         )}
-                        {canDelete ? (
+                        {canEdit || canDelete ? (
                           <td className="py-3 pr-0 text-right">
-                            <Button variant="ghost" disabled={deletingId === c.id} onClick={() => setConfirmDeleteId(c.id)}>
-                              Delete
-                            </Button>
+                            <div className="inline-flex items-center gap-1">
+                              {canEdit ? (
+                                <Button variant="ghost" onClick={() => openEdit(c)}>
+                                  Edit
+                                </Button>
+                              ) : null}
+                              {canDelete ? (
+                                <Button
+                                  variant="ghost"
+                                  disabled={deletingId === c.id}
+                                  onClick={() => setConfirmDeleteId(c.id)}
+                                >
+                                  Delete
+                                </Button>
+                              ) : null}
+                            </div>
                           </td>
                         ) : null}
                       </tr>
@@ -302,6 +391,55 @@ export function CustomersPage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={editOpen}
+        title={editing ? `Edit customer #${editing.id}` : "Edit customer"}
+        onClose={() => {
+          if (editSubmitting) return;
+          setEditOpen(false);
+          setEditing(null);
+        }}
+      >
+        <form className="space-y-3" onSubmit={submitEdit}>
+          <Input label="Name" value={editName} onChange={(e) => setEditName(e.target.value)} required />
+          <Input label="Phone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} required />
+          <Input label="Email (optional)" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Input
+              label="Birth day (optional)"
+              value={editBirthDay}
+              onChange={(e) => setEditBirthDay(e.target.value)}
+              inputMode="numeric"
+              placeholder="1-31"
+            />
+            <Input
+              label="Birth month (optional)"
+              value={editBirthMonth}
+              onChange={(e) => setEditBirthMonth(e.target.value)}
+              inputMode="numeric"
+              placeholder="1-12"
+            />
+          </div>
+          <Input label="Address" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} required />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={editSubmitting}
+              onClick={() => {
+                setEditOpen(false);
+                setEditing(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={editSubmitting} disabled={!editing}>
+              Save changes
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       <Modal open={exportOpen} title="Export customer contacts" onClose={() => setExportOpen(false)}>

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Float, Numeric, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, String, Float, Numeric, Text, UniqueConstraint, Date
 from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy.orm import relationship, backref
@@ -463,10 +463,17 @@ class Employee(Base):
     # JSON: [{ "id": str, "url": str, "label": str | null, "uploaded_at": str }]
     documents = Column(JSON, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user = relationship("User", backref=backref("employee_record", uselist=False))
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        backref=backref("employee_record", uselist=False),
+    )
+    deleted_by = relationship("User", foreign_keys=[deleted_by_id])
     lateness_entries = relationship(
         "EmployeeLatenessEntry",
         back_populates="employee",
@@ -529,6 +536,9 @@ class EmployeeLatenessEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
     period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Optional link to a daily attendance record (Monthly Employees attendance system).
+    # When set, attendance_id is unique to prevent duplicate lateness deductions for the same day.
+    attendance_id = Column(Integer, ForeignKey("employee_attendance_entries.id", ondelete="SET NULL"), nullable=True, index=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     voided_at = Column(DateTime, nullable=True, index=True)
@@ -537,8 +547,36 @@ class EmployeeLatenessEntry(Base):
 
     employee = relationship("Employee", back_populates="lateness_entries")
     period = relationship("SalaryPeriod")
+    attendance = relationship("EmployeeAttendanceEntry", back_populates="lateness_entry", foreign_keys=[attendance_id])
     voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
+
+class EmployeeAttendanceEntry(Base):
+    """Monthly employee attendance (manual clock-in; one row per employee per date; Sundays excluded by API rules)."""
+
+    __tablename__ = "employee_attendance_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    attendance_date = Column(Date, nullable=False, index=True)
+    check_in_at = Column(DateTime, nullable=False, index=True)
+    is_late = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    late_minutes = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (UniqueConstraint("employee_id", "attendance_date", name="uq_employee_attendance_emp_date"),)
+
+    employee = relationship("Employee")
+    period = relationship("SalaryPeriod")
+    lateness_entry = relationship(
+        "EmployeeLatenessEntry",
+        back_populates="attendance",
+        uselist=False,
+        primaryjoin="EmployeeAttendanceEntry.id==EmployeeLatenessEntry.attendance_id",
+    )
 
 class EmployeePenalty(Base):
     __tablename__ = "employee_penalties"
@@ -674,6 +712,37 @@ class ContractJob(Base):
         back_populates="contract_job",
         order_by="EmployeeTransaction.id",
     )
+    negotiation_events = relationship(
+        "ContractJobNegotiationEvent",
+        back_populates="contract_job",
+        cascade="all, delete-orphan",
+        order_by="ContractJobNegotiationEvent.id",
+    )
+
+
+class ContractJobNegotiationEvent(Base):
+    """Append-only negotiation timeline for a contract job (offer updates + optional notes)."""
+
+    __tablename__ = "contract_job_negotiation_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contract_job_id = Column(
+        Integer,
+        ForeignKey("contract_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # offer_update (future-proofed in case we add other negotiation timeline events later)
+    kind = Column(String(64), nullable=False, default="offer_update", server_default="offer_update", index=True)
+    offer_price = Column(Numeric(14, 2), nullable=False)
+    note = Column(String(2000), nullable=True)
+
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    actor_role = Column(String(64), nullable=True, index=True)  # admin | contract_employee | ...
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    contract_job = relationship("ContractJob", back_populates="negotiation_events")
+    actor_user = relationship("User", foreign_keys=[actor_user_id])
 
 
 class Notification(Base):

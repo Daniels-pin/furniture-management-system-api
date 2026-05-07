@@ -8,7 +8,7 @@ import { employeesApi, type EmployeePeriodParams } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { EmployeeDetail, EmployeeTransaction } from "../types/api";
+import type { EmployeeAttendanceEntry, EmployeeDetail, EmployeeTransaction } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
@@ -34,6 +34,8 @@ export function MonthlyEmployeeDetailPage() {
   const [detail, setDetail] = useState<EmployeeDetail | null>(null);
   const [txns, setTxns] = useState<EmployeeTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(false);
+  const [att, setAtt] = useState<EmployeeAttendanceEntry[]>([]);
+  const [attLoading, setAttLoading] = useState(false);
 
   const [sendNote, setSendNote] = useState("");
   const [sending, setSending] = useState(false);
@@ -42,7 +44,9 @@ export function MonthlyEmployeeDetailPage() {
   const [periodBaseSalary, setPeriodBaseSalary] = useState("");
   const [bonus, setBonus] = useState("");
   const [deduction, setDeduction] = useState("");
-  const [latePenalty, setLatePenalty] = useState("");
+  // UI shows (attendance lateness deductions + manual adjustment), but we only save/apply the manual adjustment
+  // to avoid double-deducting (lateness is already applied via salary.lateness_deduction).
+  const [latePenaltyTotal, setLatePenaltyTotal] = useState("");
   const [adjNote, setAdjNote] = useState("");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -93,7 +97,9 @@ export function MonthlyEmployeeDetailPage() {
         setPeriodBaseSalary(baseOverride != null ? String(baseOverride) : "");
         setBonus(String(d.salary.adjustment_bonus ?? 0));
         setDeduction(String(d.salary.adjustment_deduction ?? 0));
-        setLatePenalty(String(d.salary.adjustment_late_penalty ?? 0));
+        const latenessAuto = Number(d.salary.lateness_deduction ?? 0);
+        const latePenaltyAdj = Number(d.salary.adjustment_late_penalty ?? 0);
+        setLatePenaltyTotal(String(latenessAuto + latePenaltyAdj));
         // adjustment note is not currently returned in EmployeeDetail; keep local-only until refreshed via save.
         setAdjNote("");
       } catch (e) {
@@ -107,6 +113,26 @@ export function MonthlyEmployeeDetailPage() {
       alive = false;
     };
   }, [idNum, periodParams, nav, toast]);
+
+  useEffect(() => {
+    if (!Number.isFinite(idNum)) return;
+    let alive = true;
+    (async () => {
+      setAttLoading(true);
+      try {
+        const rows = await employeesApi.attendance(idNum, { limit: 60, offset: 0 });
+        if (!alive) return;
+        setAtt(rows);
+      } catch {
+        // non-fatal
+      } finally {
+        if (alive) setAttLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [idNum]);
 
   useEffect(() => {
     if (!Number.isFinite(idNum)) return;
@@ -138,14 +164,15 @@ export function MonthlyEmployeeDetailPage() {
         : baseFromApi;
     const entriesBonus = Number(detail.salary.bonuses_entries_total ?? detail.salary.bonuses_total ?? 0);
     const entriesPen = Number(detail.salary.penalties_entries_total ?? detail.salary.penalties_total ?? 0);
-    const lateness = Number(detail.salary.lateness_deduction ?? 0);
+    const lateness = Number(detail.salary.lateness_deduction ?? 0); // attendance-driven automatic deduction
 
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
     const b = parseMoneyInput(bonus) ?? 0;
     const d = parseMoneyInput(deduction) ?? 0;
-    const l = parseMoneyInput(latePenalty) ?? 0;
+    const lateTotal = parseMoneyInput(latePenaltyTotal) ?? 0;
+    const lateAdj = Math.max(0, lateTotal - lateness);
     const baseUsed = baseOverride != null ? baseOverride : baseFromInput;
-    const finalPayable = baseUsed + entriesBonus + b - (entriesPen + d + l) - lateness;
+    const finalPayable = baseUsed + entriesBonus + b - (entriesPen + d + lateAdj) - lateness;
     return {
       baseUsed,
       entriesBonus,
@@ -153,10 +180,11 @@ export function MonthlyEmployeeDetailPage() {
       lateness,
       bonus: b,
       deduction: d,
-      latePenalty: l,
+      latePenaltyTotal: lateTotal,
+      latePenaltyAdjustment: lateAdj,
       finalPayable
     };
-  }, [auth.role, detail, baseSalary, periodBaseSalary, bonus, deduction, latePenalty]);
+  }, [auth.role, detail, baseSalary, periodBaseSalary, bonus, deduction, latePenaltyTotal]);
 
   async function onSaveAdjustments() {
     if (!detail) return;
@@ -182,7 +210,7 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", "Fix comma formatting in deduction.");
       return;
     }
-    if (latePenalty.trim() && !isValidThousandsCommaNumber(latePenalty)) {
+    if (latePenaltyTotal.trim() && !isValidThousandsCommaNumber(latePenaltyTotal)) {
       toast.push("error", "Fix comma formatting in late penalty.");
       return;
     }
@@ -191,7 +219,9 @@ export function MonthlyEmployeeDetailPage() {
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
     const b = bonus.trim() ? parseMoneyInput(bonus) : 0;
     const d = deduction.trim() ? parseMoneyInput(deduction) : 0;
-    const l = latePenalty.trim() ? parseMoneyInput(latePenalty) : 0;
+    const latenessAuto = Number(detail.salary.lateness_deduction ?? 0);
+    const lateTotal = latePenaltyTotal.trim() ? parseMoneyInput(latePenaltyTotal) : 0;
+    const l = Math.max(0, (lateTotal ?? 0) - latenessAuto);
     if (empBase !== null && (Number.isNaN(empBase) || empBase < 0)) {
       toast.push("error", "Enter a valid base salary (≥ 0).");
       return;
@@ -237,6 +267,11 @@ export function MonthlyEmployeeDetailPage() {
       );
       setDetail(updated);
       setBaseSalary(String(updated.base_salary ?? desiredBase ?? ""));
+      setBonus(String(updated.salary.adjustment_bonus ?? b ?? 0));
+      setDeduction(String(updated.salary.adjustment_deduction ?? d ?? 0));
+      const nextLatenessAuto = Number(updated.salary.lateness_deduction ?? 0);
+      const nextLatePenaltyAdj = Number(updated.salary.adjustment_late_penalty ?? l ?? 0);
+      setLatePenaltyTotal(String(nextLatenessAuto + nextLatePenaltyAdj));
       toast.push("success", "Saved adjustments.");
     } catch (e) {
       toast.push("error", getErrorMessage(e));
@@ -266,6 +301,23 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", getErrorMessage(e));
     } finally {
       setSending(false);
+    }
+  }
+
+  async function removeEmployee() {
+    if (!detail) return;
+    if (auth.role !== "admin") {
+      toast.push("error", "Only Admin can remove employees.");
+      return;
+    }
+    const ok = await askConfirm("Delete employee", `Delete employee “${detail.full_name}”? This cannot be undone.`);
+    if (!ok) return;
+    try {
+      await employeesApi.remove(detail.id);
+      toast.push("success", "Employee removed.");
+      nav(`/employees?tab=monthly&year=${year}&month=${month}`);
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
     }
   }
 
@@ -304,6 +356,11 @@ export function MonthlyEmployeeDetailPage() {
           <Button variant="secondary" onClick={() => nav(backTo)}>
             Back
           </Button>
+          {isAdmin ? (
+            <Button variant="danger" onClick={() => void removeEmployee()}>
+              Delete employee
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -340,7 +397,52 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
-        <div className="text-xs font-semibold text-black/55">3. Payroll adjustment</div>
+        <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
+        <p className="mt-1 text-xs text-black/55">Mark attendance. Late coming attracts a ₦500 deduction.</p>
+        {attLoading ? (
+          <div className="mt-2 text-sm text-black/60">Loading…</div>
+        ) : att.length === 0 ? (
+          <div className="mt-2 text-sm text-black/60">No attendance yet.</div>
+        ) : (
+          <div className="mt-3 min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="text-black/60">
+                <tr className="border-b border-black/10">
+                  <th className="py-3 pr-4 font-semibold">Date</th>
+                  <th className="py-3 pr-4 font-semibold">Clock-in</th>
+                  <th className="py-3 pr-4 font-semibold">Status</th>
+                  <th className="py-3 pr-0 text-right font-semibold">Deduction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {att.slice(0, 30).map((a) => (
+                  <tr key={a.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                    <td className="py-3 pr-4 font-semibold">{a.attendance_date}</td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{new Date(a.check_in_at).toLocaleTimeString()}</td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={[
+                          "rounded-full px-2 py-0.5 text-xs font-semibold",
+                          a.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
+                        ].join(" ")}
+                      >
+                        {a.is_late ? "Late" : "Present"}
+                      </span>
+                      {a.is_late && typeof a.late_minutes === "number" ? (
+                        <span className="ml-2 text-xs font-semibold text-black/55">{a.late_minutes} min late</span>
+                      ) : null}
+                    </td>
+                    <td className="py-3 pr-0 text-right font-bold tabular-nums">{a.is_late ? "₦500" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="!p-4">
+        <div className="text-xs font-semibold text-black/55">4. Payroll adjustment</div>
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
             label="Base Salary — NGN"
@@ -380,8 +482,8 @@ export function MonthlyEmployeeDetailPage() {
           />
           <Input
             label="Late penalties (NGN)"
-            value={latePenalty}
-            onChange={(e) => setLatePenalty(e.target.value)}
+            value={latePenaltyTotal}
+            onChange={(e) => setLatePenaltyTotal(e.target.value)}
             inputMode="decimal"
             disabled={!isAdmin}
           />
@@ -412,7 +514,7 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
-        <div className="text-xs font-semibold text-black/55">4. Final payable summary ({detail.period.label})</div>
+        <div className="text-xs font-semibold text-black/55">5. Final payable summary ({detail.period.label})</div>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
             <div className="text-xs font-semibold text-black/60">Base</div>
@@ -428,7 +530,7 @@ export function MonthlyEmployeeDetailPage() {
           </div>
           <div className="rounded-xl border border-black/10 bg-amber-50/60 p-3">
             <div className="text-xs font-semibold text-amber-900/70">Late penalties</div>
-            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.latePenalty ?? 0)}</div>
+            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.latePenaltyTotal ?? 0)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
             <div className="text-xs font-semibold text-black/60">Existing payroll lines</div>
@@ -462,7 +564,7 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
-        <div className="text-xs font-semibold text-black/55">5. Transaction history ({detail.period.label})</div>
+        <div className="text-xs font-semibold text-black/55">6. Transaction history ({detail.period.label})</div>
         {txLoading ? (
           <div className="mt-2 text-sm text-black/60">Loading…</div>
         ) : txns.length === 0 ? (

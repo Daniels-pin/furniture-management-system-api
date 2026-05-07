@@ -192,6 +192,7 @@ export function AppLayout() {
   const location = useLocation();
   const nav = useNavigate();
   const pageHeader = usePageHeaderState();
+  const hideTopRightActions = auth.role === "contract_employee" && location.pathname === "/contract";
   const [exitImpLoading, setExitImpLoading] = useState(false);
   const [dueSoon, setDueSoon] = useState<number>(0);
   const [open, setOpen] = useState(false);
@@ -602,7 +603,12 @@ export function AppLayout() {
           </aside>
 
           <main className="min-w-0">
-            <div className="mb-4 flex flex-col gap-3 border-b border-black/10 pb-4 md:flex-row md:items-center md:justify-between">
+            <div
+              className={[
+                "mb-4 flex flex-col gap-3 border-b border-black/10 pb-4 md:flex-row md:items-center",
+                hideTopRightActions ? "md:justify-start" : "md:justify-between"
+              ].join(" ")}
+            >
               <div className="flex min-w-0 items-start gap-3">
                 <img
                   src={env.logoUrl || "/logo.png"}
@@ -619,349 +625,324 @@ export function AppLayout() {
                   ) : null}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <div className="relative" ref={notifWrapRef}>
-                  {!auth.token ? null : (
-                    <button
-                      type="button"
-                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                      aria-label={`Notifications${notifPage?.unread_count ? `: ${notifPage.unread_count}` : ""}`}
-                      onClick={() => void toggleNotifications()}
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path
-                          d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z"
-                          stroke="currentColor"
-                          strokeWidth="1.6"
-                        />
-                        <path
-                          d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
-                          stroke="currentColor"
-                          strokeWidth="1.6"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      <span
-                        className={[
-                          "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                          (notifPage?.unread_count ?? 0) > 0 ? "bg-indigo-600 text-white" : "bg-black/10 text-black/70"
-                        ].join(" ")}
-                      >
-                        {notifPage?.unread_count ?? 0}
-                      </span>
-                    </button>
-                  )}
-
-                  {notifOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
-                      <div className="flex items-center justify-between gap-2 px-4 py-3">
-                        <div className="text-sm font-semibold">Notifications</div>
-                        <button
-                          type="button"
-                          className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
-                          onClick={() => setNotifOpen(false)}
-                        >
-                          Close
-                        </button>
-                      </div>
-                      <div className="border-t border-black/10">
-                        {notifLoading ? (
-                          <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
-                        ) : !notifPage || !Array.isArray(notifPage.items) || notifPage.items.length === 0 ? (
-                          <div className="px-4 py-4 text-sm text-black/60">No notifications</div>
-                        ) : (
-                          <div className="max-h-[min(380px,70dvh)] overflow-y-auto overscroll-contain">
-                            <div className="divide-y divide-black/5">
-                              {notifPage.items.map((n) => (
-                                <button
-                                  key={n.id}
-                                  type="button"
-                                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                                  onClick={() => {
-                                    void notificationsApi
-                                      .markRead(n.id)
-                                      .then(() => notificationsApi.my({ limit: 30 }))
-                                      .then((res) => setNotifPage(res))
-                                      .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
-                                      .catch(() => null);
-                                  }}
-                                >
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-semibold">{n.title}</div>
-                                    {n.message ? <div className="mt-0.5 text-xs text-black/60">{n.message}</div> : null}
-                                    <div className="mt-1 text-[11px] font-semibold text-black/45">
-                                      {new Date(n.created_at).toLocaleString()}
-                                    </div>
-                                  </div>
-                                  <div className="shrink-0 text-[11px] font-bold text-black/50">
-                                    {n.read_at ? "Read" : "New"}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="flex items-center justify-between gap-2 border-t border-black/10 px-4 py-3">
-                          <button
-                            type="button"
-                            className="min-h-10 rounded-xl px-3 text-xs font-bold text-black/70 hover:bg-black/5"
-                            onClick={() => {
-                              void notificationsApi
-                                .markAllRead()
-                                .then(() => notificationsApi.my({ limit: 30 }))
-                                .then((res) => setNotifPage(res))
-                                .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
-                                .catch(() => null);
-                            }}
-                          >
-                            Mark all read
-                          </button>
-                          <div className="text-xs font-semibold text-black/50">Unread: {notifPage?.unread_count ?? 0}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                {auth.role === "contract_employee" ? (
-                  <button
-                    type="button"
-                    className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                    aria-label={`Assigned jobs${assignedJobsCount ? `: ${assignedJobsCount}` : ""}`}
-                    onClick={() => {
-                      nav("/contract?tab=jobs");
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                      <path d="M4 8V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.6" />
-                    </svg>
-                    <span
-                      className={[
-                        "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                        assignedJobsCount > 0 ? "bg-blue-600 text-white" : "bg-black/10 text-black/70"
-                      ].join(" ")}
-                    >
-                      {assignedJobsCount}
-                    </span>
-                  </button>
-                ) : null}
-                {auth.role === "admin" || auth.role === "finance" ? (
-                  <button
-                    type="button"
-                    className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                    aria-label={`Pending payment requests${pendingMoneyCount ? `: ${pendingMoneyCount}` : ""}`}
-                    onClick={() => {
-                      if (auth.role === "finance") nav("/finance");
-                      else nav("/employees?tab=contract");
-                    }}
-                  >
-                    <span className="text-base" aria-hidden>
-                      💰
-                    </span>
-                    <span
-                      className={[
-                        "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                        pendingMoneyCount > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
-                      ].join(" ")}
-                    >
-                      {pendingMoneyCount}
-                    </span>
-                  </button>
-                ) : null}
-                <div className="relative" ref={bWrapRef}>
-                  {auth.role === "factory" || auth.role === "finance" ? null : (
-                    <>
+              {!hideTopRightActions ? (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div className="relative" ref={notifWrapRef}>
+                    {!auth.token ? null : (
                       <button
-                        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                        aria-label="Birthdays today"
                         type="button"
-                        onClick={() => void toggleBirthdays()}
+                        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                        aria-label={`Notifications${notifPage?.unread_count ? `: ${notifPage.unread_count}` : ""}`}
+                        onClick={() => void toggleNotifications()}
                       >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                           <path
-                            d="M12 2c1.1 0 2 .9 2 2v2h-4V4c0-1.1.9-2 2-2Z"
+                            d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z"
                             stroke="currentColor"
                             strokeWidth="1.6"
                           />
                           <path
-                            d="M6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10Z"
+                            d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
                             stroke="currentColor"
                             strokeWidth="1.6"
                             strokeLinejoin="round"
                           />
-                          <path d="M5 10h14" stroke="currentColor" strokeWidth="1.6" />
                         </svg>
-                        <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] font-bold text-black/70">
-                          {Array.isArray(birthdays) ? birthdays.length : 0}
+                        <span
+                          className={[
+                            "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                            (notifPage?.unread_count ?? 0) > 0 ? "bg-indigo-600 text-white" : "bg-black/10 text-black/70"
+                          ].join(" ")}
+                        >
+                          {notifPage?.unread_count ?? 0}
                         </span>
                       </button>
+                    )}
 
-                      {bOpen ? (
-                        <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
-                          <div className="flex items-center justify-between px-4 py-3">
-                            <div className="text-sm font-semibold">Birthdays today</div>
-                            <button
-                              type="button"
-                              className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
-                              onClick={() => setBOpen(false)}
-                            >
-                              Close
-                            </button>
-                          </div>
-                          <div className="max-h-[min(360px,70dvh)] overflow-y-auto overscroll-contain border-t border-black/10">
-                            {birthdaysLoading ? (
-                              <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
-                            ) : !birthdays || birthdays.length === 0 ? (
-                              <div className="px-4 py-4 text-sm text-black/60">No birthdays today</div>
-                            ) : (
+                    {notifOpen ? (
+                      <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
+                        <div className="flex items-center justify-between gap-2 px-4 py-3">
+                          <div className="text-sm font-semibold">Notifications</div>
+                          <button
+                            type="button"
+                            className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
+                            onClick={() => setNotifOpen(false)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="border-t border-black/10">
+                          {notifLoading ? (
+                            <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
+                          ) : !notifPage || !Array.isArray(notifPage.items) || notifPage.items.length === 0 ? (
+                            <div className="px-4 py-4 text-sm text-black/60">No notifications</div>
+                          ) : (
+                            <div className="max-h-[min(380px,70dvh)] overflow-y-auto overscroll-contain">
                               <div className="divide-y divide-black/5">
-                                {birthdays.map((c) => (
+                                {notifPage.items.map((n) => (
                                   <button
-                                    key={c.id}
+                                    key={n.id}
                                     type="button"
-                                    className="flex min-h-12 w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
+                                    className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
                                     onClick={() => {
-                                      setBOpen(false);
-                                      nav("/customers");
+                                      void notificationsApi
+                                        .markRead(n.id)
+                                        .then(() => notificationsApi.my({ limit: 30 }))
+                                        .then((res) => setNotifPage(res))
+                                        .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
+                                        .catch(() => null);
                                     }}
                                   >
                                     <div className="min-w-0">
-                                      <div className="text-sm font-semibold">{c.name}</div>
-                                      <div className="mt-0.5 text-xs text-black/60">
-                                        {c.birth_day && c.birth_month ? `${c.birth_day}/${c.birth_month}` : "—"}
+                                      <div className="text-sm font-semibold">{n.title}</div>
+                                      {n.message ? <div className="mt-0.5 text-xs text-black/60">{n.message}</div> : null}
+                                      <div className="mt-1 text-[11px] font-semibold text-black/45">
+                                        {new Date(n.created_at).toLocaleString()}
                                       </div>
                                     </div>
-                                    <div className="shrink-0 text-xs font-semibold text-black/50">View</div>
+                                    <div className="shrink-0 text-[11px] font-bold text-black/50">{n.read_at ? "Read" : "New"}</div>
                                   </button>
                                 ))}
                               </div>
-                            )}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-2 border-t border-black/10 px-4 py-3">
+                            <button
+                              type="button"
+                              className="min-h-10 rounded-xl px-3 text-xs font-bold text-black/70 hover:bg-black/5"
+                              onClick={() => {
+                                void notificationsApi
+                                  .markAllRead()
+                                  .then(() => notificationsApi.my({ limit: 30 }))
+                                  .then((res) => setNotifPage(res))
+                                  .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
+                                  .catch(() => null);
+                              }}
+                            >
+                              Mark all read
+                            </button>
+                            <div className="text-xs font-semibold text-black/50">Unread: {notifPage?.unread_count ?? 0}</div>
                           </div>
                         </div>
-                      ) : null}
-                    </>
-                  )}
-                </div>
+                      </div>
+                    ) : null}
+                  </div>
 
-                {auth.role === "admin" || auth.role === "factory" ? (
-                  <button
-                    type="button"
-                    className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                    aria-label={`Low stock materials${lowStockCount ? `: ${lowStockCount}` : ""}`}
-                    onClick={() => nav("/inventory")}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                      <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="1.6" />
-                      <path d="M4 12h16" stroke="currentColor" strokeWidth="1.6" />
-                    </svg>
-                    <span
-                      className={[
-                        "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                        lowStockCount > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
-                      ].join(" ")}
-                    >
-                      {lowStockCount}
-                    </span>
-                  </button>
-                ) : null}
-
-                <div className="relative" ref={wrapRef}>
-                  {auth.role === "finance" ? null : (
+                  {auth.role === "contract_employee" ? (
                     <button
-                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
-                      aria-label="Due soon alerts"
                       type="button"
-                      onClick={() => void toggleBell()}
+                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      aria-label={`Assigned jobs${assignedJobsCount ? `: ${assignedJobsCount}` : ""}`}
+                      onClick={() => {
+                        nav("/contract?tab=jobs");
+                      }}
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                        <path
-                          d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z"
-                          stroke="currentColor"
-                          strokeWidth="1.6"
-                        />
-                        <path
-                          d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
-                          stroke="currentColor"
-                          strokeWidth="1.6"
-                          strokeLinejoin="round"
-                        />
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                        <path d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                        <path d="M4 8V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.6" />
                       </svg>
                       <span
                         className={[
                           "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                          showRed ? "bg-red-600 text-white" : "bg-black/10 text-black/70"
+                          assignedJobsCount > 0 ? "bg-blue-600 text-white" : "bg-black/10 text-black/70"
                         ].join(" ")}
                       >
-                        {dueSoon}
+                        {assignedJobsCount}
                       </span>
                     </button>
-                  )}
-
-                  {open ? (
-                    <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
-                      <div className="flex items-center justify-between px-4 py-3">
-                        <div className="text-sm font-semibold">Due soon</div>
-                        <button
-                          type="button"
-                          className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
-                          onClick={() => setOpen(false)}
-                        >
-                          Close
-                        </button>
-                      </div>
-                      <div className="max-h-[min(360px,70dvh)] overflow-y-auto overscroll-contain border-t border-black/10">
-                        {alertsLoading ? (
-                          <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
-                        ) : !alerts || alerts.orders.length === 0 ? (
-                          <div className="px-4 py-4 text-sm text-black/60">No upcoming due orders</div>
-                        ) : (
-                          <div className="divide-y divide-black/5">
-                            {alerts.orders.map((o) => (
-                              <button
-                                key={o.order_id}
-                                type="button"
-                                className="flex min-h-12 w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                                onClick={() => {
-                                  setOpen(false);
-                                  nav(`/orders/${o.order_id}`);
-                                }}
-                              >
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold">Order #{o.order_id}</div>
-                                  <div className="mt-0.5 text-xs text-black/60">
-                                    Due: {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
-                                    {o.customer?.name ? ` • ${o.customer.name}` : ""}
-                                  </div>
-                                </div>
-                                <div className="shrink-0">
-                                  <StatusBadge status={o.status} />
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
                   ) : null}
+
+                  {auth.role === "admin" || auth.role === "finance" ? (
+                    <button
+                      type="button"
+                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      aria-label={`Pending payment requests${pendingMoneyCount ? `: ${pendingMoneyCount}` : ""}`}
+                      onClick={() => {
+                        if (auth.role === "finance") nav("/finance");
+                        else nav("/employees?tab=contract");
+                      }}
+                    >
+                      <span className="text-base" aria-hidden>
+                        💰
+                      </span>
+                      <span
+                        className={[
+                          "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                          pendingMoneyCount > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                        ].join(" ")}
+                      >
+                        {pendingMoneyCount}
+                      </span>
+                    </button>
+                  ) : null}
+
+                  <div className="relative" ref={bWrapRef}>
+                    {auth.role === "factory" || auth.role === "finance" ? null : (
+                      <>
+                        <button
+                          className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                          aria-label="Birthdays today"
+                          type="button"
+                          onClick={() => void toggleBirthdays()}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 2c1.1 0 2 .9 2 2v2h-4V4c0-1.1.9-2 2-2Z" stroke="currentColor" strokeWidth="1.6" />
+                            <path d="M6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                            <path d="M5 10h14" stroke="currentColor" strokeWidth="1.6" />
+                          </svg>
+                          <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] font-bold text-black/70">
+                            {Array.isArray(birthdays) ? birthdays.length : 0}
+                          </span>
+                        </button>
+
+                        {bOpen ? (
+                          <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
+                            <div className="flex items-center justify-between px-4 py-3">
+                              <div className="text-sm font-semibold">Birthdays today</div>
+                              <button
+                                type="button"
+                                className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
+                                onClick={() => setBOpen(false)}
+                              >
+                                Close
+                              </button>
+                            </div>
+                            <div className="max-h-[min(360px,70dvh)] overflow-y-auto overscroll-contain border-t border-black/10">
+                              {birthdaysLoading ? (
+                                <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
+                              ) : !birthdays || birthdays.length === 0 ? (
+                                <div className="px-4 py-4 text-sm text-black/60">No birthdays today</div>
+                              ) : (
+                                <div className="divide-y divide-black/5">
+                                  {birthdays.map((c) => (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      className="flex min-h-12 w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
+                                      onClick={() => {
+                                        setBOpen(false);
+                                        nav("/customers");
+                                      }}
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-semibold">{c.name}</div>
+                                        <div className="mt-0.5 text-xs text-black/60">
+                                          {c.birth_day && c.birth_month ? `${c.birth_day}/${c.birth_month}` : "—"}
+                                        </div>
+                                      </div>
+                                      <div className="shrink-0 text-xs font-semibold text-black/50">View</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+
+                  {auth.role === "admin" || auth.role === "factory" ? (
+                    <button
+                      type="button"
+                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      aria-label={`Low stock materials${lowStockCount ? `: ${lowStockCount}` : ""}`}
+                      onClick={() => nav("/inventory")}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                        <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="1.6" />
+                        <path d="M4 12h16" stroke="currentColor" strokeWidth="1.6" />
+                      </svg>
+                      <span
+                        className={[
+                          "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                          lowStockCount > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
+                        ].join(" ")}
+                      >
+                        {lowStockCount}
+                      </span>
+                    </button>
+                  ) : null}
+
+                  <div className="relative" ref={wrapRef}>
+                    {auth.role === "finance" ? null : (
+                      <button
+                        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                        aria-label="Due soon alerts"
+                        type="button"
+                        onClick={() => void toggleBell()}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                          <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Z" stroke="currentColor" strokeWidth="1.6" />
+                          <path
+                            d="M18 9a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7Z"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        <span
+                          className={[
+                            "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                            showRed ? "bg-red-600 text-white" : "bg-black/10 text-black/70"
+                          ].join(" ")}
+                        >
+                          {dueSoon}
+                        </span>
+                      </button>
+                    )}
+
+                    {open ? (
+                      <div className="absolute right-0 z-20 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-3xl border border-black/10 bg-white shadow-soft">
+                        <div className="flex items-center justify-between px-4 py-3">
+                          <div className="text-sm font-semibold">Due soon</div>
+                          <button
+                            type="button"
+                            className="min-h-10 min-w-10 rounded-xl px-2 py-2 text-sm font-semibold text-black/70 hover:bg-black/5"
+                            onClick={() => setOpen(false)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <div className="max-h-[min(360px,70dvh)] overflow-y-auto overscroll-contain border-t border-black/10">
+                          {alertsLoading ? (
+                            <div className="px-4 py-4 text-sm text-black/60">Loading…</div>
+                          ) : !alerts || alerts.orders.length === 0 ? (
+                            <div className="px-4 py-4 text-sm text-black/60">No upcoming due orders</div>
+                          ) : (
+                            <div className="divide-y divide-black/5">
+                              {alerts.orders.map((o) => (
+                                <button
+                                  key={o.order_id}
+                                  type="button"
+                                  className="flex min-h-12 w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
+                                  onClick={() => {
+                                    setOpen(false);
+                                    nav(`/orders/${o.order_id}`);
+                                  }}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold">Order #{o.order_id}</div>
+                                    <div className="mt-0.5 text-xs text-black/60">
+                                      Due: {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
+                                      {o.customer?.name ? ` • ${o.customer.name}` : ""}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0">
+                                    <StatusBadge status={o.status} />
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
             <Outlet />
           </main>

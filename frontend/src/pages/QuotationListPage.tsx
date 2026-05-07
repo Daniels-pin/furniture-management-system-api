@@ -122,7 +122,7 @@ export function QuotationListPage() {
           <div className="mt-1 text-sm text-black/60">Early-stage pricing before proforma or invoice. Drafts: admin and showroom only.</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {auth.role === "admin" || auth.role === "showroom" ? (
+          {auth.role === "admin" || auth.role === "showroom" || auth.role === "finance" ? (
             <Button onClick={() => nav("/quotations/new")}>New quotation</Button>
           ) : null}
           <Button variant="secondary" onClick={() => void load()} isLoading={loading}>

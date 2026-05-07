@@ -62,6 +62,15 @@ export type CustomerCreate = {
   birth_month?: number | null;
 };
 
+export type CustomerUpdate = Partial<{
+  name: string;
+  phone: string;
+  address: string;
+  email: string | null;
+  birth_day: number | null;
+  birth_month: number | null;
+}>;
+
 export type OrderStatus = "pending" | "in_progress" | "completed" | "delivered";
 
 export type OrderCreateItem = {
@@ -530,8 +539,26 @@ export type EmployeeDocumentItem = {
 
 export type EmployeeLatenessEntry = {
   id: number;
+  attendance_id?: number | null;
   note?: string | null;
   created_at: string;
+};
+
+export type EmployeeAttendanceEntry = {
+  id: number;
+  employee_id: number;
+  period_id: number;
+  attendance_date: string; // YYYY-MM-DD
+  check_in_at: string;
+  is_late: boolean;
+  late_minutes?: number | null;
+  lateness_entry_id?: number | null;
+};
+
+export type EmployeeClockInResponse = {
+  status: "present" | "late" | "already_marked" | "sunday";
+  message?: string | null;
+  entry?: EmployeeAttendanceEntry | null;
 };
 
 export type EmployeePenalty = {
@@ -706,6 +733,16 @@ export type ContractEmployeeMe = {
 
 export type ContractJobStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
+export type ContractJobNegotiationEvent = {
+  id: number;
+  kind: string;
+  offer_price: string | number;
+  note?: string | null;
+  actor_user_id?: number | null;
+  actor_role?: string | null;
+  created_at: string;
+};
+
 export type ContractJob = {
   id: number;
   contract_employee_id: number;
@@ -735,6 +772,7 @@ export type ContractJob = {
   cancelled_note?: string | null;
   paid_flag: boolean;
   linked_transactions: EmployeeTransaction[];
+  negotiation_history?: ContractJobNegotiationEvent[];
 };
 
 export type AdminJobsSummary = {

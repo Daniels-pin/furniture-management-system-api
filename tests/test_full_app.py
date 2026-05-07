@@ -27,7 +27,7 @@ def test_create_user(client, admin_token):
     username = f"testuser_{uuid.uuid4().hex[:8]}@mail.com"
     response = client.post(
         "/users",
-        json={"username": username, "password": "123456", "role": "showroom"},
+        json={"username": username, "password": "pw123456", "role": "showroom"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200, response.text
@@ -318,12 +318,12 @@ def test_impersonation_forbidden_for_non_admin(client, admin_token):
     username = f"sw_{uuid.uuid4().hex[:8]}@mail.com"
     r = client.post(
         "/users",
-        json={"username": username, "password": "pw", "role": "showroom"},
+        json={"username": username, "password": "pw123456", "role": "showroom"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert r.status_code == 200, r.text
     uid = r.json()["id"]
-    lr = client.post("/auth/login", json={"email": username, "password": "pw"})
+    lr = client.post("/auth/login", json={"email": username, "password": "pw123456"})
     assert lr.status_code == 200, lr.text
     showroom_token = lr.json()["access_token"]
 

@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
+from datetime import date as date_type, time as time_type, timedelta, timezone
+from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -35,6 +38,8 @@ from app.schemas import (
     EmployeeSelfUpdate,
     EmployeeSendPaymentToFinance,
     EmployeeTransactionOut,
+    EmployeeAttendanceEntryOut,
+    EmployeeClockInOut,
     PayrollPeriodsNavOut,
     PayrollSummaryOut,
     SalaryPeriodOut,
@@ -43,6 +48,12 @@ from app.schemas import (
 router = APIRouter(prefix="/employees", tags=["Employees"])
 
 LATENESS_DEDUCTION_NAIRA = Decimal("500")
+try:
+    _ATTENDANCE_TZ = ZoneInfo("Africa/Lagos")
+except ZoneInfoNotFoundError:
+    # Windows dev environments may not ship tzdata. Fall back to fixed UTC+1 (Lagos, no DST).
+    _ATTENDANCE_TZ = timezone(timedelta(hours=1))
+_LATE_THRESHOLD = time_type(8, 10)  # 08:10 AM
 
 _MONTH_NAMES = (
     "",
@@ -83,6 +94,28 @@ def get_or_create_period(db: Session, year: int, month: int) -> models.SalaryPer
 
 def get_active_period(db: Session) -> Optional[models.SalaryPeriod]:
     return db.query(models.SalaryPeriod).filter(models.SalaryPeriod.is_active.is_(True)).first()
+
+
+def _now_local() -> datetime:
+    # Attendance is a real-world clock-in event; treat it as Africa/Lagos local time.
+    # This avoids surprising "late" results from UTC offsets.
+    return datetime.now(tz=_ATTENDANCE_TZ).replace(microsecond=0)
+
+
+def _is_sunday(d: date_type) -> bool:
+    # Python weekday(): Monday=0 ... Sunday=6
+    return d.weekday() == 6
+
+
+def _late_minutes(check_in_at: datetime) -> Optional[int]:
+    if check_in_at.tzinfo is None:
+        return None
+    threshold_dt = check_in_at.replace(hour=_LATE_THRESHOLD.hour, minute=_LATE_THRESHOLD.minute, second=0)
+    if check_in_at <= threshold_dt:
+        return 0
+    delta = check_in_at - threshold_dt
+    mins = int(delta.total_seconds() // 60)
+    return mins if mins > 0 else 0
 
 
 def _next_calendar_month(year: int, month: int) -> tuple[int, int]:
@@ -461,7 +494,12 @@ def payroll_summary(
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
     period = resolve_period(db, period_year, period_month)
-    emps = db.query(models.Employee).order_by(models.Employee.id.asc()).all()
+    emps = (
+        db.query(models.Employee)
+        .filter(models.Employee.deleted_at.is_(None))
+        .order_by(models.Employee.id.asc())
+        .all()
+    )
     lateness_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
     total_base = Decimal("0")
     total_lat = Decimal("0")
@@ -505,7 +543,7 @@ def list_employees(
     period = resolve_period(db, period_year, period_month)
     lateness_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
     payroll_map = _payroll_map_for_period(db, period.id)
-    q = db.query(models.Employee)
+    q = db.query(models.Employee).filter(models.Employee.deleted_at.is_(None))
     s = (search or "").strip()
     if s:
         q = q.filter(models.Employee.full_name.ilike(f"%{s}%"))
@@ -534,7 +572,12 @@ def export_employees_csv(
     period = resolve_period(db, period_year, period_month)
     lateness_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
     payroll_map = _payroll_map_for_period(db, period.id)
-    emps = db.query(models.Employee).order_by(models.Employee.full_name.asc()).all()
+    emps = (
+        db.query(models.Employee)
+        .filter(models.Employee.deleted_at.is_(None))
+        .order_by(models.Employee.full_name.asc())
+        .all()
+    )
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(
@@ -590,7 +633,11 @@ def get_my_employee(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.user_id == current_user.id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(
             status_code=404,
@@ -601,13 +648,193 @@ def get_my_employee(
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
 
 
+@router.post("/me/attendance/clock-in", response_model=EmployeeClockInOut)
+def clock_in_my_attendance(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Monthly employees only: record manual attendance for today (one per day; Sundays excluded).
+
+    When late (after 08:10), automatically creates one EmployeeLatenessEntry linked to this attendance row.
+    """
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
+
+    now = _now_local()
+    today = now.date()
+    if _is_sunday(today):
+        return EmployeeClockInOut(
+            status="sunday",
+            message="Sundays are excluded. No attendance is required today.",
+            entry=None,
+        )
+
+    existing = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(
+            models.EmployeeAttendanceEntry.employee_id == emp.id,
+            models.EmployeeAttendanceEntry.attendance_date == today,
+        )
+        .first()
+    )
+    if existing:
+        late_id = getattr(getattr(existing, "lateness_entry", None), "id", None)
+        out = EmployeeAttendanceEntryOut.model_validate(existing)
+        out.lateness_entry_id = int(late_id) if late_id is not None else None
+        return EmployeeClockInOut(
+            status="already_marked",
+            message=f"Attendance already marked at {existing.check_in_at.astimezone(_ATTENDANCE_TZ).strftime('%I:%M %p').lstrip('0')}.",
+            entry=out,
+        )
+
+    period = get_or_create_period(db, today.year, today.month)
+    mins = _late_minutes(now)
+    is_late = bool(mins and mins > 0)
+
+    att = models.EmployeeAttendanceEntry(
+        employee_id=emp.id,
+        period_id=period.id,
+        attendance_date=today,
+        check_in_at=now,
+        is_late=is_late,
+        late_minutes=int(mins) if mins is not None else None,
+    )
+    db.add(att)
+    db.flush()
+
+    lateness_entry_id: Optional[int] = None
+    if is_late:
+        # Prevent duplicates defensively (unique constraint also guards this).
+        existing_late = (
+            db.query(models.EmployeeLatenessEntry)
+            .filter(
+                models.EmployeeLatenessEntry.attendance_id == att.id,
+                models.EmployeeLatenessEntry.voided_at.is_(None),
+            )
+            .first()
+        )
+        if existing_late is None:
+            late_note = f"Late attendance: {today.isoformat()} (clock-in {now.astimezone(_ATTENDANCE_TZ).strftime('%H:%M')})"
+            le = models.EmployeeLatenessEntry(
+                employee_id=emp.id,
+                period_id=period.id,
+                attendance_id=att.id,
+                note=late_note,
+            )
+            db.add(le)
+            db.flush()
+            lateness_entry_id = int(le.id)
+
+    # Lightweight action log for audit (no retention issues since action_logs are already managed).
+    _log_payroll(
+        db,
+        "employee_attendance_clock_in",
+        att.id,
+        current_user,
+        {
+            "employee_id": emp.id,
+            "attendance_date": today.isoformat(),
+            "check_in_at": now.isoformat(),
+            "is_late": is_late,
+            "late_minutes": mins,
+            "period_id": period.id,
+            "lateness_entry_id": lateness_entry_id,
+        },
+    )
+    db.commit()
+    db.refresh(att)
+
+    out = EmployeeAttendanceEntryOut.model_validate(att)
+    out.lateness_entry_id = lateness_entry_id
+    return EmployeeClockInOut(
+        status="late" if is_late else "present",
+        message="Clock-in recorded.",
+        entry=out,
+    )
+
+
+@router.get("/me/attendance", response_model=list[EmployeeAttendanceEntryOut])
+def list_my_attendance(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    limit: int = Query(60, ge=1, le=366),
+    offset: int = Query(0, ge=0),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
+
+    rows = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(models.EmployeeAttendanceEntry.employee_id == emp.id)
+        .order_by(models.EmployeeAttendanceEntry.attendance_date.desc(), models.EmployeeAttendanceEntry.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    outs: list[EmployeeAttendanceEntryOut] = []
+    for r in rows:
+        o = EmployeeAttendanceEntryOut.model_validate(r)
+        late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
+        o.lateness_entry_id = int(late_id) if late_id is not None else None
+        outs.append(o)
+    return outs
+
+
+@router.get("/{employee_id}/attendance", response_model=list[EmployeeAttendanceEntryOut])
+def list_employee_attendance(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    limit: int = Query(60, ge=1, le=366),
+    offset: int = Query(0, ge=0),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    _assert_can_view(current_user, emp)
+
+    rows = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(models.EmployeeAttendanceEntry.employee_id == employee_id)
+        .order_by(models.EmployeeAttendanceEntry.attendance_date.desc(), models.EmployeeAttendanceEntry.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    outs: list[EmployeeAttendanceEntryOut] = []
+    for r in rows:
+        o = EmployeeAttendanceEntryOut.model_validate(r)
+        late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
+        o.lateness_entry_id = int(late_id) if late_id is not None else None
+        outs.append(o)
+    return outs
+
+
 @router.patch("/me", response_model=EmployeeOut)
 def patch_my_employee(
     body: EmployeeSelfUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.user_id == current_user.id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
     data = body.model_dump(exclude_unset=True)
@@ -631,7 +858,11 @@ def create_employee(
         u = db.query(models.User).filter(models.User.id == body.user_id).first()
         if not u:
             raise HTTPException(status_code=400, detail="Linked user does not exist")
-        taken = db.query(models.Employee).filter(models.Employee.user_id == body.user_id).first()
+        taken = (
+            db.query(models.Employee)
+            .filter(models.Employee.user_id == body.user_id, models.Employee.deleted_at.is_(None))
+            .first()
+        )
         if taken:
             raise HTTPException(status_code=400, detail="That user is already linked to another employee")
         # Ensure DB-required employee.full_name is present even if omitted (linked user completes later).
@@ -668,7 +899,11 @@ def get_employee(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     _assert_can_view(current_user, emp)
@@ -686,7 +921,11 @@ def patch_employee_period_payment(
     period_year: int = Query(..., ge=2000, le=2100),
     period_month: int = Query(..., ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = get_or_create_period(db, period_year, period_month)
@@ -750,7 +989,11 @@ def patch_employee_payroll_adjustments(
     period_month: int = Query(..., ge=1, le=12),
 ):
     """Update per-period payroll adjustments (base override, bonuses, deductions, late penalties)."""
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = get_or_create_period(db, period_year, period_month)
@@ -821,7 +1064,11 @@ def patch_employee_admin(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     data = body.model_dump(exclude_unset=True)
@@ -833,7 +1080,11 @@ def patch_employee_admin(
                 raise HTTPException(status_code=400, detail="Linked user does not exist")
             taken = (
                 db.query(models.Employee)
-                .filter(models.Employee.user_id == new_uid, models.Employee.id != employee_id)
+                .filter(
+                    models.Employee.user_id == new_uid,
+                    models.Employee.id != employee_id,
+                    models.Employee.deleted_at.is_(None),
+                )
                 .first()
             )
             if taken:
@@ -859,12 +1110,18 @@ def delete_employee(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
-    db.delete(emp)
+    emp.deleted_at = datetime.utcnow()
+    emp.deleted_by_id = current_user.id
+    emp.updated_at = datetime.utcnow()
     db.commit()
-    return {"message": "Employee deleted"}
+    return {"message": "Employee removed"}
 
 
 @router.post("/{employee_id}/lateness", response_model=EmployeeOut)
@@ -876,7 +1133,11 @@ def add_lateness_entry(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = resolve_period(db, period_year, period_month)
@@ -937,7 +1198,11 @@ def delete_lateness_entry(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -982,7 +1247,11 @@ def void_lateness_entry(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -999,7 +1268,11 @@ def add_penalty(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = resolve_period(db, period_year, period_month)
@@ -1065,7 +1338,11 @@ def delete_penalty(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1110,7 +1387,11 @@ def void_penalty(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1127,7 +1408,11 @@ def add_bonus(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = resolve_period(db, period_year, period_month)
@@ -1193,7 +1478,11 @@ def delete_bonus(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1238,7 +1527,11 @@ def void_bonus(
         actor_user=current_user,
         meta={"employee_id": employee_id, "period_id": period.id, "reason": row.void_reason},
     )
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp:
         emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1256,7 +1549,11 @@ async def upload_document(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     _assert_can_view(current_user, emp)
@@ -1293,7 +1590,11 @@ def delete_document(
     period_year: Optional[int] = Query(None, ge=2000, le=2100),
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     _assert_can_view(current_user, emp)
@@ -1326,7 +1627,11 @@ def send_monthly_payment_to_finance(
 
     This does NOT mark the payroll period paid until confirmed.
     """
-    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     period = get_or_create_period(db, period_year, period_month)
@@ -1409,7 +1714,11 @@ def list_employee_transactions(
     rows = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc()).all()
     outs: list[EmployeeTransactionOut] = [EmployeeTransactionOut.model_validate(r) for r in rows]
     if period_id is not None and role != "finance":
-        emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+        emp = (
+            db.query(models.Employee)
+            .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+            .first()
+        )
         period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
         if emp and period:
             lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)

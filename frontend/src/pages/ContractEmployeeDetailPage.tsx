@@ -284,6 +284,32 @@ export function ContractEmployeeDetailPage() {
     }
   }
 
+  // Keep jobs synchronized with the Jobs page:
+  // - refresh periodically (covers background changes, reassignment, payment updates)
+  // - refresh on notification updates (covers negotiation / assignment events)
+  useEffect(() => {
+    if (auth.role !== "admin") return;
+    if (!Number.isFinite(id)) return;
+    let alive = true;
+    async function tick() {
+      try {
+        const j = await contractJobsApi.listAdmin({ employee_id: id });
+        if (!alive) return;
+        setJobs(Array.isArray(j) ? j : []);
+      } catch {
+        // ignore (non-critical; manual refresh still available)
+      }
+    }
+    const onNotifUpdated = () => void tick();
+    window.addEventListener("furniture:notifications-updated", onNotifUpdated as any);
+    const iv = window.setInterval(() => void tick(), 10_000);
+    return () => {
+      alive = false;
+      window.removeEventListener("furniture:notifications-updated", onNotifUpdated as any);
+      window.clearInterval(iv);
+    };
+  }, [auth.role, id]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">

@@ -4,6 +4,7 @@ import type {
   ChangePasswordRequest,
   Customer,
   CustomerCreate,
+  CustomerUpdate,
   ImpersonateResponse,
   InvoiceDetail,
   InvoiceListItem,
@@ -44,6 +45,8 @@ import type {
   EmployeeCreatePayload,
   EmployeeDetail,
   EmployeeListItem,
+  EmployeeAttendanceEntry,
+  EmployeeClockInResponse,
   EmployeeAdminUpdatePayload,
   EmployeeSelfUpdatePayload,
   PayrollPeriodsNav,
@@ -160,6 +163,10 @@ export const customersApi = {
   },
   async create(payload: CustomerCreate) {
     const { data } = await api.post<Customer>("/customers", payload);
+    return data;
+  },
+  async update(customerId: number, patch: CustomerUpdate) {
+    const { data } = await api.patch<Customer>(`/customers/${customerId}`, patch);
     return data;
   },
   async delete(customerId: number) {
@@ -868,6 +875,18 @@ export const employeesApi = {
     const { data } = await api.patch<EmployeeDetail>("/employees/me", body);
     return data;
   },
+  async clockInAttendance() {
+    const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in");
+    return data;
+  },
+  async myAttendance(params?: { limit?: number; offset?: number }) {
+    const { data } = await api.get<EmployeeAttendanceEntry[]>("/employees/me/attendance", { params });
+    return data;
+  },
+  async attendance(employeeId: number, params?: { limit?: number; offset?: number }) {
+    const { data } = await api.get<EmployeeAttendanceEntry[]>(`/employees/${employeeId}/attendance`, { params });
+    return data;
+  },
   async get(employeeId: number, params?: EmployeePeriodParams) {
     const { data } = await api.get<EmployeeDetail>(`/employees/${employeeId}`, { params });
     return data;
@@ -1086,7 +1105,7 @@ export const contractJobsApi = {
     });
     return data;
   },
-  async adminSetOffer(jobId: number, body: { price_offer: string | number }) {
+  async adminSetOffer(jobId: number, body: { price_offer: string | number; note?: string | null }) {
     const { data } = await api.patch<ContractJob>(`/contract-jobs/${jobId}/offer`, body);
     return data;
   },
@@ -1106,7 +1125,7 @@ export const contractJobsApi = {
     const { data } = await api.post<ContractJob>("/contract-jobs/me", body);
     return data;
   },
-  async setPrice(jobId: number, body: { price_offer: string | number }) {
+  async setPrice(jobId: number, body: { price_offer: string | number; note?: string | null }) {
     const { data } = await api.post<ContractJob>(`/contract-jobs/${jobId}/set-price`, body);
     return data;
   },

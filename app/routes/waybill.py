@@ -275,7 +275,7 @@ def list_waybills(
 def create_waybill(
     payload: WaybillCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     order = (
         db.query(models.Order)

@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from pydantic import BaseModel, EmailStr, Field, computed_field, field_validator, model_validator
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Literal, Optional
 from enum import Enum
 
@@ -32,6 +32,19 @@ class CustomerCreate(BaseModel):
     email: Optional[EmailStr] = None
     birth_day: Optional[int] = Field(None, ge=1, le=31)
     birth_month: Optional[int] = Field(None, ge=1, le=12)
+
+
+class CustomerUpdate(BaseModel):
+    """PATCH payload for editing an existing customer (partial update)."""
+
+    name: Optional[str] = Field(None, min_length=1)
+    phone: Optional[str] = Field(None, min_length=1)
+    address: Optional[str] = Field(None, min_length=1)
+    # Allow setting email to null to clear it.
+    email: Optional[EmailStr] | None = None
+    # Allow setting birthdays to null to clear them.
+    birth_day: Optional[int] | None = Field(None, ge=1, le=31)
+    birth_month: Optional[int] | None = Field(None, ge=1, le=12)
 
 
 class CustomerPublicResponse(BaseModel):
@@ -1001,11 +1014,32 @@ class EmployeeDocumentItem(BaseModel):
 
 class EmployeeLatenessEntryOut(BaseModel):
     id: int
+    attendance_id: Optional[int] = None
     note: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class EmployeeAttendanceEntryOut(BaseModel):
+    id: int
+    employee_id: int
+    period_id: int
+    attendance_date: date
+    check_in_at: datetime
+    is_late: bool = False
+    late_minutes: Optional[int] = None
+    lateness_entry_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeClockInOut(BaseModel):
+    status: Literal["present", "late", "already_marked", "sunday"]
+    message: Optional[str] = None
+    entry: Optional[EmployeeAttendanceEntryOut] = None
 
 
 class EmployeePenaltyOut(BaseModel):
@@ -1502,10 +1536,32 @@ class ContractJobCreateEmployee(BaseModel):
 
 class ContractJobOfferUpdate(BaseModel):
     price_offer: Decimal = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _strip_note(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
 
 class ContractJobCancelBody(BaseModel):
     note: str = Field(..., min_length=1, max_length=4000)
+
+
+class ContractJobNegotiationEventOut(BaseModel):
+    id: int
+    kind: str
+    offer_price: Decimal
+    note: Optional[str] = None
+    actor_user_id: Optional[int] = None
+    actor_role: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class ContractJobOut(BaseModel):
@@ -1538,6 +1594,7 @@ class ContractJobOut(BaseModel):
     cancelled_note: Optional[str] = None
     paid_flag: bool = False
     linked_transactions: List[EmployeeTransactionOut] = []
+    negotiation_history: List[ContractJobNegotiationEventOut] = []
 
     class Config:
         from_attributes = True
