@@ -11,6 +11,7 @@ import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminActivityLogPage } from "./pages/AdminActivityLogPage";
 import { AdminJobsPage } from "./pages/AdminJobsPage";
 import { AdminJobDetailPage } from "./pages/AdminJobDetailPage";
+import { AdminCompanyLocationsPage } from "./pages/AdminCompanyLocationsPage";
 import { TrashPage } from "./pages/TrashPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { InventoryMaterialDetailPage } from "./pages/InventoryMaterialDetailPage";
@@ -349,6 +350,14 @@ export default function App() {
           element={
             <RequireAuth roles={["admin"]}>
               <AdminUsersPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="admin/locations"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <AdminCompanyLocationsPage />
             </RequireAuth>
           }
         />

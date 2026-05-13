@@ -4,6 +4,7 @@ import csv
 import io
 import uuid
 from datetime import datetime
+import math
 from decimal import Decimal
 from typing import Optional
 from datetime import date as date_type, time as time_type, timedelta, timezone
@@ -21,6 +22,9 @@ from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 from app.schemas import (
+    CompanyLocationOut,
+    EmployeeLocationAssignmentItemOut,
+    EmployeeLocationAssignmentPatchOut,
     EmployeeAdminUpdate,
     EmployeeBonusCreate,
     EmployeeBonusOut,
@@ -40,6 +44,8 @@ from app.schemas import (
     EmployeeTransactionOut,
     EmployeeAttendanceEntryOut,
     EmployeeClockInOut,
+    EmployeeClockInGeoIn,
+    EmployeeWorkLocationAssignIn,
     PayrollPeriodsNavOut,
     PayrollSummaryOut,
     SalaryPeriodOut,
@@ -116,6 +122,18 @@ def _late_minutes(check_in_at: datetime) -> Optional[int]:
     delta = check_in_at - threshold_dt
     mins = int(delta.total_seconds() // 60)
     return mins if mins > 0 else 0
+
+
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters."""
+    r = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def _next_calendar_month(year: int, month: int) -> tuple[int, int]:
@@ -347,6 +365,8 @@ def _employee_to_out(
         documents=emp.documents or [],
         user_id=emp.user_id,
         linked_username=linked_username,
+        work_location_id=getattr(emp, "work_location_id", None),
+        work_location=CompanyLocationOut.model_validate(emp.work_location) if getattr(emp, "work_location", None) else None,
         created_at=emp.created_at,
         updated_at=emp.updated_at,
         period=SalaryPeriodOut.model_validate(period),
@@ -757,6 +777,231 @@ def clock_in_my_attendance(
         entry=out,
     )
 
+
+@router.post("/me/attendance/clock-in-geo", response_model=EmployeeClockInOut)
+def clock_in_my_attendance_geo(
+    body: EmployeeClockInGeoIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Geo-validated monthly attendance clock-in (manual, one/day; Sundays excluded).
+
+    - Requires the employee to have an assigned CompanyLocation (work_location_id).
+    - Stores the employee coordinates and computed distance.
+    - When late (after 08:10), creates one EmployeeLatenessEntry linked to this attendance row (₦500 deduction is derived from lateness count).
+    """
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
+    if emp.work_location_id is None:
+        raise HTTPException(status_code=409, detail="No work location assigned. Contact an administrator.")
+
+    loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    if loc is None:
+        raise HTTPException(status_code=409, detail="Your assigned work location no longer exists. Contact an administrator.")
+
+    now = _now_local()
+    today = now.date()
+    if _is_sunday(today):
+        return EmployeeClockInOut(
+            status="sunday",
+            message="Sundays are excluded. No attendance is required today.",
+            entry=None,
+        )
+
+    existing = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(
+            models.EmployeeAttendanceEntry.employee_id == emp.id,
+            models.EmployeeAttendanceEntry.attendance_date == today,
+        )
+        .first()
+    )
+    if existing:
+        late_id = getattr(getattr(existing, "lateness_entry", None), "id", None)
+        out = EmployeeAttendanceEntryOut.model_validate(existing)
+        out.lateness_entry_id = int(late_id) if late_id is not None else None
+        return EmployeeClockInOut(
+            status="already_marked",
+            message=f"Attendance already marked at {existing.check_in_at.astimezone(_ATTENDANCE_TZ).strftime('%I:%M %p').lstrip('0')}.",
+            entry=out,
+        )
+
+    distance = _haversine_meters(float(body.latitude), float(body.longitude), float(loc.latitude), float(loc.longitude))
+    allowed = int(loc.allowed_radius_meters or 0)
+    if allowed <= 0:
+        raise HTTPException(status_code=409, detail="Assigned work location radius is not configured. Contact an administrator.")
+    if distance > float(allowed):
+        raise HTTPException(status_code=403, detail="You must be within your assigned work location to mark attendance.")
+
+    period = get_or_create_period(db, today.year, today.month)
+    mins = _late_minutes(now)
+    is_late = bool(mins and mins > 0)
+
+    att = models.EmployeeAttendanceEntry(
+        employee_id=emp.id,
+        period_id=period.id,
+        attendance_date=today,
+        check_in_at=now,
+        is_late=is_late,
+        late_minutes=int(mins) if mins is not None else None,
+        work_location_id=loc.id,
+        employee_latitude=float(body.latitude),
+        employee_longitude=float(body.longitude),
+        distance_meters=float(distance),
+    )
+    db.add(att)
+    db.flush()
+
+    lateness_entry_id: Optional[int] = None
+    if is_late:
+        existing_late = (
+            db.query(models.EmployeeLatenessEntry)
+            .filter(
+                models.EmployeeLatenessEntry.attendance_id == att.id,
+                models.EmployeeLatenessEntry.voided_at.is_(None),
+            )
+            .first()
+        )
+        if existing_late is None:
+            late_note = (
+                f"Late attendance: {today.isoformat()} (clock-in {now.astimezone(_ATTENDANCE_TZ).strftime('%H:%M')})"
+            )
+            le = models.EmployeeLatenessEntry(
+                employee_id=emp.id,
+                period_id=period.id,
+                attendance_id=att.id,
+                note=late_note,
+            )
+            db.add(le)
+            db.flush()
+            lateness_entry_id = int(le.id)
+
+    _log_payroll(
+        db,
+        "employee_attendance_clock_in_geo",
+        att.id,
+        current_user,
+        {
+            "employee_id": emp.id,
+            "attendance_date": today.isoformat(),
+            "check_in_at": now.isoformat(),
+            "is_late": is_late,
+            "late_minutes": mins,
+            "period_id": period.id,
+            "lateness_entry_id": lateness_entry_id,
+            "work_location_id": int(loc.id),
+            "employee_latitude": float(body.latitude),
+            "employee_longitude": float(body.longitude),
+            "distance_meters": float(distance),
+            "allowed_radius_meters": allowed,
+        },
+    )
+    db.commit()
+    db.refresh(att)
+
+    out = EmployeeAttendanceEntryOut.model_validate(att)
+    out.lateness_entry_id = lateness_entry_id
+    return EmployeeClockInOut(
+        status="late" if is_late else "present",
+        message="Clock-in recorded.",
+        entry=out,
+    )
+
+
+@router.patch("/{employee_id}/work-location", response_model=EmployeeOut)
+def assign_employee_work_location(
+    employee_id: int,
+    body: EmployeeWorkLocationAssignIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    loc_id = body.location_id
+    if loc_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+        if loc is None:
+            raise HTTPException(status_code=404, detail="Location not found")
+        emp.work_location_id = int(loc.id)
+    else:
+        emp.work_location_id = None
+
+    emp.updated_at = datetime.utcnow()
+    db.commit()
+
+    period = resolve_period(db, period_year, period_month)
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.get("/location-assignments", response_model=list[EmployeeLocationAssignmentItemOut])
+def list_employee_location_assignments(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "factory"])),
+    search: str = Query("", max_length=200),
+):
+    q = db.query(models.Employee).filter(models.Employee.deleted_at.is_(None))
+    s = (search or "").strip()
+    if s:
+        q = q.filter(models.Employee.full_name.ilike(f"%{s}%"))
+    rows = q.order_by(models.Employee.full_name.asc(), models.Employee.id.asc()).all()
+    return [
+        EmployeeLocationAssignmentItemOut(
+            id=e.id,
+            full_name=e.full_name,
+            work_location_id=getattr(e, "work_location_id", None),
+            work_location=CompanyLocationOut.model_validate(e.work_location) if getattr(e, "work_location", None) else None,
+        )
+        for e in rows
+    ]
+
+
+@router.patch("/{employee_id}/location-assignment", response_model=EmployeeLocationAssignmentPatchOut)
+def patch_employee_location_assignment(
+    employee_id: int,
+    body: EmployeeWorkLocationAssignIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "factory"])),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    loc_id = body.location_id
+    if loc_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+        if loc is None:
+            raise HTTPException(status_code=404, detail="Location not found")
+        emp.work_location_id = int(loc.id)
+    else:
+        emp.work_location_id = None
+
+    emp.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(emp)
+    return EmployeeLocationAssignmentPatchOut(
+        id=emp.id,
+        full_name=emp.full_name,
+        work_location_id=getattr(emp, "work_location_id", None),
+        work_location=CompanyLocationOut.model_validate(emp.work_location) if getattr(emp, "work_location", None) else None,
+    )
 
 @router.get("/me/attendance", response_model=list[EmployeeAttendanceEntryOut])
 def list_my_attendance(

@@ -1022,6 +1022,47 @@ class EmployeeLatenessEntryOut(BaseModel):
         from_attributes = True
 
 
+class CompanyLocationOut(BaseModel):
+    id: int
+    name: str
+    latitude: float
+    longitude: float
+    allowed_radius_meters: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CompanyLocationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    latitude: float
+    longitude: float
+    allowed_radius_meters: int = Field(..., ge=1, le=200_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_name(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class CompanyLocationUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    allowed_radius_meters: Optional[int] = Field(None, ge=1, le=200_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_name_opt(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
 class EmployeeAttendanceEntryOut(BaseModel):
     id: int
     employee_id: int
@@ -1031,6 +1072,11 @@ class EmployeeAttendanceEntryOut(BaseModel):
     is_late: bool = False
     late_minutes: Optional[int] = None
     lateness_entry_id: Optional[int] = None
+    work_location_id: Optional[int] = None
+    employee_latitude: Optional[float] = None
+    employee_longitude: Optional[float] = None
+    distance_meters: Optional[float] = None
+    work_location: Optional[CompanyLocationOut] = None
 
     class Config:
         from_attributes = True
@@ -1040,6 +1086,32 @@ class EmployeeClockInOut(BaseModel):
     status: Literal["present", "late", "already_marked", "sunday"]
     message: Optional[str] = None
     entry: Optional[EmployeeAttendanceEntryOut] = None
+
+
+class EmployeeClockInGeoIn(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class EmployeeWorkLocationAssignIn(BaseModel):
+    location_id: Optional[int] = Field(
+        None,
+        description="CompanyLocation.id to assign; null clears the assignment",
+    )
+
+
+class EmployeeLocationAssignmentItemOut(BaseModel):
+    id: int
+    full_name: str
+    work_location_id: Optional[int] = None
+    work_location: Optional[CompanyLocationOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeLocationAssignmentPatchOut(EmployeeLocationAssignmentItemOut):
+    pass
 
 
 class EmployeePenaltyOut(BaseModel):
@@ -1122,6 +1194,8 @@ class EmployeeOut(BaseModel):
     documents: Optional[List[dict]] = None
     user_id: Optional[int] = None
     linked_username: Optional[str] = None
+    work_location_id: Optional[int] = None
+    work_location: Optional[CompanyLocationOut] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     period: SalaryPeriodOut

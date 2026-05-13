@@ -32,6 +32,7 @@ from app.routes.employee_payments import router as employee_payments_router
 from app.routes.expenses import router as expenses_router
 from app.routes.drafts import router as drafts_router
 from app.routes.notifications import router as notifications_router
+from app.routes.company_locations import router as company_locations_router
 
 logger = logging.getLogger(__name__)
 
@@ -153,4 +154,5 @@ app.include_router(employee_payments_router)
 app.include_router(expenses_router)
 app.include_router(drafts_router, tags=["Drafts"])
 app.include_router(notifications_router)
+app.include_router(company_locations_router)
 

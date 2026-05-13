@@ -431,6 +431,19 @@ class MachineActivity(Base):
     created_by_user = relationship("User", foreign_keys=[created_by_id])
 
 
+class CompanyLocation(Base):
+    """Reusable company-wide work locations for geo-attendance validation."""
+
+    __tablename__ = "company_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True, index=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    allowed_radius_meters = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class SalaryPeriod(Base):
     """Calendar month bucket for payroll (lateness, penalties, bonuses, payment status)."""
 
@@ -463,6 +476,8 @@ class Employee(Base):
     # JSON: [{ "id": str, "url": str, "label": str | null, "uploaded_at": str }]
     documents = Column(JSON, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
+    # Optional geo-attendance assigned work location (Monthly Employees only; enforced at API layer).
+    work_location_id = Column(Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True, index=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
     deleted_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -474,6 +489,7 @@ class Employee(Base):
         backref=backref("employee_record", uselist=False),
     )
     deleted_by = relationship("User", foreign_keys=[deleted_by_id])
+    work_location = relationship("CompanyLocation", foreign_keys=[work_location_id])
     lateness_entries = relationship(
         "EmployeeLatenessEntry",
         back_populates="employee",
@@ -565,12 +581,19 @@ class EmployeeAttendanceEntry(Base):
     is_late = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
     late_minutes = Column(Integer, nullable=True)
 
+    # Geo-attendance snapshot captured at clock-in (no manual entry).
+    work_location_id = Column(Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True, index=True)
+    employee_latitude = Column(Float, nullable=True)
+    employee_longitude = Column(Float, nullable=True)
+    distance_meters = Column(Float, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     __table_args__ = (UniqueConstraint("employee_id", "attendance_date", name="uq_employee_attendance_emp_date"),)
 
     employee = relationship("Employee")
     period = relationship("SalaryPeriod")
+    work_location = relationship("CompanyLocation", foreign_keys=[work_location_id])
     lateness_entry = relationship(
         "EmployeeLatenessEntry",
         back_populates="attendance",

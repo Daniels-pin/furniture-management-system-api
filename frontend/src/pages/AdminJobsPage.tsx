@@ -243,7 +243,8 @@ export function AdminJobsPage() {
   const [jobs, setJobs] = useState<ContractJob[]>([]);
   const [summary, setSummary] = useState<AdminJobsSummary | null>(null);
   const [unreadNotifs, setUnreadNotifs] = useState<NotificationItem[]>([]);
-  const [statusFilter, setStatusFilter] = useState<"active" | "all" | "pending" | "in_progress" | "completed">("active");
+  // Default to "all" to preserve visibility of historical (completed) jobs.
+  const [statusFilter, setStatusFilter] = useState<"active" | "all" | "pending" | "in_progress" | "completed">("all");
   const [assignOpen, setAssignOpen] = useState(false);
   const [employees, setEmployees] = useState<ContractEmployeeListItem[]>([]);
   const [assignEmployeeId, setAssignEmployeeId] = useState<string>("");
@@ -373,6 +374,33 @@ export function AdminJobsPage() {
     groups.sort((a, b) => b.maxActivity - a.maxActivity);
     return groups;
   }, [filteredJobs, unreadNotifs]);
+
+  useEffect(() => {
+    // Debugging hook: enable with `localStorage.setItem("debug_jobs", "1")`.
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem("debug_jobs") !== "1") return;
+    // eslint-disable-next-line no-console
+    console.debug("[Jobs debug]", {
+      jobs: jobs.length,
+      filtered: filteredJobs.length,
+      groups: grouped.length,
+      statusFilter,
+      summaryJobsTotal: summary?.jobs?.total ?? null
+    });
+  }, [jobs.length, filteredJobs.length, grouped.length, statusFilter, summary?.jobs?.total]);
+
+  useEffect(() => {
+    // Auto-expand employee groups once data arrives so existing jobs are immediately visible.
+    if (loading) return;
+    if (grouped.length === 0) return;
+    setExpandedEmp((prev) => {
+      // Only auto-expand on first arrival (avoid fighting user toggles).
+      if (prev && Object.keys(prev).length > 0) return prev;
+      const next: Record<string, boolean> = {};
+      for (const g of grouped) next[String(g.employeeId)] = true;
+      return next;
+    });
+  }, [loading, grouped]);
 
   const assignEmpSelected = useMemo(() => {
     const id = Number(assignEmployeeId);
@@ -659,11 +687,7 @@ export function AdminJobsPage() {
         <div className="space-y-3">
           <div className="relative">
             <Input
-              label={
-                <span>
-                  Assign to employee <span className="text-red-600">*</span>
-                </span>
-              }
+              label="Assign to employee"
               value={assignEmployeeQuery}
               onChange={(e) => {
                 setAssignEmployeeQuery(e.target.value);
@@ -678,6 +702,9 @@ export function AdminJobsPage() {
                 window.setTimeout(() => setAssignEmployeeDropdownOpen(false), 120);
               }}
             />
+            <div className="mt-1 text-xs font-semibold text-black/60">
+              Required <span className="text-red-600">*</span>
+            </div>
 
             {assignEmpSelected ? (
               <div className="mt-1 text-xs font-semibold text-black/60">

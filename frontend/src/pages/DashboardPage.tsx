@@ -102,7 +102,22 @@ export function DashboardPage() {
   async function markAttendance() {
     setAttBusy(true);
     try {
-      const res = await employeesApi.clockInAttendance();
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!("geolocation" in navigator)) {
+          reject(new Error("Geolocation is not supported on this device."));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15_000,
+          maximumAge: 0
+        });
+      });
+
+      const res = await employeesApi.clockInAttendanceGeo({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude
+      });
       setClockRes(res);
       await refreshAttendance();
       if (res.status === "already_marked") {
@@ -115,7 +130,13 @@ export function DashboardPage() {
         toast.push("success", "Attendance marked.");
       }
     } catch (e) {
-      toast.push("error", getErrorMessage(e));
+      const msg = getErrorMessage(e);
+      // Browser geolocation errors are inconsistent; keep a clear message for the core requirement.
+      if (typeof msg === "string" && /permission|denied|geolocation/i.test(msg)) {
+        toast.push("error", "Location access is required to mark attendance.");
+      } else {
+        toast.push("error", msg);
+      }
     } finally {
       setAttBusy(false);
     }
@@ -133,9 +154,20 @@ export function DashboardPage() {
             <div>
               <div className="text-sm font-semibold text-black">Attendance</div>
               <p className="mt-1 text-xs text-black/55">Mark attendance. Late coming attracts a ₦500 deduction.</p>
+              {emp.work_location ? (
+                <p className="mt-1 text-xs font-semibold text-black/60">
+                  Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m)
+                </p>
+              ) : (
+                <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>
+              )}
             </div>
-            <Button isLoading={attBusy} disabled={attBusy || Boolean(todayEntry)} onClick={() => void markAttendance()}>
-              {todayEntry ? "Attendance already marked" : "Mark Attendance"}
+            <Button
+              isLoading={attBusy}
+              disabled={attBusy || Boolean(todayEntry) || !emp.work_location}
+              onClick={() => void markAttendance()}
+            >
+              {todayEntry ? "Attendance already marked" : attBusy ? "Checking location…" : "Mark Attendance"}
             </Button>
           </div>
 
@@ -166,7 +198,11 @@ export function DashboardPage() {
                   <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/10 px-3 py-2 text-sm">
                     <div className="min-w-0">
                       <div className="font-semibold">{a.attendance_date}</div>
-                      <div className="text-xs text-black/60">{new Date(a.check_in_at).toLocaleTimeString()}</div>
+                      <div className="text-xs text-black/60">
+                        {new Date(a.check_in_at).toLocaleTimeString()}
+                        {a.work_location?.name ? ` · ${a.work_location.name}` : ""}
+                        {typeof a.distance_meters === "number" ? ` · ${Math.round(a.distance_meters)}m` : ""}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <span

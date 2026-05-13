@@ -3,13 +3,15 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
-import { contractEmployeesApi, employeePaymentsApi, employeesApi } from "../services/endpoints";
+import { companyLocationsApi, contractEmployeesApi, employeePaymentsApi, employeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type {
+  CompanyLocation,
   ContractEmployeeListItem,
   EmployeeListItem,
+  EmployeeLocationAssignmentItem,
   EmployeeTransaction,
   PayrollPeriodsNav,
   PayrollSummary,
@@ -83,33 +85,255 @@ export function EmployeesPage() {
       auth.role === "finance"
         ? "Review pending payments, upload receipts, and finalize payments."
         : auth.role === "factory"
-          ? "Create employee records only. Payroll, payments, and employee lists are restricted."
+          ? "Assign saved company locations to monthly employees."
         : "Monthly payroll and contract employees, with a controlled Admin → Finance workflow."
   });
 
   if (auth.role === "factory") {
+    const factoryTab = (searchParams.get("tab") || "assign_locations") as "assign_locations" | "create";
+    const [assignLoading, setAssignLoading] = useState(true);
+    const [assignRows, setAssignRows] = useState<EmployeeLocationAssignmentItem[]>([]);
+    const [assignSearch, setAssignSearch] = useState("");
+    const [locsLoading, setLocsLoading] = useState(true);
+    const [locs, setLocs] = useState<CompanyLocation[]>([]);
+    const [savingEmployeeId, setSavingEmployeeId] = useState<number | null>(null);
+
+    function setFactoryTab(next: "assign_locations" | "create") {
+      const sp = new URLSearchParams(searchParams);
+      sp.set("tab", next);
+      setSearchParams(sp, { replace: true });
+    }
+
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        setLocsLoading(true);
+        try {
+          const rows = await companyLocationsApi.list();
+          if (!alive) return;
+          setLocs(rows);
+        } catch (e) {
+          // non-fatal: still allow viewing employees
+        } finally {
+          if (alive) setLocsLoading(false);
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [toast]);
+
+    useEffect(() => {
+      if (factoryTab !== "assign_locations") return;
+      let alive = true;
+      (async () => {
+        setAssignLoading(true);
+        try {
+          const rows = await employeesApi.listLocationAssignments({ search: assignSearch.trim() || undefined });
+          if (!alive) return;
+          setAssignRows(rows);
+        } catch (e) {
+          toast.push("error", getErrorMessage(e));
+        } finally {
+          if (alive) setAssignLoading(false);
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [factoryTab, assignSearch, toast]);
+
+    async function saveAssignment(employeeId: number, locationId: number | null) {
+      setSavingEmployeeId(employeeId);
+      try {
+        const updated = await employeesApi.patchLocationAssignment(employeeId, { location_id: locationId });
+        setAssignRows((prev) => prev.map((r) => (r.id === employeeId ? updated : r)));
+        toast.push("success", "Location saved.");
+      } catch (e) {
+        toast.push("error", getErrorMessage(e));
+      } finally {
+        setSavingEmployeeId(null);
+      }
+    }
+
     return (
       <div className="space-y-6">
         <Card>
           <div className="text-lg font-bold tracking-tight">Employees</div>
-          <p className="mt-2 text-sm text-black/70">
-            Factory can only create employee records. Viewing employee lists, payroll, and payments is restricted.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              to="/contract-employees/new"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
+          <p className="mt-2 text-sm text-black/70">Assign saved company locations to monthly employees (geo-attendance uses this immediately).</p>
+          <div className="mt-4 inline-flex rounded-2xl border border-black/10 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setFactoryTab("assign_locations")}
+              className={[
+                "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                factoryTab === "assign_locations" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+              ].join(" ")}
             >
-              Create Contract Employee
-            </Link>
-            <Link
-              to="/employees/new"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+              Assign Locations
+            </button>
+            <button
+              type="button"
+              onClick={() => setFactoryTab("create")}
+              className={[
+                "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                factoryTab === "create" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+              ].join(" ")}
             >
-              Create Monthly Employee
-            </Link>
+              Create Employees
+            </button>
           </div>
         </Card>
+
+        {factoryTab === "create" ? (
+          <Card>
+            <div className="text-sm font-semibold">Create employee records</div>
+            <p className="mt-2 text-sm text-black/70">Factory can create employee records but cannot edit payroll, payments, or locations.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                to="/contract-employees/new"
+                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
+              >
+                Create Contract Employee
+              </Link>
+              <Link
+                to="/employees/new"
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+              >
+                Create Monthly Employee
+              </Link>
+            </div>
+          </Card>
+        ) : (
+          <Card>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <label className="flex flex-1 flex-col text-xs font-semibold text-black/60 sm:min-w-[220px]">
+                Search monthly employee
+                <input
+                  className="mt-1 rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                  value={assignSearch}
+                  onChange={(e) => setAssignSearch(e.target.value)}
+                  placeholder="Name…"
+                />
+              </label>
+              <Button
+                variant="secondary"
+                isLoading={assignLoading}
+                onClick={() => {
+                  setAssignLoading(true);
+                  void employeesApi
+                    .listLocationAssignments({ search: assignSearch.trim() || undefined })
+                    .then((rows) => setAssignRows(rows))
+                    .catch((e) => toast.push("error", getErrorMessage(e)))
+                    .finally(() => setAssignLoading(false));
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
+
+            {assignLoading ? (
+              <div className="mt-4 text-sm text-black/60">Loading…</div>
+            ) : assignRows.length === 0 ? (
+              <div className="mt-4 text-sm text-black/60">No employees found.</div>
+            ) : (
+              <>
+                <div className="mt-4 md:hidden space-y-3">
+                  {assignRows.map((r) => (
+                    <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="text-sm font-bold">{r.full_name}</div>
+                      <div className="mt-1 text-xs font-semibold text-black/55">
+                        Current: {r.work_location?.name ?? "No location assigned"}
+                      </div>
+                      <div className="mt-3 grid grid-cols-1 gap-2">
+                        <select
+                          className="w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                          disabled={locsLoading || savingEmployeeId === r.id}
+                          value={typeof r.work_location_id === "number" ? String(r.work_location_id) : "none"}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const nextId = v === "none" ? null : Number(v);
+                            setAssignRows((prev) =>
+                              prev.map((x) => (x.id === r.id ? { ...x, work_location_id: nextId } : x))
+                            );
+                          }}
+                        >
+                          <option value="none">No location assigned</option>
+                          {locs.map((l) => (
+                            <option key={l.id} value={String(l.id)}>
+                              {l.name}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="secondary"
+                          isLoading={savingEmployeeId === r.id}
+                          disabled={savingEmployeeId === r.id}
+                          onClick={() => void saveAssignment(r.id, typeof r.work_location_id === "number" ? r.work_location_id : null)}
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 hidden md:block min-w-0 overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-left text-sm">
+                    <thead className="text-black/60">
+                      <tr className="border-b border-black/10">
+                        <th className="py-3 pr-4 font-semibold">Employee</th>
+                        <th className="py-3 pr-4 font-semibold">Assigned Location</th>
+                        <th className="py-3 pr-0 text-right font-semibold"> </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assignRows.map((r) => (
+                        <tr key={r.id} className="border-b border-black/5">
+                          <td className="py-3 pr-4 font-semibold">{r.full_name}</td>
+                          <td className="py-3 pr-4">
+                            <select
+                              className="w-full max-w-[420px] rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
+                              disabled={locsLoading || savingEmployeeId === r.id}
+                              value={typeof r.work_location_id === "number" ? String(r.work_location_id) : "none"}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const nextId = v === "none" ? null : Number(v);
+                                setAssignRows((prev) =>
+                                  prev.map((x) => (x.id === r.id ? { ...x, work_location_id: nextId } : x))
+                                );
+                              }}
+                            >
+                              <option value="none">No location assigned</option>
+                              {locs.map((l) => (
+                                <option key={l.id} value={String(l.id)}>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="mt-1 text-xs font-semibold text-black/45">
+                              {r.work_location?.name ? `Current: ${r.work_location.name}` : "Current: No location assigned"}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-0 text-right">
+                            <Button
+                              variant="secondary"
+                              isLoading={savingEmployeeId === r.id}
+                              disabled={savingEmployeeId === r.id}
+                              onClick={() => void saveAssignment(r.id, typeof r.work_location_id === "number" ? r.work_location_id : null)}
+                            >
+                              Save
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </Card>
+        )}
       </div>
     );
   }

@@ -544,6 +544,15 @@ export type EmployeeLatenessEntry = {
   created_at: string;
 };
 
+export type CompanyLocation = {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  allowed_radius_meters: number;
+  created_at: string;
+};
+
 export type EmployeeAttendanceEntry = {
   id: number;
   employee_id: number;
@@ -553,6 +562,11 @@ export type EmployeeAttendanceEntry = {
   is_late: boolean;
   late_minutes?: number | null;
   lateness_entry_id?: number | null;
+  work_location_id?: number | null;
+  employee_latitude?: number | null;
+  employee_longitude?: number | null;
+  distance_meters?: number | null;
+  work_location?: CompanyLocation | null;
 };
 
 export type EmployeeClockInResponse = {
@@ -587,6 +601,8 @@ export type EmployeeDetail = {
   documents?: EmployeeDocumentItem[] | null;
   user_id?: number | null;
   linked_username?: string | null;
+  work_location_id?: number | null;
+  work_location?: CompanyLocation | null;
   created_at: string;
   updated_at?: string | null;
   period: SalaryPeriod;
@@ -609,6 +625,13 @@ export type EmployeeListItem = {
   period: SalaryPeriod;
   payment: EmployeePayment;
   salary: EmployeeSalaryBreakdown;
+};
+
+export type EmployeeLocationAssignmentItem = {
+  id: number;
+  full_name: string;
+  work_location_id?: number | null;
+  work_location?: CompanyLocation | null;
 };
 
 export type EmployeeCreatePayload = {

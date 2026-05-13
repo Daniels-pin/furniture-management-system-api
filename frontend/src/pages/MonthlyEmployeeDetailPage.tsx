@@ -5,10 +5,11 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { employeesApi, type EmployeePeriodParams } from "../services/endpoints";
+import { companyLocationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { EmployeeAttendanceEntry, EmployeeDetail, EmployeeTransaction } from "../types/api";
+import type { CompanyLocation, EmployeeAttendanceEntry, EmployeeDetail, EmployeeTransaction } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
@@ -36,6 +37,11 @@ export function MonthlyEmployeeDetailPage() {
   const [txLoading, setTxLoading] = useState(false);
   const [att, setAtt] = useState<EmployeeAttendanceEntry[]>([]);
   const [attLoading, setAttLoading] = useState(false);
+
+  const [locs, setLocs] = useState<CompanyLocation[]>([]);
+  const [locsLoading, setLocsLoading] = useState(false);
+  const [workLocId, setWorkLocId] = useState<number | "none">("none");
+  const [locSaving, setLocSaving] = useState(false);
 
   const [sendNote, setSendNote] = useState("");
   const [sending, setSending] = useState(false);
@@ -90,6 +96,7 @@ export function MonthlyEmployeeDetailPage() {
         const d = await employeesApi.get(idNum, periodParams);
         if (!alive) return;
         setDetail(d);
+        setWorkLocId(typeof d.work_location_id === "number" ? d.work_location_id : "none");
 
         const empBase = d.base_salary ?? null;
         setBaseSalary(empBase != null ? String(empBase) : "");
@@ -113,6 +120,49 @@ export function MonthlyEmployeeDetailPage() {
       alive = false;
     };
   }, [idNum, periodParams, nav, toast]);
+
+  useEffect(() => {
+    if (auth.role !== "admin") return;
+    let alive = true;
+    (async () => {
+      setLocsLoading(true);
+      try {
+        const rows = await companyLocationsApi.list();
+        if (!alive) return;
+        setLocs(rows);
+      } catch (e) {
+        // non-fatal
+      } finally {
+        if (alive) setLocsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [auth.role]);
+
+  async function saveWorkLocation() {
+    if (!detail) return;
+    if (auth.role !== "admin") {
+      toast.push("error", "Only Admin can assign locations.");
+      return;
+    }
+    setLocSaving(true);
+    try {
+      const next = await employeesApi.assignWorkLocation(
+        detail.id,
+        { location_id: workLocId === "none" ? null : workLocId },
+        periodParams
+      );
+      setDetail(next);
+      setWorkLocId(typeof next.work_location_id === "number" ? next.work_location_id : "none");
+      toast.push("success", "Work location saved.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setLocSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!Number.isFinite(idNum)) return;
@@ -397,6 +447,42 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
+        <div className="text-xs font-semibold text-black/55">2b. Work location (Geo-attendance)</div>
+        <p className="mt-1 text-xs text-black/55">Employees can only mark attendance within their assigned work location radius.</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+          <label className="text-xs font-semibold text-black/60">
+            Assigned location
+            <select
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              disabled={!isAdmin || locsLoading || locSaving}
+              value={workLocId === "none" ? "none" : String(workLocId)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setWorkLocId(v === "none" ? "none" : Number(v));
+              }}
+            >
+              <option value="none">None</option>
+              {locs.map((l) => (
+                <option key={l.id} value={String(l.id)}>
+                  {l.name} ({l.allowed_radius_meters}m)
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button variant="secondary" isLoading={locSaving} disabled={!isAdmin || locSaving} onClick={() => void saveWorkLocation()}>
+            Save location
+          </Button>
+        </div>
+        {detail.work_location ? (
+          <div className="mt-2 text-xs font-semibold text-black/55">
+            Current: {detail.work_location.name} · Radius {detail.work_location.allowed_radius_meters}m
+          </div>
+        ) : (
+          <div className="mt-2 text-xs font-semibold text-amber-900">No location assigned yet. Attendance marking will be blocked.</div>
+        )}
+      </Card>
+
+      <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
         <p className="mt-1 text-xs text-black/55">Mark attendance. Late coming attracts a ₦500 deduction.</p>
         {attLoading ? (
@@ -411,6 +497,8 @@ export function MonthlyEmployeeDetailPage() {
                   <th className="py-3 pr-4 font-semibold">Date</th>
                   <th className="py-3 pr-4 font-semibold">Clock-in</th>
                   <th className="py-3 pr-4 font-semibold">Status</th>
+                  <th className="py-3 pr-4 font-semibold">Location</th>
+                  <th className="py-3 pr-4 font-semibold">Distance</th>
                   <th className="py-3 pr-0 text-right font-semibold">Deduction</th>
                 </tr>
               </thead>
@@ -431,6 +519,10 @@ export function MonthlyEmployeeDetailPage() {
                       {a.is_late && typeof a.late_minutes === "number" ? (
                         <span className="ml-2 text-xs font-semibold text-black/55">{a.late_minutes} min late</span>
                       ) : null}
+                    </td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{a.work_location?.name ?? "—"}</td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">
+                      {typeof a.distance_meters === "number" ? `${Math.round(a.distance_meters)}m` : "—"}
                     </td>
                     <td className="py-3 pr-0 text-right font-bold tabular-nums">{a.is_late ? "₦500" : "—"}</td>
                   </tr>

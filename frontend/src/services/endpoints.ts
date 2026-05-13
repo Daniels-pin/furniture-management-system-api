@@ -69,7 +69,9 @@ import type {
   DraftModule,
   DraftSummary,
   NotificationsPage,
-  ExpenseEntriesPage
+  ExpenseEntriesPage,
+  CompanyLocation,
+  EmployeeLocationAssignmentItem
 } from "../types/api";
 
 export const authApi = {
@@ -834,6 +836,25 @@ export const machinesApi = {
 
 export type EmployeePeriodParams = { period_year?: number; period_month?: number };
 
+export const companyLocationsApi = {
+  async list(params?: { search?: string }) {
+    const { data } = await api.get<CompanyLocation[]>("/company-locations", { params });
+    return data;
+  },
+  async create(body: { name: string; latitude: number; longitude: number; allowed_radius_meters: number }) {
+    const { data } = await api.post<CompanyLocation>("/company-locations", body);
+    return data;
+  },
+  async update(locationId: number, patch: Partial<{ name: string; latitude: number; longitude: number; allowed_radius_meters: number }>) {
+    const { data } = await api.patch<CompanyLocation>(`/company-locations/${locationId}`, patch);
+    return data;
+  },
+  async remove(locationId: number) {
+    const { data } = await api.delete<{ message: string }>(`/company-locations/${locationId}`);
+    return data;
+  }
+};
+
 export const employeesApi = {
   async payrollPeriodsNav() {
     const { data } = await api.get<PayrollPeriodsNav>("/employees/periods");
@@ -879,6 +900,10 @@ export const employeesApi = {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in");
     return data;
   },
+  async clockInAttendanceGeo(body: { latitude: number; longitude: number }) {
+    const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in-geo", body);
+    return data;
+  },
   async myAttendance(params?: { limit?: number; offset?: number }) {
     const { data } = await api.get<EmployeeAttendanceEntry[]>("/employees/me/attendance", { params });
     return data;
@@ -897,6 +922,10 @@ export const employeesApi = {
   },
   async update(employeeId: number, body: EmployeeAdminUpdatePayload, params?: EmployeePeriodParams) {
     const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}`, body, { params });
+    return data;
+  },
+  async assignWorkLocation(employeeId: number, body: { location_id?: number | null }, params?: EmployeePeriodParams) {
+    const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}/work-location`, body, { params });
     return data;
   },
   async updatePayment(
@@ -989,6 +1018,14 @@ export const employeesApi = {
     period: { period_year: number; period_month: number }
   ) {
     const { data } = await api.patch<EmployeeDetail>(`/employees/${employeeId}/payroll-adjustments`, body, { params: period });
+    return data;
+  },
+  async listLocationAssignments(params?: { search?: string }) {
+    const { data } = await api.get<EmployeeLocationAssignmentItem[]>("/employees/location-assignments", { params });
+    return data;
+  },
+  async patchLocationAssignment(employeeId: number, body: { location_id?: number | null }) {
+    const { data } = await api.patch<EmployeeLocationAssignmentItem>(`/employees/${employeeId}/location-assignment`, body);
     return data;
   }
 };
