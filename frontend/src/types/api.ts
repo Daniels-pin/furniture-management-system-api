@@ -1,4 +1,4 @@
-export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee";
+export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee" | "staff";
 
 export type DraftModule = "quotation" | "order" | "proforma";
 

@@ -62,6 +62,11 @@ export function DraftRecoveryGate({ children }: { children: React.ReactNode }) {
       setOpen(false);
       return;
     }
+    if (auth.role === "staff") {
+      setDraft(null);
+      setOpen(false);
+      return;
+    }
     let alive = true;
     (async () => {
       setIsLoading(true);
@@ -85,7 +90,7 @@ export function DraftRecoveryGate({ children }: { children: React.ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [isAuthed]);
+  }, [isAuthed, auth.role]);
 
   const title = useMemo(() => {
     if (!draft) return "Unfinished draft";

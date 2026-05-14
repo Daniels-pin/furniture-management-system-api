@@ -389,19 +389,6 @@ export function AdminJobsPage() {
     });
   }, [jobs.length, filteredJobs.length, grouped.length, statusFilter, summary?.jobs?.total]);
 
-  useEffect(() => {
-    // Auto-expand employee groups once data arrives so existing jobs are immediately visible.
-    if (loading) return;
-    if (grouped.length === 0) return;
-    setExpandedEmp((prev) => {
-      // Only auto-expand on first arrival (avoid fighting user toggles).
-      if (prev && Object.keys(prev).length > 0) return prev;
-      const next: Record<string, boolean> = {};
-      for (const g of grouped) next[String(g.employeeId)] = true;
-      return next;
-    });
-  }, [loading, grouped]);
-
   const assignEmpSelected = useMemo(() => {
     const id = Number(assignEmployeeId);
     if (!Number.isFinite(id) || id <= 0) return null;

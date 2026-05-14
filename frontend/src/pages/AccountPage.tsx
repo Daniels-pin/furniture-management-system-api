@@ -1,17 +1,24 @@
 import { useState } from "react";
+import { Navigate } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { useAuth } from "../state/auth";
 
 export function AccountPage() {
+  const auth = useAuth();
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+
+  if (auth.role === "staff") {
+    return <Navigate to="/profile" replace />;
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

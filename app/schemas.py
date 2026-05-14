@@ -85,6 +85,7 @@ class UserRole(str, Enum):
     admin = "admin"
     finance = "finance"
     contract_employee = "contract_employee"
+    staff = "staff"
 
 class UserCreate(BaseModel):
     # Keep existing DB fields, but support "username" for the UI/API.

@@ -7,7 +7,7 @@ function b64UrlToJson(b64Url: string): any {
 
 export type JwtPayload = {
   user_id?: number;
-  role?: "showroom" | "manager" | "factory" | "admin" | "finance" | "contract_employee";
+  role?: "showroom" | "manager" | "factory" | "admin" | "finance" | "contract_employee" | "staff";
   username?: string;
   exp?: number;
   impersonated_by?: number;

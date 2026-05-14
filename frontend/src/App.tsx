@@ -45,6 +45,9 @@ import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboard
 import { ContractJobDetailPage } from "./pages/ContractJobDetailPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
 import { FinanceDashboardPage } from "./pages/FinanceDashboardPage";
+import { StaffFinanceSelf } from "./pages/StaffFinanceSelf";
+import { StaffDashboardPage } from "./pages/StaffDashboardPage";
+import { StaffProfilePage } from "./pages/StaffProfilePage";
 import { useAuth } from "./state/auth";
 import { DraftRecoveryGate } from "./state/drafts";
 
@@ -57,7 +60,14 @@ function DashboardGate() {
   const auth = useAuth();
   if (auth.role === "finance") return <Navigate to="/finance" replace />;
   if (auth.role === "contract_employee") return <Navigate to="/contract" replace />;
+  if (auth.role === "staff") return <StaffDashboardPage />;
   return <DashboardPage />;
+}
+
+function FinanceEntry() {
+  const auth = useAuth();
+  if (auth.role === "staff") return <StaffFinanceSelf />;
+  return <FinanceDashboardPage />;
 }
 
 export default function App() {
@@ -264,12 +274,27 @@ export default function App() {
           }
         />
         <Route path="account" element={<AccountPage />} />
-        <Route path="employee-details" element={<EmployeeSelfPage />} />
+        <Route
+          path="employee-details"
+          element={
+            <RequireAuth roles={["admin", "factory", "finance", "showroom"]}>
+              <EmployeeSelfPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="profile"
+          element={
+            <RequireAuth roles={["staff"]}>
+              <StaffProfilePage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="finance"
           element={
-            <RequireAuth roles={["finance", "admin"]}>
-              <FinanceDashboardPage />
+            <RequireAuth roles={["finance", "admin", "staff"]}>
+              <FinanceEntry />
             </RequireAuth>
           }
         />

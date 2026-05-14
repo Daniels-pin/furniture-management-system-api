@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import get_current_user
+from app.auth.auth import reject_staff
 from app.database import get_db
 
 router = APIRouter()
@@ -26,7 +26,7 @@ def _validate_module(module: str) -> str:
 @router.get("/drafts")
 def list_drafts(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     rows = (
         db.query(models.Draft)
@@ -48,7 +48,7 @@ def list_drafts(
 @router.get("/drafts/latest")
 def latest_draft(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
     modules: str | None = Query(default=None, description="Comma-separated module allowlist"),
 ):
     allow = None
@@ -67,7 +67,7 @@ def latest_draft(
 def get_draft(
     module: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     m = _validate_module(module)
     row = (
@@ -86,7 +86,7 @@ def upsert_draft(
     module: str,
     body: dict[str, Any],
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     m = _validate_module(module)
     now = datetime.utcnow()
@@ -111,7 +111,7 @@ def upsert_draft(
 def delete_draft(
     module: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     m = _validate_module(module)
     row = (

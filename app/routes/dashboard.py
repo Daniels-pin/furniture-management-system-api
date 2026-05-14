@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
-from app.auth.auth import get_current_user, normalize_role
+from app.auth.auth import get_current_user, normalize_role, reject_staff
 from app.db.alive import customer_alive, order_alive
 from app.database import get_db
 
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/dashboard")
 def get_dashboard(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     # Core metrics (exclude soft-deleted rows)
     total_orders = db.query(func.count(models.Order.id)).filter(order_alive()).scalar() or 0

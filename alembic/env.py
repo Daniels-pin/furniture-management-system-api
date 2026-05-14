@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -14,7 +15,8 @@ def _is_production_env() -> bool:
         (os.getenv("ENV") or "").strip().lower() == "production"
     )
 
-load_dotenv(override=not _is_production_env())
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env", override=not _is_production_env())
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

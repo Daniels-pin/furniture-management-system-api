@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
-from app.auth.auth import forbid_factory, get_current_user, is_factory_user
+from app.auth.auth import forbid_factory, reject_staff, is_factory_user
 from app.db.alive import product_alive
 from app.schemas import ProductCreate, ProductNameResponse, ProductResponse
 from typing import List, Union
@@ -45,7 +45,7 @@ def create_product(
 @router.get("/products", response_model=List[Union[ProductResponse, ProductNameResponse]])
 def get_products(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     rows = db.query(models.Product).filter(product_alive()).order_by(models.Product.id.desc()).all()
     if is_factory_user(user):

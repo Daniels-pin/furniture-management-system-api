@@ -904,8 +904,8 @@ export const employeesApi = {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in-geo", body);
     return data;
   },
-  async myAttendance(params?: { limit?: number; offset?: number }) {
-    const { data } = await api.get<EmployeeAttendanceEntry[]>("/employees/me/attendance", { params });
+  async myTransactions(params?: { period_year?: number; period_month?: number }) {
+    const { data } = await api.get<EmployeeTransaction[]>("/employees/me/transactions", { params });
     return data;
   },
   async attendance(employeeId: number, params?: { limit?: number; offset?: number }) {

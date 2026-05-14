@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 # load variables from .env file
@@ -7,7 +9,8 @@ def _is_production_env() -> bool:
         (os.getenv("ENV") or "").strip().lower() == "production"
     )
 
-load_dotenv(override=not _is_production_env())
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env", override=not _is_production_env())
 
 def _getenv_stripped(key: str, default: str | None = None) -> str | None:
     val = os.getenv(key)

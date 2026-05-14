@@ -3,7 +3,7 @@ import { authStore } from "./authStore";
 import { decodeJwt, isJwtExpiredForClient, JwtPayload } from "../utils/jwt";
 import { adminApi } from "../services/endpoints";
 
-export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee";
+export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee" | "staff";
 
 type AuthState = {
   token: string | null;

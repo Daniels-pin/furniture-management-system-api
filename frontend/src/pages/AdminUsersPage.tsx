@@ -364,6 +364,7 @@ function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
             { value: "showroom", label: "showroom" },
             { value: "factory", label: "factory" },
             { value: "finance", label: "finance" },
+            { value: "staff", label: "staff" },
             { value: "admin", label: "admin" }
           ]}
         />

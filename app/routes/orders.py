@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
-from app.auth.auth import get_current_user, is_factory_user, normalize_role, require_role
+from app.auth.auth import get_current_user, is_factory_user, normalize_role, reject_staff, require_role
 from app.db.alive import customer_alive, order_alive
 from app.auth.pdf_access import require_order_reader
 from datetime import datetime, timedelta
@@ -701,7 +701,7 @@ def create_order_json(
 @router.get("/orders", response_model=OrdersListResponse, response_model_exclude_none=True)
 def get_orders(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user),
+    user = Depends(reject_staff),
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
@@ -794,7 +794,7 @@ def get_orders(
 @router.get("/orders/alerts", response_model=OrdersAlertsResponse)
 def get_orders_alerts(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user),
+    user = Depends(reject_staff),
 ):
     today = datetime.utcnow()
     upcoming = today + timedelta(days=14)
@@ -830,7 +830,7 @@ def get_orders_alerts(
 @router.get("/orders/reminders")
 def get_reminders(
     db: Session = Depends(get_db),
-    user = Depends(get_current_user)
+    user = Depends(reject_staff)
 ):
     today = datetime.utcnow()
     upcoming = today + timedelta(days=14)

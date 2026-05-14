@@ -668,6 +668,65 @@ def get_my_employee(
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
 
 
+@router.get("/me/transactions", response_model=list[EmployeeTransactionOut])
+def list_my_employee_transactions(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    """Linked monthly employees (including Staff role): read-only payment ledger for their own record."""
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No employee profile linked to your account. Contact an administrator.",
+        )
+
+    period_id: Optional[int] = None
+    if period_year is not None or period_month is not None:
+        if period_year is None or period_month is None:
+            raise HTTPException(status_code=400, detail="Provide both period_year and period_month, or neither.")
+        p = get_or_create_period(db, int(period_year), int(period_month))
+        period_id = p.id
+
+    q = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.employee_id == emp.id)
+    if period_id is not None:
+        q = q.filter(models.EmployeeTransaction.period_id == period_id)
+
+    rows = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc()).all()
+    outs: list[EmployeeTransactionOut] = [EmployeeTransactionOut.model_validate(r) for r in rows]
+    if period_id is not None:
+        period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
+        if period:
+            lateness, penalties, bonuses, payroll = _load_rows_for_period(db, emp.id, period)
+            base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+            pen = sum((p.amount for p in penalties), Decimal("0"))
+            bon = sum((b.amount for b in bonuses), Decimal("0"))
+            salary = _salary_breakdown(
+                base,
+                len(lateness),
+                pen,
+                bon,
+                period_base_salary=getattr(payroll, "period_base_salary", None) if payroll else None,
+                adjustment_bonus=Decimal(str(getattr(payroll, "adjustment_bonus", 0) or 0)) if payroll else Decimal("0"),
+                adjustment_deduction=Decimal(str(getattr(payroll, "adjustment_deduction", 0) or 0)) if payroll else Decimal("0"),
+                adjustment_late_penalty=Decimal(str(getattr(payroll, "adjustment_late_penalty", 0) or 0)) if payroll else Decimal("0"),
+            )
+            due = salary.final_payable
+            paid_total = Decimal("0")
+            for o in outs:
+                if o.txn_type == "payment" and o.status == "paid":
+                    paid_total += Decimal(str(o.amount or 0))
+                o.running_balance = due - paid_total
+    outs.sort(key=lambda x: (x.created_at, x.id), reverse=True)
+    return outs
+
+
 @router.post("/me/attendance/clock-in", response_model=EmployeeClockInOut)
 def clock_in_my_attendance(
     db: Session = Depends(get_db),

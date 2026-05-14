@@ -98,34 +98,40 @@ const NAV_GROUPS: NavGroupModel[] = [
       { key: "equipment", label: "Equipment", to: "/equipment", roles: ["admin", "factory"] }
     ]
   },
-  {
-    key: "workforce",
-    label: "Workforce",
-    items: [
-      { key: "employees", label: "Employees", to: "/employees", roles: ["admin", "finance", "factory"] },
-      { key: "company-locations", label: "Company Locations", to: "/admin/locations", roles: ["admin"] },
-      { key: "jobs", label: "Jobs", to: "/admin/jobs", roles: ["admin"], badge: "pendingNegotiations" },
-      { key: "employee-details", label: "Employee Details", to: "/employee-details" }
-    ]
-  },
-  {
-    key: "financials",
-    label: "Financials",
-    items: [
-      { key: "finance", label: "Finance", to: "/finance", roles: ["admin", "finance"] },
-      { key: "petty-cash", label: "Petty Cash", to: "/expenses", roles: ["admin", "finance"] }
-    ]
-  },
-  {
-    key: "system",
-    label: "System",
-    items: [
-      { key: "account", label: "Account", to: "/account" },
-      { key: "admin-users", label: "Admin Users", to: "/admin/users", roles: ["admin"] },
-      { key: "activity-log", label: "Activity Log", to: "/admin/activity", roles: ["admin"] },
-      { key: "trash", label: "Trash", to: "/trash", roles: ["admin", "showroom", "factory"] }
-    ]
-  }
+      {
+        key: "workforce",
+        label: "Workforce",
+        items: [
+          { key: "employees", label: "Employees", to: "/employees", roles: ["admin", "finance", "factory"] },
+          { key: "company-locations", label: "Company Locations", to: "/admin/locations", roles: ["admin"] },
+          { key: "jobs", label: "Jobs", to: "/admin/jobs", roles: ["admin"], badge: "pendingNegotiations" },
+          {
+            key: "employee-details",
+            label: "Employee Details",
+            to: "/employee-details",
+            roles: ["admin", "factory", "finance", "showroom"]
+          }
+        ]
+      },
+      {
+        key: "financials",
+        label: "Financials",
+        items: [
+          { key: "finance", label: "Finance", to: "/finance", roles: ["admin", "finance", "staff"] },
+          { key: "petty-cash", label: "Petty Cash", to: "/expenses", roles: ["admin", "finance"] }
+        ]
+      },
+      {
+        key: "system",
+        label: "System",
+        items: [
+          { key: "account", label: "Account", to: "/account", roles: ["admin", "factory", "finance", "showroom"] },
+          { key: "staff-profile", label: "Profile", to: "/profile", roles: ["staff"] },
+          { key: "admin-users", label: "Admin Users", to: "/admin/users", roles: ["admin"] },
+          { key: "activity-log", label: "Activity Log", to: "/admin/activity", roles: ["admin"] },
+          { key: "trash", label: "Trash", to: "/trash", roles: ["admin", "showroom", "factory"] }
+        ]
+      }
 ];
 
 function SectionDivider({ label }: { label: string }) {
@@ -193,7 +199,8 @@ export function AppLayout() {
   const location = useLocation();
   const nav = useNavigate();
   const pageHeader = usePageHeaderState();
-  const hideTopRightActions = auth.role === "contract_employee" && location.pathname === "/contract";
+  const hideTopRightActions =
+    (auth.role === "contract_employee" && location.pathname === "/contract") || auth.role === "staff";
   const [exitImpLoading, setExitImpLoading] = useState(false);
   const [dueSoon, setDueSoon] = useState<number>(0);
   const [open, setOpen] = useState(false);
@@ -580,7 +587,9 @@ export function AppLayout() {
                       ? "Factory"
                       : auth.role === "contract_employee"
                         ? "Contract"
-                        : "Showroom"}
+                        : auth.role === "staff"
+                          ? "Staff"
+                          : "Showroom"}
               </div>
               <div className="mt-0.5 text-[11px] font-semibold text-black/60 lg:text-xs">
                 Role:{" "}
@@ -592,7 +601,9 @@ export function AppLayout() {
                       ? "Factory"
                       : auth.role === "contract_employee"
                         ? "Contract"
-                        : "Showroom"}
+                        : auth.role === "staff"
+                          ? "Staff"
+                          : "Showroom"}
               </div>
               <button
                 className="mt-3 min-h-11 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold hover:bg-black/5"
@@ -995,7 +1006,9 @@ export function AppLayout() {
                       ? "Factory"
                       : auth.role === "contract_employee"
                         ? "Contract"
-                        : "Showroom"}
+                        : auth.role === "staff"
+                          ? "Staff"
+                          : "Showroom"}
               </div>
               <div className="mt-0.5 text-[11px] font-semibold text-black/60">
                 Role:{" "}
@@ -1007,7 +1020,9 @@ export function AppLayout() {
                       ? "Factory"
                       : auth.role === "contract_employee"
                         ? "Contract"
-                        : "Showroom"}
+                        : auth.role === "staff"
+                          ? "Staff"
+                          : "Showroom"}
               </div>
               <button
                 type="button"

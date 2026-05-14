@@ -89,13 +89,23 @@ def require_role(allowed_roles: list):
 
 
 def forbid_factory(user=Depends(get_current_user)):
-    if normalize_role(getattr(user, "role", None)) == "factory":
+    role = normalize_role(getattr(user, "role", None))
+    if role == "factory":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if role == "staff":
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 
 
 def is_factory_user(user) -> bool:
     return normalize_role(getattr(user, "role", None)) == "factory"
+
+
+def reject_staff(user=Depends(get_current_user)):
+    """Restricted portal role: block access to operational APIs that use get_current_user without role checks."""
+    if normalize_role(getattr(user, "role", None)) == "staff":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return user
 
 
 @router.post("/change-password")

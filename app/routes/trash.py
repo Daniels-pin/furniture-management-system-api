@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import get_current_user, normalize_role, require_role
+from app.auth.auth import normalize_role, reject_staff, require_role
 from app.database import get_db
 from app.utils.activity_log import TRASH_PURGED, TRASH_RESTORED, log_activity, username_from_email
 
@@ -317,7 +317,7 @@ def _gather_trash_rows(db: Session, is_admin: bool, uid: int) -> list[TrashRow]:
 @router.get("", response_model=TrashListResponse)
 def list_trash(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     is_admin = normalize_role(user.role) == "admin"
     rows = _gather_trash_rows(db, is_admin, user.id)
@@ -438,7 +438,7 @@ def _commit_purge(db: Session) -> None:
 def restore_item(
     body: TrashRestoreRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(reject_staff),
 ):
     if body.entity_type not in ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Invalid entity_type")
