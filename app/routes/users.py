@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
@@ -78,5 +79,16 @@ def delete_user(
         actor_user=current_user,
     )
     db.delete(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete this user while other records still reference them "
+                "(for example created_by or orders). Reassign or remove those records first, "
+                "or use the maintenance script scripts/delete_user.py."
+            ),
+        ) from None
     return {"message": "User deleted"}

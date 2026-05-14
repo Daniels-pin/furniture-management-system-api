@@ -111,13 +111,34 @@ _private_net_origin_regex = (
     r")(:\d+)?$"
 )
 
+# Vercel production + preview URLs (https://<deployment>.vercel.app). Opt out with CORS_ALLOW_VERCEL_ORIGINS=0.
+_vercel_origin_regex = r"^https://[^\s/]+\.vercel\.app(?::\d+)?$"
+_cors_allow_vercel = os.getenv("CORS_ALLOW_VERCEL_ORIGINS", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+_cors_regex_parts: list[str] = []
+if _cors_allow_lan:
+    _cors_regex_parts.append(_private_net_origin_regex)
+if _cors_allow_vercel:
+    _cors_regex_parts.append(_vercel_origin_regex)
+_cors_origin_regex: str | None
+if not _cors_regex_parts:
+    _cors_origin_regex = None
+elif len(_cors_regex_parts) == 1:
+    _cors_origin_regex = _cors_regex_parts[0]
+else:
+    _cors_origin_regex = "(?:" + ")|(?:".join(_cors_regex_parts) + ")"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_origin_regex=_private_net_origin_regex if _cors_allow_lan else None,
+    allow_origin_regex=_cors_origin_regex,
 )
 
 
