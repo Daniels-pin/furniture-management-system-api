@@ -22,7 +22,8 @@ from app.schemas import (
     ToolTrackingRecordsPage,
     ToolTrackingReturnBody,
 )
-from app.utils.activity_log import log_activity, username_from_email
+from app.utils.activity_log import log_activity
+from app.utils.user_account import historical_attribution_label
 
 router = APIRouter(prefix="/tools", tags=["Tools"])
 
@@ -70,9 +71,7 @@ def _record_to_out(rec: models.ToolTrackingRecord) -> ToolTrackingRecordOut:
         returned_at=rec.returned_at,
         borrower_name=rec.borrower_name,
         notes=rec.notes,
-        checked_out_by=username_from_email(
-            getattr(getattr(rec, "created_by_user", None), "email", None)
-        ),
+        checked_out_by=historical_attribution_label(getattr(rec, "created_by_user", None)),
     )
 
 

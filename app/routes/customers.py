@@ -14,12 +14,13 @@ from app.db.alive import customer_alive
 from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse, CustomerUpdate
 
 from app.utils.activity_log import (
-    log_activity,
-    username_from_email,
     CUSTOMER_CREATED,
     CUSTOMER_DELETED,
     CUSTOMER_UPDATED,
+    log_activity,
+    username_from_email,
 )
+from app.utils.user_account import historical_attribution_label
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ def _creator_username(db: Session, customer: models.Customer) -> str | None:
     if not getattr(customer, "creator_id", None):
         return None
     u = db.query(models.User).filter(models.User.id == customer.creator_id).first()
-    return username_from_email(getattr(u, "email", None)) if u else None
+    return historical_attribution_label(u)
 
 
 @router.get("/customers", response_model=List[CustomerPublicResponse], response_model_exclude_none=True)

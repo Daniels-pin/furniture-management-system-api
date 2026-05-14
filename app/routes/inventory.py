@@ -44,6 +44,7 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
+from app.utils.user_account import historical_attribution_label
 
 router = APIRouter()
 
@@ -129,8 +130,8 @@ def _material_to_out(
         notes=m.notes,
         created_at=m.created_at,
         updated_at=m.updated_at,
-        added_by=username_from_email(getattr(m.created_by_user, "email", None)),
-        last_updated_by=username_from_email(getattr(m.updated_by_user, "email", None)),
+        added_by=historical_attribution_label(m.created_by_user),
+        last_updated_by=historical_attribution_label(m.updated_by_user),
     )
 
 
@@ -148,7 +149,7 @@ def _payment_to_out(p: models.InventoryMaterialPayment) -> InventoryPaymentOut:
         paid_at=p.paid_at,
         note=p.note,
         created_at=p.created_at,
-        recorded_by=username_from_email(getattr(p.created_by_user, "email", None)),
+        recorded_by=historical_attribution_label(p.created_by_user),
     )
 
 

@@ -13,6 +13,7 @@ if _REPO_ROOT not in sys.path:
 
 from app import models
 from app.database import SessionLocal
+from app.utils.user_account import apply_user_account_removal, derive_historical_first_name, removed_placeholder_email
 
 
 @dataclass(frozen=True)
@@ -81,15 +82,13 @@ def _apply_updates(
 
 def _anonymize_user(db: Session, user: models.User, dry_run: bool, log: Callable[[str], None]) -> None:
     # Keep the row to preserve audit/history references.
-    # Email must remain unique; use a guaranteed-invalid domain.
-    replacement_email = f"deleted_user_{user.id}@example.invalid"
+    first = derive_historical_first_name(user)
+    replacement_email = removed_placeholder_email(user.id)
     log(f"- users.email: {user.email!r} -> {replacement_email!r}")
-    log(f"- users.name: {user.name!r} -> 'Deleted user'")
-    log("- users.password: overwritten (unusable)")
+    log(f"- users.name: {user.name!r} -> {first!r}")
+    log("- users.password: overwritten (secure random hash)")
     if not dry_run:
-        user.email = replacement_email
-        user.name = "Deleted user"
-        user.password = "!!deleted!!"
+        apply_user_account_removal(user)
 
 
 def main() -> int:

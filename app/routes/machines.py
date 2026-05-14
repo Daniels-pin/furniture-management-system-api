@@ -18,7 +18,8 @@ from app.schemas import (
     MachineActivityCreate,
     MachineActivityOut,
 )
-from app.utils.activity_log import log_activity, username_from_email
+from app.utils.activity_log import log_activity
+from app.utils.user_account import historical_attribution_label
 
 router = APIRouter(prefix="/machines", tags=["Machines"])
 
@@ -60,7 +61,7 @@ def _activity_to_out(a: models.MachineActivity) -> MachineActivityOut:
         message=a.message,
         meta=a.meta,
         created_at=a.created_at,
-        recorded_by=username_from_email(getattr(getattr(a, "created_by_user", None), "email", None)),
+        recorded_by=historical_attribution_label(getattr(a, "created_by_user", None)),
     )
 
 

@@ -29,8 +29,8 @@ from app.utils.activity_log import (
     WAYBILL_STATUS_UPDATED,
     WAYBILL_VIEWED,
     log_activity,
-    username_from_email,
 )
+from app.utils.user_account import historical_attribution_label
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.order_item_amounts import display_unit_amounts
@@ -58,7 +58,7 @@ def _user_label(db: Session, user_id: int | None) -> str | None:
     if user_id is None:
         return None
     u = db.query(models.User).filter(models.User.id == user_id).first()
-    return username_from_email(getattr(u, "email", None)) if u else None
+    return historical_attribution_label(u)
 
 
 def next_waybill_number(db: Session) -> str:

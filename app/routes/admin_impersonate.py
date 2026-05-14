@@ -16,6 +16,7 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
+from app.utils.user_account import is_removed_account
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 _security = HTTPBearer()
@@ -45,6 +46,8 @@ def impersonate_user(
     target = db.query(models.User).filter(models.User.id == user_id).first()
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if is_removed_account(target):
+        raise HTTPException(status_code=400, detail="Cannot impersonate a removed user")
 
     username = username_from_email(target.email)
     token = create_access_token(

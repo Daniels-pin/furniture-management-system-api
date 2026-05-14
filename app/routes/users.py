@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
@@ -9,6 +8,7 @@ from app.schemas import UserRole, UserCreate, UserResponse
 from typing import List
 
 from app.utils.activity_log import log_activity, USER_CREATED, USER_DELETED
+from app.utils.user_account import apply_user_account_removal, is_removed_account
 
 
 router = APIRouter()
@@ -19,7 +19,11 @@ def list_users(
     current_user = Depends(require_role(["admin"]))
 ):
     users = db.query(models.User).order_by(models.User.id.desc()).all()
-    return [{"id": u.id, "username": u.email, "role": u.role} for u in users]
+    return [
+        {"id": u.id, "username": u.email, "role": u.role}
+        for u in users
+        if not is_removed_account(u)
+    ]
 
 
 @router.post("/users", response_model=UserResponse)
@@ -70,25 +74,22 @@ def delete_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if is_removed_account(user):
+        return {"message": "User removed successfully"}
+    if user.id == getattr(current_user, "id", None):
+        raise HTTPException(status_code=400, detail="You cannot remove your own account.")
+
     uid = user.id
+    prior_login = user.email
+    prior_role = user.role
     log_activity(
         db,
         action=USER_DELETED,
         entity_type="user",
         entity_id=uid,
         actor_user=current_user,
+        meta={"prior_login": prior_login, "prior_role": prior_role},
     )
-    db.delete(user)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Cannot delete this user while other records still reference them "
-                "(for example created_by or orders). Reassign or remove those records first, "
-                "or use the maintenance script scripts/delete_user.py."
-            ),
-        ) from None
-    return {"message": "User deleted"}
+    apply_user_account_removal(user)
+    db.commit()
+    return {"message": "User removed successfully"}

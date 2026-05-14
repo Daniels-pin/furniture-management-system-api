@@ -11,6 +11,7 @@ from jose import JWTError, jwt
 from app.schemas import ChangePasswordRequest, LoginRequest
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.utils.activity_log import log_activity, LOGIN, PASSWORD_CHANGED
+from app.utils.user_account import is_removed_account
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ def normalize_role(role: str | None) -> str | None:
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == data.email).first()
 
-    if not user or not verify_password(data.password, user.password):
+    if not user or is_removed_account(user) or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     username = (user.email or "").split("@")[0] if user.email else None
@@ -74,6 +75,8 @@ def get_current_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
 
     if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    if is_removed_account(user):
         raise HTTPException(status_code=401, detail="User not found")
 
     return user

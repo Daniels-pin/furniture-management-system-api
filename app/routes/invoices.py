@@ -22,9 +22,9 @@ from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
+from app.utils.user_account import historical_attribution_label
 from app.utils.activity_log import (
     log_activity,
-    username_from_email,
     INVOICE_DELETED,
     INVOICE_DOWNLOADED,
     INVOICE_EMAIL_SENT,
@@ -252,7 +252,7 @@ def _invoice_to_list_item(db: Session, inv: models.Invoice, user) -> dict:
     created_by_username = None
     if getattr(order, "created_by", None) and getattr(user, "role", None) in ("admin", "showroom"):
         u = db.query(models.User).filter(models.User.id == order.created_by).first()
-        created_by_username = username_from_email(getattr(u, "email", None)) if u else None
+        created_by_username = historical_attribution_label(u) if u else None
     return {
         "id": inv.id,
         "invoice_number": inv.invoice_number,

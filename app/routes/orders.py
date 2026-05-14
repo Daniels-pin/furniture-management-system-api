@@ -38,6 +38,7 @@ from app.utils.pricing import compute_discount, compute_pricing, compute_totals
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from app.utils.invoices import create_invoice_for_order, sync_invoice_from_order
 from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
+from app.utils.user_account import historical_attribution_label
 from app.utils.activity_log import (
     log_activity,
     username_from_email,
@@ -211,10 +212,10 @@ def _build_order_response(
             updated_by_username = None
             if order.created_by:
                 actor = db.query(models.User).filter(models.User.id == order.created_by).first()
-                created_by_username = (actor.email or "").split("@")[0] if actor and actor.email else None
+                created_by_username = historical_attribution_label(actor)
             if order.updated_by:
                 actor2 = db.query(models.User).filter(models.User.id == order.updated_by).first()
-                updated_by_username = (actor2.email or "").split("@")[0] if actor2 and actor2.email else None
+                updated_by_username = historical_attribution_label(actor2)
             base["created_by"] = created_by_username
             base["updated_by"] = updated_by_username
         base["created_by_id"] = order.created_by
@@ -928,10 +929,10 @@ def get_order(
         if normalize_role(getattr(user, "role", None)) == "admin":
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
-                created_by_username = (u1.email or "").split("@")[0] if u1 and u1.email else None
+                created_by_username = historical_attribution_label(u1)
             if order.updated_by:
                 u2 = db.query(models.User).filter(models.User.id == order.updated_by).first()
-                updated_by_username = (u2.email or "").split("@")[0] if u2 and u2.email else None
+                updated_by_username = historical_attribution_label(u2)
         base_price_for_total = order.final_price if order.final_price is not None else effective_total_price
         total = None
         if base_price_for_total is not None:
@@ -1086,10 +1087,10 @@ def put_order_admin(
         if normalize_role(getattr(user, "role", None)) == "admin":
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
-                created_by_username = (u1.email or "").split("@")[0] if u1 and u1.email else None
+                created_by_username = historical_attribution_label(u1)
             if order.updated_by:
                 u2 = db.query(models.User).filter(models.User.id == order.updated_by).first()
-                updated_by_username = (u2.email or "").split("@")[0] if u2 and u2.email else None
+                updated_by_username = historical_attribution_label(u2)
         base.update(
             {
                 "total_price": order.total_price,

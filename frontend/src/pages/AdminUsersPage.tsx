@@ -71,7 +71,7 @@ export function AdminUsersPage() {
     setUsers((xs) => xs.filter((x) => x.id !== userId));
     try {
       await usersApi.delete(userId);
-      toast.push("success", "User deleted");
+      toast.push("success", "User removed successfully");
     } catch (err) {
       setUsers(prev);
       toast.push("error", getErrorMessage(err));
