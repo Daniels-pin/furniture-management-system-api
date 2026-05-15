@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { employeesApi } from "../services/endpoints";
-import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { usePageHeader } from "../components/layout/pageHeader";
+import {
+  findTodayAttendanceEntry,
+  getAttendanceMarkErrorMessage,
+  getGeolocationPosition,
+  mergeAttendanceWithClockResponse
+} from "../utils/attendance";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 
 function formatStatusTime(iso: string) {
@@ -71,24 +76,18 @@ export function StaffDashboardPage() {
   async function markAttendance() {
     setAttBusy(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!("geolocation" in navigator)) {
-          reject(new Error("Geolocation is not supported on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15_000,
-          maximumAge: 0
-        });
-      });
+      const pos = await getGeolocationPosition();
 
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude
       });
       setClockRes(res);
-      await refreshAttendance();
+      if (res.entry) {
+        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+      } else {
+        await refreshAttendance();
+      }
       if (res.status === "already_marked") {
         toast.push("success", res.message || "Attendance already marked.");
       } else if (res.status === "sunday") {
@@ -99,20 +98,13 @@ export function StaffDashboardPage() {
         toast.push("success", "Attendance marked.");
       }
     } catch (e) {
-      const msg = getErrorMessage(e);
-      if (typeof msg === "string" && /permission|denied|geolocation/i.test(msg)) {
-        toast.push("error", "Location access is required to mark attendance.");
-      } else {
-        toast.push("error", msg);
-      }
+      toast.push("error", getAttendanceMarkErrorMessage(e));
     } finally {
       setAttBusy(false);
     }
   }
 
-  const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
-  const todayEntry = attendance.find((a) => a.attendance_date === todayKey) ?? null;
+  const todayEntry = findTodayAttendanceEntry(attendance);
 
   const statusLine = (() => {
     if (empLoading) return "Loading attendance…";
@@ -150,6 +142,7 @@ export function StaffDashboardPage() {
             <Button
               className="w-full sm:w-auto"
               isLoading={attBusy}
+              loadingLabel="Checking location…"
               disabled={attBusy || Boolean(todayEntry) || !emp?.work_location || empLoading}
               onClick={() => void markAttendance()}
             >

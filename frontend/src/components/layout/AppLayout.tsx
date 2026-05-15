@@ -341,7 +341,7 @@ export function AppLayout() {
   }, [drawerOpen]);
 
   useEffect(() => {
-    if (auth.role === "finance") {
+    if (auth.role === "finance" || auth.role === "staff") {
       setDueSoon(0);
       setAlerts(null);
       return;
@@ -383,7 +383,7 @@ export function AppLayout() {
   }, [location.pathname, auth.role]);
 
   useEffect(() => {
-    if (auth.role === "factory" || auth.role === "finance") {
+    if (auth.role === "factory" || auth.role === "finance" || auth.role === "staff") {
       setBirthdays(null);
       return;
     }
@@ -488,7 +488,7 @@ export function AppLayout() {
   }
 
   async function toggleBirthdays() {
-    if (auth.role === "finance") return;
+    if (auth.role === "finance" || auth.role === "staff") return;
     const next = !bOpen;
     setBOpen(next);
     if (!next) return;

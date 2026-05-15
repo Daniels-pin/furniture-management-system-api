@@ -9,6 +9,12 @@ import { formatMoney } from "../utils/money";
 import { APP_NAME } from "../config/app";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { Button } from "../components/ui/Button";
+import {
+  findTodayAttendanceEntry,
+  getAttendanceMarkErrorMessage,
+  getGeolocationPosition,
+  mergeAttendanceWithClockResponse
+} from "../utils/attendance";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 
 export function DashboardPage() {
@@ -62,6 +68,12 @@ export function DashboardPage() {
   useEffect(() => {
     // Monthly employees should see attendance immediately on dashboard.
     // We detect this by whether /employees/me exists for the logged-in user.
+    if (auth.role === "admin" || auth.role === "factory") {
+      setEmp(null);
+      setAttendance([]);
+      setEmpLoading(false);
+      return;
+    }
     let alive = true;
     (async () => {
       setEmpLoading(true);
@@ -88,7 +100,7 @@ export function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, [auth.token]);
+  }, [auth.token, auth.role]);
 
   async function refreshAttendance() {
     try {
@@ -102,24 +114,18 @@ export function DashboardPage() {
   async function markAttendance() {
     setAttBusy(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!("geolocation" in navigator)) {
-          reject(new Error("Geolocation is not supported on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15_000,
-          maximumAge: 0
-        });
-      });
+      const pos = await getGeolocationPosition();
 
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude
       });
       setClockRes(res);
-      await refreshAttendance();
+      if (res.entry) {
+        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+      } else {
+        await refreshAttendance();
+      }
       if (res.status === "already_marked") {
         toast.push("success", res.message || "Attendance already marked.");
       } else if (res.status === "sunday") {
@@ -130,21 +136,13 @@ export function DashboardPage() {
         toast.push("success", "Attendance marked.");
       }
     } catch (e) {
-      const msg = getErrorMessage(e);
-      // Browser geolocation errors are inconsistent; keep a clear message for the core requirement.
-      if (typeof msg === "string" && /permission|denied|geolocation/i.test(msg)) {
-        toast.push("error", "Location access is required to mark attendance.");
-      } else {
-        toast.push("error", msg);
-      }
+      toast.push("error", getAttendanceMarkErrorMessage(e));
     } finally {
       setAttBusy(false);
     }
   }
 
-  const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
-  const todayEntry = attendance.find((a) => a.attendance_date === todayKey) ?? null;
+  const todayEntry = findTodayAttendanceEntry(attendance);
 
   return (
     <div className="space-y-6">
@@ -164,6 +162,7 @@ export function DashboardPage() {
             </div>
             <Button
               isLoading={attBusy}
+              loadingLabel="Checking location…"
               disabled={attBusy || Boolean(todayEntry) || !emp.work_location}
               onClick={() => void markAttendance()}
             >

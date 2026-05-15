@@ -6,6 +6,12 @@ import { employeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
+import {
+  findTodayAttendanceEntry,
+  getAttendanceMarkErrorMessage,
+  getGeolocationPosition,
+  mergeAttendanceWithClockResponse
+} from "../utils/attendance";
 import { formatMoney } from "../utils/money";
 import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmployeeFinancePanel";
 
@@ -78,24 +84,18 @@ export function EmployeeSelfPage() {
   async function clockIn() {
     setAttBusy(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!("geolocation" in navigator)) {
-          reject(new Error("Geolocation is not supported on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15_000,
-          maximumAge: 0
-        });
-      });
+      const pos = await getGeolocationPosition();
 
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude
       });
       setClockRes(res);
-      await refreshAttendance();
+      if (res.entry) {
+        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+      } else {
+        await refreshAttendance();
+      }
       if (res.status === "already_marked") {
         toast.push("success", res.message || "Attendance already marked.");
       } else if (res.status === "sunday") {
@@ -106,12 +106,7 @@ export function EmployeeSelfPage() {
         toast.push("success", "Clock-in recorded.");
       }
     } catch (e) {
-      const msg = getErrorMessage(e);
-      if (typeof msg === "string" && /permission|denied|geolocation/i.test(msg)) {
-        toast.push("error", "Location access is required to mark attendance.");
-      } else {
-        toast.push("error", msg);
-      }
+      toast.push("error", getAttendanceMarkErrorMessage(e));
     } finally {
       setAttBusy(false);
     }
@@ -199,9 +194,7 @@ export function EmployeeSelfPage() {
     );
   }
 
-  const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
-  const todayEntry = attendance.find((a) => a.attendance_date === todayKey) ?? null;
+  const todayEntry = findTodayAttendanceEntry(attendance);
 
   return (
     <div className="space-y-6">
@@ -225,7 +218,12 @@ export function EmployeeSelfPage() {
               <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>
             )}
           </div>
-          <Button isLoading={attBusy} disabled={attBusy || Boolean(todayEntry) || !emp.work_location} onClick={() => void clockIn()}>
+          <Button
+            isLoading={attBusy}
+            loadingLabel="Checking location…"
+            disabled={attBusy || Boolean(todayEntry) || !emp.work_location}
+            onClick={() => void clockIn()}
+          >
             {todayEntry ? "Attendance already marked" : attBusy ? "Checking location…" : "Mark Attendance"}
           </Button>
         </div>

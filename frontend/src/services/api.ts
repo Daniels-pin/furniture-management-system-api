@@ -44,11 +44,18 @@ function isTokenExpired(token: string): boolean {
   return isJwtExpiredForClient(decodeJwt(token));
 }
 
+/** Endpoints where HTTP 404 is a normal application response, not a cold-start miss. */
+function isExpectedApplication404(config: any): boolean {
+  const url = String(config?.url || "");
+  return /\/employees\/me(?:\/|$|\?)/.test(url);
+}
+
 function shouldRetry(config: any, status?: number): boolean {
   const method = String(config?.method || "get").toLowerCase();
   // Only retry safe/idempotent requests
   if (!["get", "head", "options"].includes(method)) return false;
   if (!status) return true; // network / no response
+  if (status === 404 && isExpectedApplication404(config)) return false;
   // Render cold start / transient errors (per requirements, include 404 retry)
   return status === 404 || status === 502 || status === 503 || status === 504;
 }

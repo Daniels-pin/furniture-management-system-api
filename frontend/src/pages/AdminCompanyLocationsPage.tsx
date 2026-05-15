@@ -6,6 +6,7 @@ import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { useToast } from "../state/toast";
 import { getErrorMessage } from "../services/api";
 import { companyLocationsApi } from "../services/endpoints";
+import { getGeolocationPosition, getGeolocationUserMessage } from "../utils/attendance";
 import type { CompanyLocation } from "../types/api";
 import { usePageHeader } from "../components/layout/pageHeader";
 
@@ -175,28 +176,13 @@ export function AdminCompanyLocationsPage() {
   async function useMyLocation() {
     setGeoBusy(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!("geolocation" in navigator)) {
-          reject(new Error("Geolocation is not supported on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15_000,
-          maximumAge: 0
-        });
-      });
+      const pos = await getGeolocationPosition();
       const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       setPin(next);
       const m = mapRef.current;
       if (m) m.setView([next.lat, next.lng], Math.max(m.getZoom(), 16), { animate: true });
     } catch (e) {
-      const msg = getErrorMessage(e);
-      if (typeof msg === "string" && /permission|denied|geolocation/i.test(msg)) {
-        toast.push("error", "Location permission is required to use your current location.");
-      } else {
-        toast.push("error", msg);
-      }
+      toast.push("error", getGeolocationUserMessage(e));
     } finally {
       setGeoBusy(false);
     }
