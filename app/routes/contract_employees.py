@@ -9,9 +9,10 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import require_role
+from app.auth.auth import normalize_role, require_role
 from app.database import get_db
 from app.utils.financial_audit import log_financial_action
+from app.utils.notifications import mark_payment_notifications_viewed, unread_payment_notification_txn_ids
 from app.auth.utils import hash_password
 from app.utils.contract_financials import (
     ContractEmployeeDerivedTotals,
@@ -90,6 +91,31 @@ def list_contract_employees(
     elif status == "all":
         pass
     rows = q.order_by(models.ContractEmployee.id.desc()).all()
+    role = normalize_role(getattr(current_user, "role", None))
+    user_id = int(current_user.id)
+    active_payment_txns: list = []
+    if rows:
+        active_payment_txns = (
+            db.query(models.EmployeeTransaction.id, models.EmployeeTransaction.contract_employee_id)
+            .filter(
+                models.EmployeeTransaction.contract_employee_id.in_([int(r.id) for r in rows]),
+                models.EmployeeTransaction.txn_type == "payment",
+                models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
+            )
+            .all()
+        )
+    txn_ids_by_ce: dict[int, list[int]] = {}
+    all_active_txn_ids: list[int] = []
+    for tid, ceid in active_payment_txns:
+        if ceid is None or tid is None:
+            continue
+        ce_id = int(ceid)
+        tx_id = int(tid)
+        txn_ids_by_ce.setdefault(ce_id, []).append(tx_id)
+        all_active_txn_ids.append(tx_id)
+    unread_txn_ids = unread_payment_notification_txn_ids(
+        db, user_id=user_id, role=role, transaction_ids=all_active_txn_ids
+    )
     # Enrich list rows with dashboard metrics.
     out: list[ContractEmployeeListItemOut] = []
     for r in rows:
@@ -106,21 +132,24 @@ def list_contract_employees(
             )
             .count()
         )
-        pending_requests = (
-            db.query(models.EmployeeTransaction)
-            .filter(
-                models.EmployeeTransaction.contract_employee_id == r.id,
-                models.EmployeeTransaction.txn_type == "payment",
-                models.EmployeeTransaction.status.in_(["requested", "approved_by_admin", "sent_to_finance", "pending"]),
-            )
-            .count()
-        )
+        active_txn_ids = txn_ids_by_ce.get(int(r.id), [])
+        pending_requests = len(active_txn_ids)
+        unread_pending_requests = sum(1 for tid in active_txn_ids if tid in unread_txn_ids)
         item = ContractEmployeeListItemOut.model_validate(r)
         item.total_paid = derived.total_paid
         item.balance = derived.balance
         item.active_jobs_count = int(active_jobs)
         item.pending_requests = int(pending_requests)
+        item.unread_pending_requests = int(unread_pending_requests)
         out.append(item)
+    # Unread money-request notifications first; then other active requests.
+    out.sort(
+        key=lambda x: (
+            -int(x.unread_pending_requests or 0),
+            -int(x.pending_requests or 0),
+            -int(x.id),
+        )
+    )
     return out
 
 
@@ -203,6 +232,13 @@ def get_contract_employee(
     emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
     if emp is None:
         raise HTTPException(status_code=404, detail="Contract employee not found")
+    mark_payment_notifications_viewed(
+        db,
+        user_id=int(current_user.id),
+        role=normalize_role(getattr(current_user, "role", None)),
+        contract_employee_id=int(employee_id),
+    )
+    db.commit()
     initiated_by_by_txn_id: dict[int, str] = {}
     try:
         txns = list(emp.transactions or [])

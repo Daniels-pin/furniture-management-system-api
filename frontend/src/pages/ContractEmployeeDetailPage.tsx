@@ -182,6 +182,7 @@ export function ContractEmployeeDetailPage() {
         if (!alive) return;
         setDetail(d);
         setJobs(j);
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
       } catch (err) {
         toast.push("error", getErrorMessage(err));
         if (!alive) return;

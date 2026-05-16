@@ -118,6 +118,20 @@ function getUnreadNotifsForJob(jobId: number, unreadNotifs: NotificationItem[]):
   return unreadNotifs.filter((n) => isNegotiationNotification(n) && Number(n.entity_id) === Number(jobId));
 }
 
+function matchesJobSearch(job: ContractJob, rawQuery: string): boolean {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return true;
+
+  const empName = String(job.contract_employee_name || "").trim().toLowerCase();
+  const idStr = String(job.id);
+  const idQuery = q.replace(/^#/, "").trim();
+
+  if (/^\d+$/.test(idQuery) && (idStr === idQuery || idStr.startsWith(idQuery))) return true;
+  if (empName && empName.includes(q)) return true;
+
+  return false;
+}
+
 function getJobActivityMs(j: ContractJob, unreadNotifs: NotificationItem[]): number {
   const related = getUnreadNotifsForJob(j.id, unreadNotifs);
   const notifMax = related.reduce((acc, n) => Math.max(acc, parseTimeMs(n.created_at)), 0);
@@ -259,6 +273,7 @@ export function AdminJobsPage() {
   const [cancelNote, setCancelNote] = useState("");
   const [cancelling, setCancelling] = useState(false);
   const [expandedEmp, setExpandedEmp] = useState<Record<string, boolean>>({});
+  const [jobSearchQuery, setJobSearchQuery] = useState("");
 
   usePageHeader({
     title: "Jobs",
@@ -354,9 +369,16 @@ export function AdminJobsPage() {
     return jobs.filter((j) => j.status === statusFilter);
   }, [jobs, statusFilter]);
 
+  const jobSearchActive = jobSearchQuery.trim().length > 0;
+
+  const searchFilteredJobs = useMemo(() => {
+    if (!jobSearchActive) return filteredJobs;
+    return filteredJobs.filter((j) => matchesJobSearch(j, jobSearchQuery));
+  }, [filteredJobs, jobSearchActive, jobSearchQuery]);
+
   const grouped = useMemo(() => {
     const byEmp = new Map<number, ContractJob[]>();
-    for (const j of filteredJobs) {
+    for (const j of searchFilteredJobs) {
       const id = Number(j.contract_employee_id);
       const list = byEmp.get(id) ?? [];
       list.push(j);
@@ -373,7 +395,12 @@ export function AdminJobsPage() {
 
     groups.sort((a, b) => b.maxActivity - a.maxActivity);
     return groups;
-  }, [filteredJobs, unreadNotifs]);
+  }, [searchFilteredJobs, unreadNotifs]);
+
+  function isEmployeeGroupOpen(employeeKey: string): boolean {
+    if (jobSearchActive) return true;
+    return Boolean(expandedEmp[employeeKey]);
+  }
 
   useEffect(() => {
     // Debugging hook: enable with `localStorage.setItem("debug_jobs", "1")`.
@@ -471,7 +498,7 @@ export function AdminJobsPage() {
               <Button onClick={() => setAssignOpen(true)}>Assign job</Button>
             </div>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
               {(
                 [
@@ -495,12 +522,39 @@ export function AdminJobsPage() {
                 </button>
               ))}
             </div>
+            <label className="block min-w-0 flex-1 sm:max-w-xs">
+              <span className="text-xs font-semibold text-black/60">Search jobs</span>
+              <div className="relative mt-1">
+                <input
+                  className="min-h-11 w-full rounded-xl border border-black/15 bg-white py-2.5 pl-3 pr-16 text-sm font-semibold shadow-sm outline-none transition focus:border-black/40"
+                  value={jobSearchQuery}
+                  onChange={(e) => setJobSearchQuery(e.target.value)}
+                  placeholder="Employee name or job ID…"
+                  aria-label="Search jobs by employee name or job ID"
+                />
+                {jobSearchActive ? (
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-semibold text-black/50 hover:bg-black/5 hover:text-black/70"
+                    onClick={() => setJobSearchQuery("")}
+                    aria-label="Clear search"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            </label>
           </div>
         </div>
 
         {loading ? <div className="px-4 py-4 text-sm text-black/60">Loading…</div> : null}
 
-        {!loading && grouped.length === 0 ? <div className="px-4 py-4 text-sm text-black/60">No jobs found.</div> : null}
+        {!loading && filteredJobs.length === 0 ? (
+          <div className="px-4 py-4 text-sm text-black/60">No jobs found.</div>
+        ) : null}
+        {!loading && filteredJobs.length > 0 && jobSearchActive && grouped.length === 0 ? (
+          <div className="px-4 py-4 text-sm text-black/60">No matching jobs found.</div>
+        ) : null}
 
         {!loading && grouped.length > 0 ? (
           <>
@@ -508,13 +562,16 @@ export function AdminJobsPage() {
             <div className="block space-y-3 p-4 md:hidden">
               {grouped.map((g) => {
                 const key = String(g.employeeId);
-                const open = Boolean(expandedEmp[key]);
+                const open = isEmployeeGroupOpen(key);
                 return (
                   <div key={g.employeeId} className="rounded-2xl border border-black/10 bg-white shadow-soft overflow-hidden">
                     <button
                       type="button"
                       className="w-full px-4 py-3 text-left hover:bg-black/[0.02]"
-                      onClick={() => setExpandedEmp((m) => ({ ...m, [key]: !open }))}
+                      onClick={() => {
+                        if (jobSearchActive) return;
+                        setExpandedEmp((m) => ({ ...m, [key]: !Boolean(expandedEmp[key]) }));
+                      }}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -567,7 +624,7 @@ export function AdminJobsPage() {
                 <tbody className="divide-y divide-black/10">
                   {grouped.map((g) => {
                     const key = String(g.employeeId);
-                    const open = Boolean(expandedEmp[key]);
+                    const open = isEmployeeGroupOpen(key);
                     return (
                       <Fragment key={g.employeeId}>
                         <tr className="bg-black/[0.01]">
@@ -575,7 +632,10 @@ export function AdminJobsPage() {
                             <button
                               type="button"
                               className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left hover:bg-black/[0.02]"
-                              onClick={() => setExpandedEmp((m) => ({ ...m, [key]: !open }))}
+                              onClick={() => {
+                                if (jobSearchActive) return;
+                                setExpandedEmp((m) => ({ ...m, [key]: !Boolean(expandedEmp[key]) }));
+                              }}
                             >
                               <div className="min-w-0">
                                 <div className="text-sm font-bold">{g.employeeName}</div>

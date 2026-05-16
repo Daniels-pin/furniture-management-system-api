@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
@@ -14,6 +15,8 @@ import { usePageHeader } from "../components/layout/pageHeader";
 export function FinanceDashboardPage() {
   const auth = useAuth();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
+  const moneyRequestsView = searchParams.get("moneyRequests") === "1";
   const [section, setSection] = useState<"payments" | "petty_cash">("payments");
   const [tab, setTab] = useState<"contract" | "monthly">("contract");
   const [pendingLoading, setPendingLoading] = useState(true);
@@ -146,6 +149,7 @@ export function FinanceDashboardPage() {
       queue_only: true,
       search: pendingSearch.trim() || undefined,
       sort: pendingSort,
+      prioritize_employee_requests: moneyRequestsView,
       limit: pageLimit,
       offset
     });
@@ -178,7 +182,10 @@ export function FinanceDashboardPage() {
     setDetailReceiptName(null);
     void employeePaymentsApi
       .detail(transactionId)
-      .then((d) => setDetail(d))
+      .then((d) => {
+        setDetail(d);
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
+      })
       .catch((e) => toast.push("error", getErrorMessage(e)))
       .finally(() => setDetailLoading(false));
   }
@@ -205,7 +212,25 @@ export function FinanceDashboardPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, tab, pendingSort, pendingSearch, historySort, historySearch]);
+  }, [toast, tab, pendingSort, pendingSearch, historySort, historySearch, moneyRequestsView]);
+
+  useEffect(() => {
+    const onUpdated = () => {
+      setPendingLoading(true);
+      void refreshPending({ offset: pendingOffset })
+        .catch((e) => toast.push("error", getErrorMessage(e)))
+        .finally(() => setPendingLoading(false));
+    };
+    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
+    const iv = window.setInterval(() => {
+      void refreshPending({ offset: pendingOffset }).catch(() => null);
+    }, 15_000);
+    return () => {
+      window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
+      window.clearInterval(iv);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOffset, tab, pendingSort, pendingSearch, moneyRequestsView]);
 
   async function refreshPetty(next?: { offset?: number }) {
     const offset = typeof next?.offset === "number" ? next.offset : pettyOffset;
@@ -479,6 +504,11 @@ export function FinanceDashboardPage() {
                 ? "Pending queue requires receipt; contract payments also require job allocation."
                 : "Pending queue requires receipt; monthly salaries can be confirmed once paid."}
             </div>
+            {moneyRequestsView ? (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <span className="font-semibold">Money request review.</span> Employee-initiated payment requests are shown first.
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-2xl border border-black/10 bg-white p-4">
@@ -541,7 +571,12 @@ export function FinanceDashboardPage() {
                   {pending.items.map((it) => (
                     <div
                       key={it.transaction.id}
-                      className="cursor-pointer rounded-2xl border border-black/10 bg-white p-4 hover:bg-black/[0.03]"
+                      className={[
+                        "cursor-pointer rounded-2xl border p-4 hover:bg-black/[0.03]",
+                        it.notification_unread === true
+                          ? "border-amber-300/90 bg-amber-50/60 ring-1 ring-amber-200/70"
+                          : "border-black/10 bg-white"
+                      ].join(" ")}
                       role="link"
                       tabIndex={0}
                       onClick={() => openDetail(it.transaction.id)}
@@ -553,7 +588,15 @@ export function FinanceDashboardPage() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-bold">{it.employee_name}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-sm font-bold">{it.employee_name}</div>
+                            {it.notification_unread === true ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-950">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+                                Money Request
+                              </span>
+                            ) : null}
+                          </div>
                           <div className="mt-1 text-xs font-semibold text-black/55">
                             {fmtSentToFinanceDate(it as any)}
                           </div>
@@ -580,7 +623,12 @@ export function FinanceDashboardPage() {
                       {pending.items.map((it) => (
                         <tr
                           key={it.transaction.id}
-                          className="border-b border-black/5 bg-black/[0.03] cursor-pointer hover:bg-black/[0.05]"
+                          className={[
+                            "border-b cursor-pointer",
+                            it.notification_unread === true
+                              ? "border-amber-200/80 bg-amber-50/50 hover:bg-amber-50/80"
+                              : "border-black/5 bg-black/[0.03] hover:bg-black/[0.05]"
+                          ].join(" ")}
                           role="link"
                           tabIndex={0}
                           onClick={(e) => {
@@ -594,7 +642,16 @@ export function FinanceDashboardPage() {
                             openDetail(it.transaction.id);
                           }}
                         >
-                          <td className="py-3 pr-4 font-semibold">{it.employee_name}</td>
+                          <td className="py-3 pr-4 font-semibold">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{it.employee_name}</span>
+                              {it.notification_unread === true ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-950">
+                                  Money Request
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="py-3 pr-4 text-xs font-semibold text-black/60">
                             {fmtSentToFinanceDate(it as any)}
                           </td>

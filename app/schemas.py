@@ -1484,6 +1484,7 @@ class ContractEmployeeListItemOut(BaseModel):
     balance: Decimal
     active_jobs_count: int = 0
     pending_requests: int = 0
+    unread_pending_requests: int = 0
 
     @computed_field(return_type=Decimal)
     @property
@@ -1808,6 +1809,7 @@ class PendingEmployeePaymentItem(BaseModel):
     # When the item entered the finance queue (best-effort; falls back to transaction.created_at).
     sent_to_finance_at: Optional[datetime] = None
     initiated_by: Optional[Literal["admin", "employee"]] = None
+    notification_unread: bool = False
 
 
 class EmployeePaymentsPageOut(BaseModel):

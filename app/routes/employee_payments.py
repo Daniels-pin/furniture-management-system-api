@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.auth.auth import normalize_role, require_role
+from app.utils.notifications import mark_payment_notifications_viewed, unread_payment_notification_txn_ids
 from app.database import get_db
 from app.schemas import (
     EmployeePaymentMarkPaidIn,
@@ -38,7 +39,27 @@ def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
-def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeePaymentItem:
+def _is_employee_initiated_payment(db: Session, t: models.EmployeeTransaction) -> bool:
+    if t.txn_type != "payment":
+        return False
+    req_log = (
+        db.query(models.FinancialAuditLog.id)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id == t.id,
+            models.FinancialAuditLog.action == "contract_employee_payment_requested",
+        )
+        .first()
+    )
+    return req_log is not None
+
+
+def _txn_to_item(
+    db: Session,
+    t: models.EmployeeTransaction,
+    *,
+    unread_txn_ids: set[int] | None = None,
+) -> PendingEmployeePaymentItem:
     # Expose "processed_by" as a friendly username (email local-part) when available.
     processed_by = None
     if getattr(t, "processed_by_user", None) is not None:
@@ -52,16 +73,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
         # Distinguish employee-requested vs admin-initiated:
         # - Employee requests always create an audit log entry with action=contract_employee_payment_requested
         # - Admin initiated payments (direct send-to-finance, bulk send, payroll, etc.) do not.
-        req_log = (
-            db.query(models.FinancialAuditLog.id)
-            .filter(
-                models.FinancialAuditLog.entity_type == "employee_transaction",
-                models.FinancialAuditLog.entity_id == t.id,
-                models.FinancialAuditLog.action == "contract_employee_payment_requested",
-            )
-            .first()
-        )
-        initiated_by = "employee" if req_log else "admin"
+        initiated_by = "employee" if _is_employee_initiated_payment(db, t) else "admin"
 
     # Prefer the audit log timestamp for when it was sent to Finance.
     sent_log = (
@@ -76,6 +88,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
     )
     sent_to_finance_at = getattr(sent_log, "created_at", None) or getattr(t, "created_at", None)
 
+    notification_unread = bool(unread_txn_ids and int(t.id) in unread_txn_ids)
     if t.contract_employee_id is not None:
         ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
         return PendingEmployeePaymentItem(
@@ -88,6 +101,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
             period_label=None,
             sent_to_finance_at=sent_to_finance_at,
             initiated_by=initiated_by,
+            notification_unread=notification_unread,
         )
     emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
     period_label: Optional[str] = None
@@ -104,6 +118,7 @@ def _txn_to_item(db: Session, t: models.EmployeeTransaction) -> PendingEmployeeP
         period_label=period_label,
         sent_to_finance_at=sent_to_finance_at,
         initiated_by=initiated_by,
+        notification_unread=notification_unread,
     )
 
 
@@ -115,6 +130,10 @@ def list_pending_payments(
     kind: Optional[str] = Query(None, description="monthly | contract"),
     overpaid: Optional[bool] = Query(None, description="true shows employees with balance < 0 (contract only)"),
     sort: str = Query("oldest", description="oldest | newest | amount_desc | amount_asc"),
+    prioritize_employee_requests: bool = Query(
+        False,
+        description="When true, employee-initiated contract payment requests appear before admin-initiated items.",
+    ),
     queue_only: bool = Query(False, description="When true, only include items awaiting finance (sent_to_finance|pending)."),
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
@@ -180,8 +199,67 @@ def list_pending_payments(
         filtered.append(t)
         total += _as_decimal(t.amount)
 
+    unread_txn_ids = unread_payment_notification_txn_ids(
+        db,
+        user_id=int(current_user.id),
+        role=role,
+        transaction_ids=[int(t.id) for t in filtered],
+    )
+
+    def _unread_rank(txn: models.EmployeeTransaction) -> int:
+        return 0 if int(txn.id) in unread_txn_ids else 1
+
+    if prioritize_employee_requests:
+        employee_initiated_cache: dict[int, bool] = {}
+
+        def _employee_priority(txn: models.EmployeeTransaction) -> int:
+            txn_id = int(txn.id)
+            if txn_id not in employee_initiated_cache:
+                employee_initiated_cache[txn_id] = _is_employee_initiated_payment(db, txn)
+            return 0 if employee_initiated_cache[txn_id] else 1
+
+        def _sort_key(txn: models.EmployeeTransaction, *, newest: bool, amount_key: int = 0) -> tuple:
+            unread_rank = 0 if int(txn.id) in unread_txn_ids else 1
+            emp_rank = _employee_priority(txn)
+            if amount_key == -1:
+                return (unread_rank, emp_rank, -_as_decimal(txn.amount), -int(txn.id))
+            if amount_key == 1:
+                return (unread_rank, emp_rank, _as_decimal(txn.amount), int(txn.id))
+            ts = txn.created_at.timestamp() if txn.created_at else 0
+            return (unread_rank, emp_rank, -ts if newest else ts, -int(txn.id) if newest else int(txn.id))
+
+        if sort == "newest":
+            filtered.sort(key=lambda t: _sort_key(t, newest=True))
+        elif sort == "amount_desc":
+            filtered.sort(key=lambda t: _sort_key(t, newest=False, amount_key=-1))
+        elif sort == "amount_asc":
+            filtered.sort(key=lambda t: _sort_key(t, newest=False, amount_key=1))
+        else:
+            filtered.sort(key=lambda t: _sort_key(t, newest=False))
+    elif unread_txn_ids:
+        if sort == "newest":
+            filtered.sort(
+                key=lambda t: (
+                    _unread_rank(t),
+                    -(t.created_at.timestamp() if t.created_at else 0),
+                    -int(t.id),
+                )
+            )
+        elif sort == "amount_desc":
+            filtered.sort(key=lambda t: (_unread_rank(t), -_as_decimal(t.amount), -int(t.id)))
+        elif sort == "amount_asc":
+            filtered.sort(key=lambda t: (_unread_rank(t), _as_decimal(t.amount), int(t.id)))
+        else:
+            filtered.sort(
+                key=lambda t: (
+                    _unread_rank(t),
+                    t.created_at.timestamp() if t.created_at else 0,
+                    int(t.id),
+                )
+            )
+
     page_rows = filtered[offset : offset + limit]
-    items = [_txn_to_item(db, t) for t in page_rows]
+    items = [_txn_to_item(db, t, unread_txn_ids=unread_txn_ids) for t in page_rows]
 
     return PendingEmployeePaymentsOut(
         total_pending_amount=total,
@@ -383,6 +461,14 @@ def payment_request_detail(
         raise HTTPException(status_code=404, detail="Transaction not found")
     if t.txn_type != "payment":
         raise HTTPException(status_code=400, detail="Only payment requests are supported here.")
+
+    mark_payment_notifications_viewed(
+        db,
+        user_id=int(current_user.id),
+        role=normalize_role(getattr(current_user, "role", None)),
+        transaction_id=int(transaction_id),
+    )
+    db.commit()
 
     # Augment transaction output with initiated_by (request vs admin initiated).
     req_log = (

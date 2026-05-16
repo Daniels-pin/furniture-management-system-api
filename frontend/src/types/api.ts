@@ -715,6 +715,7 @@ export type ContractEmployeeListItem = {
   balance: string | number;
   active_jobs_count?: number;
   pending_requests?: number;
+  unread_pending_requests?: number;
 };
 
 export type ContractEmployeeDetail = ContractEmployeeListItem & {
@@ -813,6 +814,7 @@ export type PendingEmployeePaymentItem = {
   period_label?: string | null;
   sent_to_finance_at?: string | null;
   initiated_by?: "admin" | "employee" | null;
+  notification_unread?: boolean;
 };
 
 export type PendingEmployeePayments = {

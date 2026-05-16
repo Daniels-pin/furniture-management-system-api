@@ -1221,6 +1221,7 @@ export const employeePaymentsApi = {
     kind?: "monthly" | "contract";
     overpaid?: boolean;
     sort?: "oldest" | "newest" | "amount_desc" | "amount_asc";
+    prioritize_employee_requests?: boolean;
     queue_only?: boolean;
     limit?: number;
     offset?: number;

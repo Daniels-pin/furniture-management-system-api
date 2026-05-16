@@ -18,6 +18,11 @@ import type {
   PendingEmployeePayments
 } from "../types/api";
 import { formatMoney } from "../utils/money";
+import {
+  hasActiveMoneyRequests,
+  hasUnreadMoneyRequestNotifications,
+  sortContractEmployeesByPendingRequests
+} from "../utils/contractEmployeeList";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
 
@@ -33,6 +38,7 @@ export function EmployeesPage() {
     | "contract"
     | "pending";
   const refreshToken = searchParams.get("r");
+  const moneyRequestsView = searchParams.get("moneyRequests") === "1";
 
   const [nav, setNav] = useState<PayrollPeriodsNav | null>(null);
   const [rows, setRows] = useState<EmployeeListItem[]>([]);
@@ -430,7 +436,8 @@ export function EmployeesPage() {
         const res = await employeePaymentsApi.pending({
           search: pendingSearch.trim() || undefined,
           overpaid: pendingOverpaidOnly ? true : undefined,
-          sort: pendingSort
+          sort: pendingSort,
+          prioritize_employee_requests: moneyRequestsView
         });
         if (!alive) return;
         setPending(res);
@@ -443,13 +450,13 @@ export function EmployeesPage() {
     return () => {
       alive = false;
     };
-  }, [auth.role, toast, pendingSearch, pendingOverpaidOnly, pendingSort]);
+  }, [auth.role, toast, pendingSearch, pendingOverpaidOnly, pendingSort, moneyRequestsView]);
 
   useEffect(() => {
     if (auth.role !== "admin") return;
     if (tab !== "contract") return;
     let alive = true;
-    (async () => {
+    const load = async () => {
       setContractLoading(true);
       try {
         const res = await contractEmployeesApi.list({
@@ -458,15 +465,21 @@ export function EmployeesPage() {
           overpaid: contractOverpaidOnly ? true : undefined
         });
         if (!alive) return;
-        setContractRows(res);
+        setContractRows(sortContractEmployeesByPendingRequests(res));
       } catch (e) {
         toast.push("error", getErrorMessage(e));
       } finally {
         if (alive) setContractLoading(false);
       }
-    })();
+    };
+    void load();
+    const onUpdated = () => void load();
+    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
+    const iv = window.setInterval(() => void load(), 15_000);
     return () => {
       alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
+      window.clearInterval(iv);
     };
   }, [auth.role, tab, toast, contractSearch, contractStatusFilter, contractOverpaidOnly, refreshToken]);
 
@@ -504,6 +517,36 @@ export function EmployeesPage() {
     const sp = new URLSearchParams(searchParams);
     sp.set("tab", next);
     setSearchParams(sp);
+  }
+
+  function contractRowSurfaceClass(r: ContractEmployeeListItem, base: string) {
+    return hasUnreadMoneyRequestNotifications(r)
+      ? `${base} border-amber-300/90 bg-amber-50/60 ring-1 ring-amber-200/70`
+      : base;
+  }
+
+  function renderMoneyRequestIndicators(r: ContractEmployeeListItem) {
+    if (!hasUnreadMoneyRequestNotifications(r)) {
+      if (!hasActiveMoneyRequests(r)) return null;
+      return (
+        <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/65">
+          {r.pending_requests} active request{(r.pending_requests ?? 0) === 1 ? "" : "s"}
+        </span>
+      );
+    }
+    return (
+      <>
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-950">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+          Money Request
+        </span>
+        <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">
+          {(r.unread_pending_requests ?? 0) > 0
+            ? `${r.unread_pending_requests} new`
+            : `${r.pending_requests} pending finance`}
+        </span>
+      </>
+    );
   }
 
   return (
@@ -1107,6 +1150,11 @@ export function EmployeesPage() {
         </>
       ) : (
         <>
+          {moneyRequestsView ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <span className="font-semibold">Money request review.</span> Employees with active payment requests are shown first.
+            </div>
+          ) : null}
           <Card>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
               <label className="flex flex-1 flex-col text-xs font-semibold text-black/60 sm:min-w-[220px]">
@@ -1212,7 +1260,7 @@ export function EmployeesPage() {
                   {contractRows.map((r) => (
                     <div
                       key={r.id}
-                      className="rounded-2xl border border-black/10 bg-white p-4"
+                      className={contractRowSurfaceClass(r, "rounded-2xl border p-4")}
                       role="link"
                       tabIndex={0}
                       onClick={() => navigate(`/contract-employees/${r.id}`)}
@@ -1245,14 +1293,12 @@ export function EmployeesPage() {
                               <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
                                 {r.status === "active" ? "Active" : "Inactive"}
                               </span>
-                              <span
-                                className={[
-                                  "inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
-                                  (r.pending_requests ?? 0) > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
-                                ].join(" ")}
-                              >
-                                {typeof r.pending_requests === "number" ? r.pending_requests : 0} pending
-                              </span>
+                              {renderMoneyRequestIndicators(r)}
+                              {(r.pending_requests ?? 0) === 0 ? (
+                                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-black/10 px-2 py-0.5 text-xs font-bold text-black/70">
+                                  0 pending
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </label>
@@ -1330,7 +1376,12 @@ export function EmployeesPage() {
                     {contractRows.map((r) => (
                       <tr
                         key={r.id}
-                        className="border-b border-black/5 cursor-pointer hover:bg-black/[0.02]"
+                        className={[
+                          "border-b cursor-pointer",
+                          hasUnreadMoneyRequestNotifications(r)
+                            ? "border-amber-200/80 bg-amber-50/50 hover:bg-amber-50/80"
+                            : "border-black/5 hover:bg-black/[0.02]"
+                        ].join(" ")}
                         role="link"
                         tabIndex={0}
                         onClick={(e) => {
@@ -1358,13 +1409,16 @@ export function EmployeesPage() {
                           />
                         </td>
                         <td className="py-3 pr-4 font-semibold">
-                          <Link
-                            className="text-black underline decoration-black/30 underline-offset-2 hover:decoration-black/50"
-                            to={`/contract-employees/${r.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {r.full_name}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              className="text-black underline decoration-black/30 underline-offset-2 hover:decoration-black/50"
+                              to={`/contract-employees/${r.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {r.full_name}
+                            </Link>
+                            {renderMoneyRequestIndicators(r)}
+                          </div>
                         </td>
                         <td className="py-3 pr-4">
                           <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
@@ -1376,10 +1430,18 @@ export function EmployeesPage() {
                           <span
                             className={[
                               "inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
-                              (r.pending_requests ?? 0) > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                              (r.unread_pending_requests ?? 0) > 0
+                                ? "bg-emerald-600 text-white"
+                                : (r.pending_requests ?? 0) > 0
+                                  ? "bg-black/10 text-black/70"
+                                  : "bg-black/10 text-black/70"
                             ].join(" ")}
                           >
-                            {typeof r.pending_requests === "number" ? r.pending_requests : 0}
+                            {(r.unread_pending_requests ?? 0) > 0
+                              ? r.unread_pending_requests
+                              : typeof r.pending_requests === "number"
+                                ? r.pending_requests
+                                : 0}
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-right tabular-nums">{formatMoney((r as any).total ?? 0)}</td>

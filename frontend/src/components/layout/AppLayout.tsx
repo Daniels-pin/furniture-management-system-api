@@ -367,20 +367,53 @@ export function AppLayout() {
       return;
     }
     let alive = true;
-    (async () => {
+    const refreshPendingMoneyCount = async () => {
       try {
-        const res = await employeePaymentsApi.pending({ kind: "contract", sort: "oldest", limit: 1, offset: 0 });
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
         if (!alive) return;
-        setPendingMoneyCount(typeof res?.total === "number" ? res.total : Array.isArray(res?.items) ? res.items.length : 0);
+        const items = Array.isArray(res?.items) ? res.items : [];
+        const kinds =
+          auth.role === "finance" ? ["payment_sent_to_finance"] : ["payment_request_submitted"];
+        setPendingMoneyCount(items.filter((n) => kinds.includes(String(n.kind))).length);
       } catch {
         if (!alive) return;
         setPendingMoneyCount(0);
       }
-    })();
+    };
+    void refreshPendingMoneyCount();
+    const onUpdated = () => void refreshPendingMoneyCount();
+    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
+    const iv = window.setInterval(() => void refreshPendingMoneyCount(), 15_000);
     return () => {
       alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
+      window.clearInterval(iv);
     };
   }, [location.pathname, auth.role]);
+
+  function navigateForMoneyRequests() {
+    if (auth.role === "finance") nav("/finance?moneyRequests=1");
+    else nav("/employees?tab=contract&moneyRequests=1");
+  }
+
+  function handleNotificationClick(n: NotificationItem) {
+    void notificationsApi
+      .markRead(n.id)
+      .then(() => notificationsApi.my({ limit: 30 }))
+      .then((res) => setNotifPage(res))
+      .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
+      .catch(() => null);
+
+    if (n.kind === "payment_request_submitted" && auth.role === "admin") {
+      setNotifOpen(false);
+      navigateForMoneyRequests();
+      return;
+    }
+    if (n.kind === "payment_sent_to_finance" && auth.role === "finance") {
+      setNotifOpen(false);
+      navigateForMoneyRequests();
+    }
+  }
 
   useEffect(() => {
     if (auth.role === "factory" || auth.role === "finance" || auth.role === "staff") {
@@ -696,14 +729,7 @@ export function AppLayout() {
                                     key={n.id}
                                     type="button"
                                     className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                                    onClick={() => {
-                                      void notificationsApi
-                                        .markRead(n.id)
-                                        .then(() => notificationsApi.my({ limit: 30 }))
-                                        .then((res) => setNotifPage(res))
-                                        .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
-                                        .catch(() => null);
-                                    }}
+                                    onClick={() => handleNotificationClick(n)}
                                   >
                                     <div className="min-w-0">
                                       <div className="text-sm font-semibold">{n.title}</div>
@@ -770,10 +796,7 @@ export function AppLayout() {
                       type="button"
                       className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
                       aria-label={`Pending payment requests${pendingMoneyCount ? `: ${pendingMoneyCount}` : ""}`}
-                      onClick={() => {
-                        if (auth.role === "finance") nav("/finance");
-                        else nav("/employees?tab=contract");
-                      }}
+                      onClick={() => navigateForMoneyRequests()}
                     >
                       <span className="text-base" aria-hidden>
                         💰
