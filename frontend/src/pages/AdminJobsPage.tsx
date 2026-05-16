@@ -11,6 +11,14 @@ import { formatMoney } from "../utils/money";
 import type { AdminJobsSummary, ContractEmployeeListItem, ContractJob, NotificationItem } from "../types/api";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
+import {
+  getEmployeeUnreadSummary,
+  getJobActivityMs,
+  getPrimaryJobAlertLabel,
+  getUnreadNotifsForJob,
+  sortEmployeeGroupsByAttention,
+  sortJobsByAttention
+} from "../utils/jobNotifications";
 
 function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset";
@@ -104,20 +112,6 @@ function getNegotiationUi(j: ContractJob) {
   return { state, acceptanceLabel, lastPriceByLabel };
 }
 
-function parseTimeMs(v?: string | null): number {
-  if (!v) return 0;
-  const t = new Date(v).getTime();
-  return Number.isFinite(t) ? t : 0;
-}
-
-function isNegotiationNotification(n: NotificationItem): boolean {
-  return n.entity_type === "contract_job" && (n.kind === "price_updated" || n.kind === "price_accepted");
-}
-
-function getUnreadNotifsForJob(jobId: number, unreadNotifs: NotificationItem[]): NotificationItem[] {
-  return unreadNotifs.filter((n) => isNegotiationNotification(n) && Number(n.entity_id) === Number(jobId));
-}
-
 function matchesJobSearch(job: ContractJob, rawQuery: string): boolean {
   const q = rawQuery.trim().toLowerCase();
   if (!q) return true;
@@ -132,24 +126,77 @@ function matchesJobSearch(job: ContractJob, rawQuery: string): boolean {
   return false;
 }
 
-function getJobActivityMs(j: ContractJob, unreadNotifs: NotificationItem[]): number {
-  const related = getUnreadNotifsForJob(j.id, unreadNotifs);
-  const notifMax = related.reduce((acc, n) => Math.max(acc, parseTimeMs(n.created_at)), 0);
-  if (notifMax > 0) return notifMax;
-  return Math.max(
-    parseTimeMs((j as any).offer_updated_at ?? null),
-    parseTimeMs((j as any).admin_accepted_at ?? null),
-    parseTimeMs((j as any).employee_accepted_at ?? null),
-    parseTimeMs((j as any).price_accepted_at ?? null),
-    parseTimeMs((j as any).created_at ?? null)
+function JobAlertBadge({ label }: { label: string | null }) {
+  if (!label) return null;
+  const isNewJob = label === "New Job";
+  const isNegotiation = label === "New Negotiation" || label === "Offer Accepted";
+  const cls = isNewJob
+    ? "bg-amber-50 text-amber-950 ring-amber-200"
+    : isNegotiation
+      ? "bg-indigo-50 text-indigo-900 ring-indigo-200"
+      : "bg-rose-50 text-rose-900 ring-rose-200";
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
+        cls
+      ].join(" ")}
+    >
+      {label}
+    </span>
   );
 }
 
-function NewNegotiationBadge({ show }: { show: boolean }) {
+function EmployeeGroupAlertBadges({
+  newJobCount,
+  negotiationCount,
+  cancelledCount
+}: {
+  newJobCount: number;
+  negotiationCount: number;
+  cancelledCount: number;
+}) {
+  if (newJobCount === 0 && negotiationCount === 0 && cancelledCount === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {newJobCount > 0 ? (
+        <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-950 ring-1 ring-inset ring-amber-200">
+          {newJobCount === 1 ? "New Job" : `${newJobCount} New Jobs`}
+        </span>
+      ) : null}
+      {negotiationCount > 0 ? (
+        <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200">
+          {negotiationCount === 1 ? "New Negotiation" : `${negotiationCount} Negotiations`}
+        </span>
+      ) : null}
+      {cancelledCount > 0 ? (
+        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-900 ring-1 ring-inset ring-rose-200">
+          {cancelledCount === 1 ? "Cancelled" : `${cancelledCount} Cancelled`}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function jobHasAttachment(job: ContractJob): boolean {
+  return Boolean(String(job.image_url || "").trim());
+}
+
+function JobAttachmentBadge({ show }: { show: boolean }) {
   if (!show) return null;
   return (
-    <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200">
-      New Negotiation
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200"
+      title="Photo or attachment uploaded"
+    >
+      <svg className="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path
+          fillRule="evenodd"
+          d="M1.5 6a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0119.5 6v8.25a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 14.25V6zM3.5 4.5a.75.75 0 00-.75.75v5.189l2.25-2.25a2.25 2.25 0 013.182 0l4.658 4.658a.75.75 0 001.06 0l1.72-1.72a.75.75 0 011.06 0l2.25 2.25V5.25a.75.75 0 00-.75-.75h-10.5zM12 8.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z"
+          clipRule="evenodd"
+        />
+      </svg>
+      Photo
     </span>
   );
 }
@@ -174,12 +221,12 @@ function AdminJobCard({
   job,
   onOpen,
   onCancel,
-  hasNewNegotiation
+  alertLabel
 }: {
   job: ContractJob;
   onOpen(): void;
   onCancel(): void;
-  hasNewNegotiation: boolean;
+  alertLabel: string | null;
 }) {
   const vis = getRowVisual(job);
   const isLocked = Boolean(job.price_accepted_at) || job.final_price != null;
@@ -204,7 +251,8 @@ function AdminJobCard({
             <PaidFlagBadge paid={Boolean(job.paid_flag)} />
             <NegotiationBadge state={showNegotiation || vis.negotiatingBadge ? ui.state : "none"} />
             <AcceptanceIndicator label={ui.acceptanceLabel} />
-            <NewNegotiationBadge show={hasNewNegotiation} />
+            <JobAlertBadge label={alertLabel} />
+            <JobAttachmentBadge show={jobHasAttachment(job)} />
           </div>
           <div className="mt-1 text-xs font-semibold text-black/60">
             {job.contract_employee_name || `Employee #${job.contract_employee_id}`}
@@ -387,15 +435,47 @@ export function AdminJobsPage() {
 
     const groups = Array.from(byEmp.entries()).map(([employeeId, list]) => {
       const employeeName = list.find((j) => j.contract_employee_name)?.contract_employee_name || `Employee #${employeeId}`;
-      const jobsSorted = [...list].sort((a, b) => getJobActivityMs(b, unreadNotifs) - getJobActivityMs(a, unreadNotifs));
-      const maxActivity = jobsSorted.length ? getJobActivityMs(jobsSorted[0], unreadNotifs) : 0;
-      const newCount = list.reduce((acc, j) => acc + (getUnreadNotifsForJob(j.id, unreadNotifs).length ? 1 : 0), 0);
-      return { employeeId, employeeName, jobs: jobsSorted, maxActivity, newCount };
+      const summary = getEmployeeUnreadSummary(list, unreadNotifs);
+      const jobsSorted = sortJobsByAttention(list, unreadNotifs);
+      const maxActivity = summary.hasUnread
+        ? summary.maxActivityMs
+        : jobsSorted.length
+          ? getJobActivityMs(jobsSorted[0], unreadNotifs)
+          : 0;
+      return {
+        employeeId,
+        employeeName,
+        jobs: jobsSorted,
+        maxActivity,
+        hasUnread: summary.hasUnread,
+        newJobCount: summary.newJobCount,
+        negotiationCount: summary.negotiationCount,
+        cancelledCount: summary.cancelledCount
+      };
     });
 
-    groups.sort((a, b) => b.maxActivity - a.maxActivity);
-    return groups;
+    return sortEmployeeGroupsByAttention(groups);
   }, [searchFilteredJobs, unreadNotifs]);
+
+  async function toggleEmployeeGroup(employeeId: number, employeeKey: string) {
+    if (jobSearchActive) return;
+    const willOpen = !Boolean(expandedEmp[employeeKey]);
+    setExpandedEmp((m) => ({ ...m, [employeeKey]: willOpen }));
+    if (!willOpen) return;
+    try {
+      await notificationsApi.markContractEmployeeJobsRead(employeeId);
+      setUnreadNotifs((prev) =>
+        prev.filter((n) => {
+          if (n.entity_type !== "contract_job") return true;
+          const job = jobs.find((j) => Number(j.id) === Number(n.entity_id));
+          return !job || Number(job.contract_employee_id) !== Number(employeeId);
+        })
+      );
+      window.dispatchEvent(new Event("furniture:notifications-updated"));
+    } catch {
+      // ignore (non-critical)
+    }
+  }
 
   function isEmployeeGroupOpen(employeeKey: string): boolean {
     if (jobSearchActive) return true;
@@ -567,11 +647,11 @@ export function AdminJobsPage() {
                   <div key={g.employeeId} className="rounded-2xl border border-black/10 bg-white shadow-soft overflow-hidden">
                     <button
                       type="button"
-                      className="w-full px-4 py-3 text-left hover:bg-black/[0.02]"
-                      onClick={() => {
-                        if (jobSearchActive) return;
-                        setExpandedEmp((m) => ({ ...m, [key]: !Boolean(expandedEmp[key]) }));
-                      }}
+                      className={[
+                        "w-full px-4 py-3 text-left hover:bg-black/[0.02]",
+                        g.hasUnread && !open ? "bg-amber-50/50" : ""
+                      ].join(" ")}
+                      onClick={() => void toggleEmployeeGroup(g.employeeId, key)}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -579,7 +659,11 @@ export function AdminJobsPage() {
                           <div className="mt-0.5 text-xs font-semibold text-black/55">{g.jobs.length} job{g.jobs.length === 1 ? "" : "s"}</div>
                         </div>
                         <div className="shrink-0 flex flex-wrap items-center justify-end gap-2">
-                          <NewNegotiationBadge show={g.newCount > 0} />
+                          <EmployeeGroupAlertBadges
+                            newJobCount={g.newJobCount}
+                            negotiationCount={g.negotiationCount}
+                            cancelledCount={g.cancelledCount}
+                          />
                           <span className="text-xs font-semibold text-black/45">{open ? "Hide" : "View"}</span>
                         </div>
                       </div>
@@ -587,19 +671,22 @@ export function AdminJobsPage() {
 
                     {open ? (
                       <div className="space-y-3 border-t border-black/10 bg-black/[0.01] p-3">
-                        {g.jobs.map((j) => (
-                          <AdminJobCard
-                            key={j.id}
-                            job={j}
-                            hasNewNegotiation={getUnreadNotifsForJob(j.id, unreadNotifs).length > 0}
-                            onOpen={() => nav(`/admin/jobs/${j.id}`)}
-                            onCancel={() => {
-                              setCancelTarget(j);
-                              setCancelNote("");
-                              setCancelOpen(true);
-                            }}
-                          />
-                        ))}
+                        {g.jobs.map((j) => {
+                          const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
+                          return (
+                            <AdminJobCard
+                              key={j.id}
+                              job={j}
+                              alertLabel={getPrimaryJobAlertLabel(jobNotifs, "admin")}
+                              onOpen={() => nav(`/admin/jobs/${j.id}`)}
+                              onCancel={() => {
+                                setCancelTarget(j);
+                                setCancelNote("");
+                                setCancelOpen(true);
+                              }}
+                            />
+                          );
+                        })}
                       </div>
                     ) : null}
                   </div>
@@ -627,15 +714,12 @@ export function AdminJobsPage() {
                     const open = isEmployeeGroupOpen(key);
                     return (
                       <Fragment key={g.employeeId}>
-                        <tr className="bg-black/[0.01]">
+                        <tr className={g.hasUnread && !open ? "bg-amber-50/50" : "bg-black/[0.01]"}>
                           <td className="px-4 py-3" colSpan={7}>
                             <button
                               type="button"
                               className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left hover:bg-black/[0.02]"
-                              onClick={() => {
-                                if (jobSearchActive) return;
-                                setExpandedEmp((m) => ({ ...m, [key]: !Boolean(expandedEmp[key]) }));
-                              }}
+                              onClick={() => void toggleEmployeeGroup(g.employeeId, key)}
                             >
                               <div className="min-w-0">
                                 <div className="text-sm font-bold">{g.employeeName}</div>
@@ -644,7 +728,11 @@ export function AdminJobsPage() {
                                 </div>
                               </div>
                               <div className="shrink-0 flex flex-wrap items-center gap-2">
-                                <NewNegotiationBadge show={g.newCount > 0} />
+                                <EmployeeGroupAlertBadges
+                                  newJobCount={g.newJobCount}
+                                  negotiationCount={g.negotiationCount}
+                                  cancelledCount={g.cancelledCount}
+                                />
                                 <span className="text-xs font-semibold text-black/45">{open ? "Hide jobs" : "View jobs"}</span>
                               </div>
                             </button>
@@ -656,7 +744,7 @@ export function AdminJobsPage() {
                               const vis = getRowVisual(j);
                               const ui = getNegotiationUi(j);
                               const showNegotiation = ui.state !== "none";
-                              const hasNew = getUnreadNotifsForJob(j.id, unreadNotifs).length > 0;
+                              const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
                               return (
                                 <tr
                                   key={j.id}
@@ -668,7 +756,12 @@ export function AdminJobsPage() {
                                     if (e.key === "Enter" || e.key === " ") nav(`/admin/jobs/${j.id}`);
                                   }}
                                 >
-                                  <td className="px-4 py-3 font-semibold">#{j.id}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-semibold">#{j.id}</span>
+                                      <JobAttachmentBadge show={jobHasAttachment(j)} />
+                                    </div>
+                                  </td>
                                   <td className="px-4 py-3 text-black/70">
                                     <div className="line-clamp-2">{(j.description || "").trim() || "—"}</div>
                                   </td>
@@ -676,7 +769,7 @@ export function AdminJobsPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                       <NegotiationBadge state={showNegotiation || vis.negotiatingBadge ? ui.state : "none"} />
                                       <AcceptanceIndicator label={ui.acceptanceLabel} />
-                                      <NewNegotiationBadge show={hasNew} />
+                                      <JobAlertBadge label={getPrimaryJobAlertLabel(jobNotifs, "admin")} />
                                     </div>
                                   </td>
                                   <td className="px-4 py-3">

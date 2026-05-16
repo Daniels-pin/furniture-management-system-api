@@ -119,12 +119,8 @@ export function AdminJobDetailPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
-        if (!alive) return;
-        const items = Array.isArray(res?.items) ? res.items : [];
-        const related = items.filter((n: any) => n?.entity_type === "contract_job" && Number(n?.entity_id) === Number(job.id));
-        await Promise.all(related.map((n: any) => notificationsApi.markRead(Number(n.id))));
-        if (related.length) window.dispatchEvent(new Event("furniture:notifications-updated"));
+        await notificationsApi.markContractJobRead(job.id);
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
       } catch {
         // ignore
       }

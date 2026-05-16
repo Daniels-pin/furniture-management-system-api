@@ -1848,6 +1848,8 @@ class ContractJobMiniOut(BaseModel):
 
 class PaymentRequestDetailOut(BaseModel):
     transaction: EmployeeTransactionOut
+    employee_kind: Literal["monthly", "contract"]
+    employee_id: int
     employee_name: str
     bank_name: Optional[str] = None
     account_number: Optional[str] = None

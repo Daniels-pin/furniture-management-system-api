@@ -10,6 +10,7 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.database import get_db
 from app.schemas import NotificationsPage, NotificationOut
+from app.utils.notifications import mark_contract_job_notifications_viewed
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -89,6 +90,38 @@ def mark_job_assigned_read(
     )
     db.commit()
     return {"updated": int(updated or 0)}
+
+
+@router.post("/contract-job/{job_id}/mark-read")
+def mark_contract_job_read(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Mark all unread job-alert notifications for a single contract job."""
+    updated = mark_contract_job_notifications_viewed(
+        db,
+        user_id=int(current_user.id),
+        contract_job_id=int(job_id),
+    )
+    db.commit()
+    return {"updated": int(updated)}
+
+
+@router.post("/contract-employee/{employee_id}/jobs/mark-read")
+def mark_contract_employee_jobs_read(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Mark all unread job-alert notifications for jobs belonging to a contract employee."""
+    updated = mark_contract_job_notifications_viewed(
+        db,
+        user_id=int(current_user.id),
+        contract_employee_id=int(employee_id),
+    )
+    db.commit()
+    return {"updated": int(updated)}
 
 
 @router.post("/finance/mark-read")

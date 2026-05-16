@@ -46,6 +46,10 @@ export function FinanceDashboardPage() {
     Array<{ id: number; status: string; final_price?: string | number | null; amount_paid: string | number; balance?: string | number | null }>
   >([]);
   const [allocLines, setAllocLines] = useState<Record<number, string>>({});
+  const [allocLinkedJobIds, setAllocLinkedJobIds] = useState<number[]>([]);
+  const [allocLinkedJobsPreview, setAllocLinkedJobsPreview] = useState<
+    Array<{ id: number; status: string; final_price?: string | number | null }>
+  >([]);
   const [overpayConfirm, setOverpayConfirm] = useState(false);
   const [confirmWithoutReceipt, setConfirmWithoutReceipt] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -53,6 +57,8 @@ export function FinanceDashboardPage() {
   const [detailTxnId, setDetailTxnId] = useState<number | null>(null);
   const [detail, setDetail] = useState<null | {
     transaction: any;
+    employee_kind: "monthly" | "contract";
+    employee_id: number;
     employee_name: string;
     bank_name?: string | null;
     account_number?: string | null;
@@ -90,16 +96,78 @@ export function FinanceDashboardPage() {
     return null;
   }
 
+  type AllocJobRow = {
+    id: number;
+    status: string;
+    final_price?: string | number | null;
+    amount_paid: string | number;
+    balance?: string | number | null;
+  };
+
+  function mergeAllocJobRows(
+    financeJobs: AllocJobRow[],
+    linkedJobs: Array<{ id: number; status: string; final_price?: string | number | null }>,
+    linkedJobIds: number[]
+  ): AllocJobRow[] {
+    const byId = new Map<number, AllocJobRow>();
+    for (const j of financeJobs) {
+      byId.set(j.id, j);
+    }
+    for (const j of linkedJobs) {
+      if (byId.has(j.id)) continue;
+      const fp = toFiniteNumber(j.final_price);
+      byId.set(j.id, {
+        id: j.id,
+        status: j.status,
+        final_price: j.final_price ?? null,
+        amount_paid: 0,
+        balance: fp
+      });
+    }
+    for (const jobId of linkedJobIds) {
+      if (jobId <= 0 || byId.has(jobId)) continue;
+      byId.set(jobId, {
+        id: jobId,
+        status: "linked",
+        final_price: null,
+        amount_paid: 0,
+        balance: null
+      });
+    }
+    return Array.from(byId.values()).sort((a, b) => b.id - a.id);
+  }
+
+  function collectLinkedJobIds(
+    linkedJobs: Array<{ id: number }> | null | undefined,
+    contractJobId?: number | null
+  ): number[] {
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    for (const j of linkedJobs ?? []) {
+      if (j.id > 0 && !seen.has(j.id)) {
+        seen.add(j.id);
+        ids.push(j.id);
+      }
+    }
+    if (contractJobId && contractJobId > 0 && !seen.has(contractJobId)) {
+      ids.push(contractJobId);
+    }
+    return ids;
+  }
+
   const activeAllocJobs = useMemo(() => {
+    const linkedSet = new Set(allocLinkedJobIds);
     return allocJobs.filter((j) => {
+      if (j.status === "cancelled") return false;
+      if (linkedSet.has(j.id)) return true;
       const bal = toFiniteNumber(j.balance);
       if (bal === null) return false;
       if (bal <= 0) return false;
       // Allocations are allowed for any non-cancelled job with an outstanding balance.
       // (Jobs may be "completed" but still unpaid/partially paid.)
-      return j.status !== "cancelled";
+      return true;
     });
-  }, [allocJobs]);
+  }, [allocJobs, allocLinkedJobIds]);
 
   useEffect(() => {
     // Smart default: when modal opens (and jobs are loaded), auto-select smallest-balance active job
@@ -177,20 +245,33 @@ export function FinanceDashboardPage() {
     return Boolean(el.closest('a,button,input,select,textarea,label,[role="button"],[role="checkbox"]'));
   }
 
-  function openDetail(transactionId: number) {
-    setDetailOpen(true);
-    setDetailTxnId(transactionId);
-    setDetail(null);
-    setDetailLoading(true);
-    setDetailReceiptName(null);
-    void employeePaymentsApi
+  function fetchDetail(transactionId: number, opts?: { clearWhileLoading?: boolean }) {
+    const clearWhileLoading = opts?.clearWhileLoading !== false;
+    if (clearWhileLoading) {
+      setDetail(null);
+      setDetailLoading(true);
+    }
+    return employeePaymentsApi
       .detail(transactionId)
       .then((d) => {
         setDetail(d);
         window.dispatchEvent(new Event("furniture:notifications-updated"));
+        return d;
       })
-      .catch((e) => toast.push("error", getErrorMessage(e)))
-      .finally(() => setDetailLoading(false));
+      .catch((e) => {
+        toast.push("error", getErrorMessage(e));
+        throw e;
+      })
+      .finally(() => {
+        if (clearWhileLoading) setDetailLoading(false);
+      });
+  }
+
+  function openDetail(transactionId: number) {
+    setDetailOpen(true);
+    setDetailTxnId(transactionId);
+    setDetailReceiptName(null);
+    void fetchDetail(transactionId, { clearWhileLoading: true });
   }
 
   useEffect(() => {
@@ -962,11 +1043,17 @@ export function FinanceDashboardPage() {
                 </div>
               </div>
 
-              {detail.jobs?.length ? (
+              {detail.employee_kind === "contract" &&
+              (detail.jobs?.length || detail.transaction?.contract_job_id) ? (
                 <div>
                   <div className="text-xs font-semibold text-black/55">Linked jobs</div>
                   <ul className="mt-2 divide-y divide-black/10 rounded-2xl border border-black/10">
-                    {detail.jobs.slice(0, 10).map((j) => (
+                    {(detail.jobs?.length
+                      ? detail.jobs
+                      : [{ id: Number(detail.transaction.contract_job_id), status: "linked", final_price: null }]
+                    )
+                      .slice(0, 10)
+                      .map((j) => (
                       <li key={j.id} className="px-3 py-2 text-sm">
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0 break-words font-semibold">Job #{j.id}</div>
@@ -999,10 +1086,26 @@ export function FinanceDashboardPage() {
                           const f = e.target.files?.[0];
                           if (!f || !detail.transaction?.id) return;
                           setDetailReceiptName(f.name);
-                          setBusyId(detail.transaction.id);
+                          const txnId = detail.transaction.id;
+                          setBusyId(txnId);
                           void employeePaymentsApi
-                            .uploadReceipt(detail.transaction.id, f)
-                            .then(() => openDetail(detail.transaction.id))
+                            .uploadReceipt(txnId, f)
+                            .then((updatedTxn) => {
+                              setDetail((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      transaction: {
+                                        ...prev.transaction,
+                                        ...updatedTxn,
+                                        receipt_url: updatedTxn.receipt_url ?? prev.transaction?.receipt_url
+                                      }
+                                    }
+                                  : prev
+                              );
+                              setDetailReceiptName(null);
+                              return fetchDetail(txnId, { clearWhileLoading: false });
+                            })
                             .then(() => toast.push("success", "Receipt uploaded."))
                             .catch((er) => toast.push("error", getErrorMessage(er)))
                             .finally(() => {
@@ -1080,12 +1183,21 @@ export function FinanceDashboardPage() {
                       detail.transaction?.status === "paid" ||
                       detail.transaction?.status === "cancelled"
                     }
+                    title={
+                      auth.role === "finance" && !detail.transaction?.receipt_url
+                        ? "Upload a receipt before marking this payment as paid."
+                        : undefined
+                    }
                     isLoading={busyId === detail.transaction?.id}
                     onClick={() => {
                       const txId = detail.transaction?.id;
                       if (!txId) return;
-                      const contractEmpId = detail.transaction?.contract_employee_id;
+                      const contractEmpId = detail.employee_kind === "contract" ? detail.employee_id : null;
                       if (contractEmpId) {
+                        const linkedJobs = detail.jobs ?? [];
+                        const linkedJobIds = collectLinkedJobIds(linkedJobs, detail.transaction?.contract_job_id);
+                        setAllocLinkedJobsPreview(linkedJobs);
+                        setAllocLinkedJobIds(linkedJobIds);
                         setAllocOpen(true);
                         setAllocTxId(txId);
                         setAllocEmployeeId(contractEmpId);
@@ -1098,8 +1210,20 @@ export function FinanceDashboardPage() {
                         setAllocLoading(true);
                         void contractEmployeesApi
                           .finances(contractEmpId)
-                          .then((d) => setAllocJobs(Array.isArray(d?.jobs) ? d.jobs : []))
-                          .catch((er) => toast.push("error", getErrorMessage(er)))
+                          .then((d) => {
+                            const financeJobs = Array.isArray(d?.jobs) ? d.jobs : [];
+                            setAllocJobs(mergeAllocJobRows(financeJobs, linkedJobs, linkedJobIds));
+                            const primaryLinkedId = linkedJobIds[0];
+                            if (primaryLinkedId) {
+                              const pay = parseMoneyInput(String(detail.transaction?.amount ?? ""));
+                              const payAmount = pay === null || Number.isNaN(pay) ? 0 : pay;
+                              setAllocLines({ [primaryLinkedId]: payAmount > 0 ? String(payAmount) : "" });
+                            }
+                          })
+                          .catch((er) => {
+                            setAllocJobs(mergeAllocJobRows([], linkedJobs, linkedJobIds));
+                            toast.push("error", getErrorMessage(er));
+                          })
                           .finally(() => setAllocLoading(false));
                         return;
                       }
@@ -1252,6 +1376,23 @@ export function FinanceDashboardPage() {
           <div className="text-sm text-black/70">
             Select one or more jobs and allocate amounts. Total allocations must equal the payment amount.
           </div>
+
+          {allocLinkedJobsPreview.length || allocLinkedJobIds.length ? (
+            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
+              <div className="text-xs font-semibold text-black/55">Linked to this payment</div>
+              <ul className="mt-2 space-y-2">
+                {(allocLinkedJobsPreview.length
+                  ? allocLinkedJobsPreview
+                  : allocLinkedJobIds.map((id) => ({ id, status: "linked", final_price: null }))
+                ).map((j) => (
+                  <li key={j.id} className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">Job #{j.id}</span>
+                    <span className="text-xs font-semibold text-black/55">{j.status}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <label className="text-xs font-semibold text-black/60">
             Amount to pay (optional adjustment)

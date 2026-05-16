@@ -39,6 +39,59 @@ def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
+def _payment_linked_job_ids(db: Session, t: models.EmployeeTransaction) -> list[int]:
+    """Job ids explicitly tied to this payment (direct link or allocation lines)."""
+    ordered: list[int] = []
+    seen: set[int] = set()
+
+    if getattr(t, "contract_job_id", None):
+        jid = int(t.contract_job_id)
+        if jid > 0 and jid not in seen:
+            seen.add(jid)
+            ordered.append(jid)
+
+    alloc_rows = (
+        db.query(models.EmployeePaymentAllocation.contract_job_id)
+        .filter(
+            models.EmployeePaymentAllocation.transaction_id == t.id,
+            models.EmployeePaymentAllocation.voided_at.is_(None),
+        )
+        .all()
+    )
+    for (jid,) in alloc_rows:
+        if jid is None:
+            continue
+        j = int(jid)
+        if j > 0 and j not in seen:
+            seen.add(j)
+            ordered.append(j)
+
+    return ordered
+
+
+def _payment_linked_jobs_out(db: Session, t: models.EmployeeTransaction) -> list[ContractJobMiniOut]:
+    job_ids = _payment_linked_job_ids(db, t)
+    if not job_ids:
+        return []
+
+    rows = db.query(models.ContractJob).filter(models.ContractJob.id.in_(job_ids)).all()
+    by_id = {int(j.id): j for j in rows}
+
+    out: list[ContractJobMiniOut] = []
+    for jid in job_ids:
+        j = by_id.get(jid)
+        if j is None:
+            continue
+        out.append(
+            ContractJobMiniOut(
+                id=int(j.id),
+                status=str(j.status),
+                final_price=_as_decimal(j.final_price) if j.final_price is not None else None,
+            )
+        )
+    return out
+
+
 def _is_employee_initiated_payment(db: Session, t: models.EmployeeTransaction) -> bool:
     if t.txn_type != "payment":
         return False
@@ -499,18 +552,8 @@ def payment_request_detail(
         employee_name = ce.full_name if ce else "Contract employee"
         bank_name = (ce.bank_name if ce else None)
         account_number = (ce.account_number if ce else None)
-        # Provide a small jobs list for context (if applicable).
-        job_rows = (
-            db.query(models.ContractJob)
-            .filter(models.ContractJob.contract_employee_id == t.contract_employee_id, models.ContractJob.status != "cancelled")
-            .order_by(models.ContractJob.id.desc())
-            .limit(30)
-            .all()
-        )
-        jobs = [
-            ContractJobMiniOut(id=int(j.id), status=str(j.status), final_price=_as_decimal(j.final_price) if j.final_price is not None else None)
-            for j in job_rows
-        ]
+        # Jobs explicitly linked to this payment (contract_job_id and/or allocation lines).
+        jobs = _payment_linked_jobs_out(db, t)
     else:
         emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
         employee_name = emp.full_name if emp else "Employee"
@@ -538,8 +581,17 @@ def payment_request_detail(
     current_amount = _as_decimal(t.amount)
     adjusted_amount = current_amount if current_amount != requested_amount else None
 
+    if t.contract_employee_id is not None:
+        employee_kind = "contract"
+        employee_id = int(t.contract_employee_id)
+    else:
+        employee_kind = "monthly"
+        employee_id = int(t.employee_id or 0)
+
     return PaymentRequestDetailOut(
         transaction=EmployeeTransactionOut.model_validate(t),
+        employee_kind=employee_kind,
+        employee_id=employee_id,
         employee_name=employee_name,
         bank_name=bank_name,
         account_number=account_number,
@@ -561,7 +613,7 @@ async def upload_payment_receipt(
     t = db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.id == transaction_id).first()
     if t is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    if t.status != "pending":
+    if t.status not in ("sent_to_finance", "pending"):
         raise HTTPException(status_code=409, detail="Transaction is locked.")
     if t.txn_type != "payment":
         raise HTTPException(status_code=400, detail="Receipt upload is only supported for payment transactions.")

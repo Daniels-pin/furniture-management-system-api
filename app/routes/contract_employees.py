@@ -462,7 +462,7 @@ def decrease_total_owed(
 def get_contract_employee_finances(
     employee_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    current_user=Depends(require_role(["admin", "finance"])),
 ):
     emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
     if emp is None:

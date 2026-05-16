@@ -1212,6 +1212,16 @@ export const notificationsApi = {
   async markFinanceRead() {
     const { data } = await api.post<{ updated: number }>("/notifications/finance/mark-read");
     return data;
+  },
+  async markContractJobRead(jobId: number) {
+    const { data } = await api.post<{ updated: number }>(`/notifications/contract-job/${jobId}/mark-read`);
+    return data;
+  },
+  async markContractEmployeeJobsRead(employeeId: number) {
+    const { data } = await api.post<{ updated: number }>(
+      `/notifications/contract-employee/${employeeId}/jobs/mark-read`
+    );
+    return data;
   }
 };
 
@@ -1275,6 +1285,8 @@ export const employeePaymentsApi = {
   async detail(transactionId: number) {
     const { data } = await api.get<{
       transaction: EmployeeTransaction;
+      employee_kind: "monthly" | "contract";
+      employee_id: number;
       employee_name: string;
       bank_name?: string | null;
       account_number?: string | null;

@@ -6,7 +6,13 @@ import { contractEmployeePortalApi, contractJobsApi, notificationsApi } from "..
 import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import type { ContractEmployeeMe, ContractJob, EmployeeTransaction } from "../types/api";
+import type { ContractEmployeeMe, ContractJob, EmployeeTransaction, NotificationItem } from "../types/api";
+import {
+  getPrimaryJobAlertLabel,
+  getUnreadNotifsForJob,
+  isContractJobNotification,
+  sortJobsByAttention
+} from "../utils/jobNotifications";
 import { formatMoney } from "../utils/money";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { Modal } from "../components/ui/Modal";
@@ -49,14 +55,37 @@ function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
   return <span className={[base, cls].join(" ")}>{label}</span>;
 }
 
+function JobAlertBadge({ label }: { label: string | null }) {
+  if (!label) return null;
+  const isAssigned = label === "Job Assigned";
+  const isNegotiation = label === "New Negotiation" || label === "Offer Accepted";
+  const cls = isAssigned
+    ? "bg-blue-50 text-blue-900 ring-blue-200"
+    : isNegotiation
+      ? "bg-indigo-50 text-indigo-900 ring-indigo-200"
+      : "bg-rose-50 text-rose-900 ring-rose-200";
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
+        cls
+      ].join(" ")}
+    >
+      {label}
+    </span>
+  );
+}
+
 function ContractJobCard({
   job,
   highlight,
+  alertLabel,
   onOpen,
   actions
 }: {
   job: ContractJob;
   highlight: boolean;
+  alertLabel: string | null;
   onOpen(): void;
   actions: React.ReactNode;
 }) {
@@ -75,6 +104,7 @@ function ContractJobCard({
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-bold">Job #{job.id}</div>
             <JobStatusBadge status={job.status} />
+            <JobAlertBadge label={alertLabel} />
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
@@ -164,6 +194,8 @@ export function ContractEmployeeDashboardPage() {
   const [cancelNote, setCancelNote] = useState("");
   const [cancelling, setCancelling] = useState(false);
   const [highlightJobIds, setHighlightJobIds] = useState<number[]>([]);
+  const [unreadNotifs, setUnreadNotifs] = useState<NotificationItem[]>([]);
+  const [jobsUnreadCount, setJobsUnreadCount] = useState(0);
 
   usePageHeader({
     title: "Contract Dashboard",
@@ -246,10 +278,11 @@ export function ContractEmployeeDashboardPage() {
   const inProgress = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
   const filteredJobs = useMemo(() => {
-    if (jobStatusFilter === "all") return jobs;
-    if (jobStatusFilter === "active") return jobs.filter((j) => j.status === "pending" || j.status === "in_progress");
-    return jobs.filter((j) => j.status === jobStatusFilter);
-  }, [jobs, jobStatusFilter]);
+    let list = jobs;
+    if (jobStatusFilter === "active") list = jobs.filter((j) => j.status === "pending" || j.status === "in_progress");
+    else if (jobStatusFilter !== "all") list = jobs.filter((j) => j.status === jobStatusFilter);
+    return sortJobsByAttention(list, unreadNotifs);
+  }, [jobs, jobStatusFilter, unreadNotifs]);
   const pendingRequests = useMemo(
     () =>
       (txns || []).filter(
@@ -274,6 +307,45 @@ export function ContractEmployeeDashboardPage() {
       ]),
     []
   );
+
+  useEffect(() => {
+    if (loading) return;
+    if (!me) return;
+    let alive = true;
+    async function refreshJobNotifs() {
+      try {
+        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
+        if (!alive) return;
+        const items = (Array.isArray(res?.items) ? res.items : []) as NotificationItem[];
+        setUnreadNotifs(items);
+        const jobAlerts = items.filter((n) => isContractJobNotification(n));
+        setJobsUnreadCount(jobAlerts.length);
+        if (tab === "jobs") {
+          setHighlightJobIds(
+            Array.from(
+              new Set(
+                jobAlerts.map((n) => Number(n.entity_id)).filter((x) => Number.isFinite(x))
+              )
+            )
+          );
+        }
+      } catch {
+        if (!alive) return;
+        setUnreadNotifs([]);
+        setJobsUnreadCount(0);
+      }
+    }
+
+    const onUpdated = () => void refreshJobNotifs();
+    window.addEventListener("furniture:notifications-updated", onUpdated as any);
+    void refreshJobNotifs();
+    const iv = window.setInterval(() => void refreshJobNotifs(), 10_000);
+    return () => {
+      alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as any);
+      window.clearInterval(iv);
+    };
+  }, [loading, me, tab]);
 
   useEffect(() => {
     if (loading) return;
@@ -309,15 +381,12 @@ export function ContractEmployeeDashboardPage() {
       try {
         const res = await notificationsApi.my({ unread_only: true, limit: 200 });
         if (!alive) return;
-        const ids = (Array.isArray(res?.items) ? res.items : [])
-          .filter((n: any) => n?.kind === "job_assigned")
-          .map((n: any) => Number(n?.entity_id))
-          .filter((x: any) => Number.isFinite(x));
-        setHighlightJobIds(Array.from(new Set(ids)));
-        if (ids.length) {
-          await notificationsApi.markJobAssignedRead();
-          window.dispatchEvent(new Event("furniture:notifications-updated"));
-        }
+        const items = (Array.isArray(res?.items) ? res.items : []) as NotificationItem[];
+        const hasAssigned = items.some((n) => n.kind === "job_assigned");
+        if (!hasAssigned) return;
+        await notificationsApi.markJobAssignedRead();
+        if (!alive) return;
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
       } catch {
         // ignore (non-critical)
       }
@@ -414,6 +483,11 @@ export function ContractEmployeeDashboardPage() {
                   {k === "summary" && financeUnreadCount > 0 ? (
                     <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
                       {financeUnreadCount}
+                    </span>
+                  ) : null}
+                  {k === "jobs" && jobsUnreadCount > 0 ? (
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white">
+                      {jobsUnreadCount}
                     </span>
                   ) : null}
                 </span>
@@ -609,6 +683,7 @@ export function ContractEmployeeDashboardPage() {
               {/* Mobile: cards to avoid horizontal scrolling + cramped row actions */}
               <div className="mt-3 space-y-3 md:hidden">
                 {filteredJobs.map((j) => {
+                  const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
                   const needsBoth = Boolean((j as any).negotiation_occurred);
                   const lastBy = ((j as any).last_offer_by_role ?? null) as any;
                   const empAccepted = Boolean((j as any).employee_accepted_at);
@@ -618,12 +693,16 @@ export function ContractEmployeeDashboardPage() {
                   const canStart = j.status === "pending" && Boolean(j.price_accepted_at);
                   const canComplete = j.status === "in_progress";
                   const canCancel = j.status !== "cancelled";
+                  const alertLabel =
+                    getPrimaryJobAlertLabel(jobNotifs, "contract_employee") ||
+                    (canAccept ? "Awaiting Response" : null);
 
                   return (
                     <ContractJobCard
                       key={j.id}
                       job={j}
-                      highlight={highlightJobIds.includes(j.id)}
+                      highlight={highlightJobIds.includes(j.id) || jobNotifs.length > 0}
+                      alertLabel={alertLabel}
                       onOpen={() => nav(`/contract/jobs/${j.id}`)}
                       actions={
                         <>
@@ -724,12 +803,25 @@ export function ContractEmployeeDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredJobs.map((j) => (
+                    {filteredJobs.map((j) => {
+                      const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
+                      const needsBoth = Boolean((j as any).negotiation_occurred);
+                      const lastBy = ((j as any).last_offer_by_role ?? null) as any;
+                      const empAccepted = Boolean((j as any).employee_accepted_at);
+                      const canAccept =
+                        j.status === "pending" &&
+                        !j.price_accepted_at &&
+                        j.price_offer != null &&
+                        (needsBoth ? !empAccepted : lastBy === "admin");
+                      const alertLabel =
+                        getPrimaryJobAlertLabel(jobNotifs, "contract_employee") ||
+                        (canAccept ? "Awaiting Response" : null);
+                      return (
                       <tr
                         key={j.id}
                         className={[
                           "border-b border-black/5",
-                          highlightJobIds.includes(j.id) ? "bg-blue-50/60" : "",
+                          highlightJobIds.includes(j.id) || jobNotifs.length > 0 ? "bg-blue-50/60" : "",
                           "cursor-pointer hover:bg-black/[0.02]"
                         ].join(" ")}
                         onClick={() => nav(`/contract/jobs/${j.id}`)}
@@ -739,7 +831,12 @@ export function ContractEmployeeDashboardPage() {
                           if (e.key === "Enter" || e.key === " ") nav(`/contract/jobs/${j.id}`);
                         }}
                       >
-                        <td className="py-3 pr-4 font-semibold">#{j.id}</td>
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">#{j.id}</span>
+                            <JobAlertBadge label={alertLabel} />
+                          </div>
+                        </td>
                         <td className="py-3 pr-4">
                           <JobStatusBadge status={j.status} />
                         </td>
@@ -842,7 +939,8 @@ export function ContractEmployeeDashboardPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -11,6 +11,12 @@ import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import type { ContractEmployeeDetail, ContractJob, NotificationItem } from "../types/api";
 import {
+  getEmployeeUnreadSummary,
+  getPrimaryJobAlertLabel,
+  getUnreadNotifsForJob,
+  sortJobsByAttention
+} from "../utils/jobNotifications";
+import {
   getFinancialActivityClasses,
   getFinancialActivityColor,
   getFinancialActivityStatusLabel,
@@ -72,15 +78,6 @@ function AcceptanceIndicator({ label }: { label: string | null }) {
   );
 }
 
-function NewNegotiationBadge({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200">
-      New Negotiation
-    </span>
-  );
-}
-
 function firstNameFromFullName(fullName: string | null | undefined): string | null {
   const s = String(fullName || "").trim();
   if (!s) return null;
@@ -109,12 +106,22 @@ function getNegotiationUi(j: ContractJob) {
   return { state, acceptanceLabel };
 }
 
-function isNegotiationNotification(n: NotificationItem): boolean {
-  return n.entity_type === "contract_job" && (n.kind === "price_updated" || n.kind === "price_accepted");
-}
-
-function getUnreadNotifsForJob(jobId: number, unreadNotifs: NotificationItem[]): NotificationItem[] {
-  return unreadNotifs.filter((n) => isNegotiationNotification(n) && Number(n.entity_id) === Number(jobId));
+function JobAlertBadge({ label }: { label: string | null }) {
+  if (!label) return null;
+  const isNewJob = label === "New Job";
+  const cls = isNewJob
+    ? "bg-amber-50 text-amber-950 ring-amber-200"
+    : "bg-indigo-50 text-indigo-900 ring-indigo-200";
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
+        cls
+      ].join(" ")}
+    >
+      {label}
+    </span>
+  );
 }
 
 export function ContractEmployeeDetailPage() {
@@ -224,9 +231,29 @@ export function ContractEmployeeDetailPage() {
     };
   }, [auth.role]);
 
+  useEffect(() => {
+    if (auth.role !== "admin" || tab !== "jobs" || !Number.isFinite(id)) return;
+    let alive = true;
+    (async () => {
+      try {
+        await notificationsApi.markContractEmployeeJobsRead(id);
+        if (!alive) return;
+        setUnreadNotifs([]);
+        window.dispatchEvent(new Event("furniture:notifications-updated"));
+      } catch {
+        // ignore (non-critical)
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [auth.role, tab, id]);
+
   const title = useMemo(() => detail?.full_name ?? "Contract employee", [detail?.full_name]);
-  const inProgressJobs = useMemo(() => jobs.filter((j) => j.status === "in_progress"), [jobs]);
-  const completedJobs = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
+  const jobsSorted = useMemo(() => sortJobsByAttention(jobs, unreadNotifs), [jobs, unreadNotifs]);
+  const jobsUnreadSummary = useMemo(() => getEmployeeUnreadSummary(jobs, unreadNotifs), [jobs, unreadNotifs]);
+  const inProgressJobs = useMemo(() => jobsSorted.filter((j) => j.status === "in_progress"), [jobsSorted]);
+  const completedJobs = useMemo(() => jobsSorted.filter((j) => j.status === "completed"), [jobsSorted]);
   const eligiblePaymentRequests = useMemo(() => {
     const txns = Array.isArray(detail?.transactions) ? detail!.transactions : [];
     return txns
@@ -363,7 +390,14 @@ export function ContractEmployeeDetailPage() {
                 tab === "jobs" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
               ].join(" ")}
             >
-              Jobs
+              <span className="inline-flex items-center gap-2">
+                Jobs
+                {jobsUnreadSummary.hasUnread && tab !== "jobs" ? (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white">
+                    {jobsUnreadSummary.totalCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
             <button
               type="button"
@@ -455,7 +489,9 @@ export function ContractEmployeeDetailPage() {
                                 <div className="font-semibold">Job #{j.id}</div>
                                 <div className="flex flex-wrap items-center justify-end gap-2">
                                   <JobStatusBadge status={j.status} />
-                                  <NewNegotiationBadge show={getUnreadNotifsForJob(j.id, unreadNotifs).length > 0} />
+                                  <JobAlertBadge
+                                    label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(j.id, unreadNotifs), "admin")}
+                                  />
                                 </div>
                               </div>
                               {(() => {
@@ -501,7 +537,9 @@ export function ContractEmployeeDetailPage() {
                                 <div className="font-semibold">Job #{j.id}</div>
                                 <div className="flex flex-wrap items-center justify-end gap-2">
                                   <JobStatusBadge status={j.status} />
-                                  <NewNegotiationBadge show={getUnreadNotifsForJob(j.id, unreadNotifs).length > 0} />
+                                  <JobAlertBadge
+                                    label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(j.id, unreadNotifs), "admin")}
+                                  />
                                 </div>
                               </div>
                               {(() => {
@@ -550,7 +588,9 @@ export function ContractEmployeeDetailPage() {
                       <div className="font-semibold">Job #{selectedJob.id}</div>
                       <div className="flex flex-wrap items-center gap-2">
                         <JobStatusBadge status={selectedJob.status} />
-                        <NewNegotiationBadge show={getUnreadNotifsForJob(selectedJob.id, unreadNotifs).length > 0} />
+                        <JobAlertBadge
+                          label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(selectedJob.id, unreadNotifs), "admin")}
+                        />
                       </div>
                     </div>
                     <div className="mt-1 text-xs text-black/60 line-clamp-2">{(selectedJob.description || "").trim() || "—"}</div>

@@ -90,6 +90,58 @@ def unread_payment_notification_txn_ids(
     return {int(x) for (x,) in rows if x is not None}
 
 
+CONTRACT_JOB_ALERT_KINDS = [
+    "job_assigned",
+    "price_updated",
+    "price_accepted",
+    "job_cancelled",
+]
+
+
+def mark_contract_job_notifications_viewed(
+    db: Session,
+    *,
+    user_id: int,
+    contract_employee_id: int | None = None,
+    contract_job_id: int | None = None,
+    kinds: list[str] | None = None,
+) -> int:
+    """Mark unread contract-job notifications as read for the current user.
+
+    Does not change job records or negotiation state.
+    """
+    alert_kinds = kinds if kinds is not None else CONTRACT_JOB_ALERT_KINDS
+    if not alert_kinds:
+        return 0
+
+    q = db.query(models.Notification).filter(
+        models.Notification.recipient_user_id == int(user_id),
+        models.Notification.read_at.is_(None),
+        models.Notification.entity_type == "contract_job",
+        models.Notification.kind.in_(alert_kinds),
+    )
+
+    if contract_job_id is not None:
+        q = q.filter(models.Notification.entity_id == int(contract_job_id))
+    elif contract_employee_id is not None:
+        job_ids = [
+            int(x)
+            for (x,) in db.query(models.ContractJob.id)
+            .filter(models.ContractJob.contract_employee_id == int(contract_employee_id))
+            .all()
+            if x is not None
+        ]
+        if not job_ids:
+            return 0
+        q = q.filter(models.Notification.entity_id.in_(job_ids))
+    else:
+        return 0
+
+    now = datetime.utcnow()
+    updated = q.update({"read_at": now}, synchronize_session=False)
+    return int(updated or 0)
+
+
 def create_notifications(
     db: Session,
     *,

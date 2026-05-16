@@ -9,6 +9,7 @@ import { APP_NAME } from "../../config/app";
 import { env } from "../../env";
 import { usePageHeaderState } from "./pageHeader";
 import type { NotificationItem } from "../../types/api";
+import { isContractJobNotification, isNewJobNotification } from "../../utils/jobNotifications";
 
 function NavItem({
   to,
@@ -145,11 +146,11 @@ function SectionDivider({ label }: { label: string }) {
 function AppNavLinks({
   onNavigate,
   variant,
-  pendingNegotiationsCount
+  jobsNavBadgeCount
 }: {
   onNavigate?: () => void;
   variant: "sidebar" | "drawer";
-  pendingNegotiationsCount: number;
+  jobsNavBadgeCount: number;
 }) {
   const auth = useAuth();
   const role = auth.role;
@@ -164,7 +165,7 @@ function AppNavLinks({
   }
 
   function resolveBadge(item: NavItemModel) {
-    if (item.badge === "pendingNegotiations") return pendingNegotiationsCount;
+    if (item.badge === "pendingNegotiations") return jobsNavBadgeCount;
     return undefined;
   }
 
@@ -213,6 +214,8 @@ export function AppLayout() {
   const [pendingMoneyCount, setPendingMoneyCount] = useState(0);
   const [assignedJobsCount, setAssignedJobsCount] = useState(0);
   const [pendingNegotiationsCount, setPendingNegotiationsCount] = useState(0);
+  const [adminNewJobsCount, setAdminNewJobsCount] = useState(0);
+  const jobsNavBadgeCount = pendingNegotiationsCount + adminNewJobsCount;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const lastNotifIdRef = useRef<number>(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -278,7 +281,7 @@ export function AppLayout() {
         const res = await notificationsApi.my({ unread_only: true, limit: 200 });
         if (!alive) return;
         const items = Array.isArray(res?.items) ? res.items : [];
-        const count = items.filter((n: any) => n?.kind === "job_assigned").length;
+        const count = items.filter((n) => isContractJobNotification(n as NotificationItem)).length;
         setAssignedJobsCount(count);
       } catch {
         if (!alive) return;
@@ -300,21 +303,34 @@ export function AppLayout() {
   useEffect(() => {
     if (auth.role !== "admin") {
       setPendingNegotiationsCount(0);
+      setAdminNewJobsCount(0);
       return;
     }
     let alive = true;
-    (async () => {
+    async function refreshAdminJobsBadge() {
       try {
-        const res = await contractJobsApi.pendingNegotiationsCount();
+        const [pendingRes, notifRes] = await Promise.all([
+          contractJobsApi.pendingNegotiationsCount(),
+          notificationsApi.my({ unread_only: true, limit: 200 })
+        ]);
         if (!alive) return;
-        setPendingNegotiationsCount(typeof res?.count === "number" ? res.count : 0);
+        setPendingNegotiationsCount(typeof pendingRes?.count === "number" ? pendingRes.count : 0);
+        const items = Array.isArray(notifRes?.items) ? (notifRes.items as NotificationItem[]) : [];
+        setAdminNewJobsCount(items.filter((n) => isNewJobNotification(n)).length);
       } catch {
         if (!alive) return;
         setPendingNegotiationsCount(0);
+        setAdminNewJobsCount(0);
       }
-    })();
+    }
+    const onUpdated = () => void refreshAdminJobsBadge();
+    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
+    void refreshAdminJobsBadge();
+    const iv = window.setInterval(() => void refreshAdminJobsBadge(), 10_000);
     return () => {
       alive = false;
+      window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
+      window.clearInterval(iv);
     };
   }, [auth.role, location.pathname]);
 
@@ -608,7 +624,7 @@ export function AppLayout() {
               </div>
             </div>
 
-            <AppNavLinks variant="sidebar" pendingNegotiationsCount={pendingNegotiationsCount} />
+            <AppNavLinks variant="sidebar" jobsNavBadgeCount={jobsNavBadgeCount} />
 
             <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-3 lg:mt-6">
               <div className="text-xs font-semibold lg:text-sm">
@@ -1016,7 +1032,7 @@ export function AppLayout() {
               <AppNavLinks
                 variant="drawer"
                 onNavigate={closeDrawer}
-                pendingNegotiationsCount={pendingNegotiationsCount}
+                jobsNavBadgeCount={jobsNavBadgeCount}
               />
             </div>
             <div className="shrink-0 border-t border-black/10 bg-black/[0.02] p-4">
