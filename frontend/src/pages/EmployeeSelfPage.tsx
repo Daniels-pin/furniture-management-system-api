@@ -8,11 +8,14 @@ import { useToast } from "../state/toast";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import {
   findTodayAttendanceEntry,
-  getAttendanceMarkErrorMessage,
+  getAttendanceBlockedNoLocationFeedback,
+  getAttendanceErrorFeedback,
+  getAttendanceSuccessFeedback,
   getGeolocationPosition,
-  mergeAttendanceWithClockResponse
+  mergeAttendanceWithClockResponse,
+  type AttendanceResultFeedback
 } from "../utils/attendance";
-import { formatMoney } from "../utils/money";
+import { AttendanceResultModal } from "../components/employee/AttendanceResultModal";
 import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmployeeFinancePanel";
 
 export function EmployeeSelfPage() {
@@ -33,6 +36,7 @@ export function EmployeeSelfPage() {
   const [attBusy, setAttBusy] = useState(false);
   const [attendance, setAttendance] = useState<EmployeeAttendanceEntry[]>([]);
   const [clockRes, setClockRes] = useState<EmployeeClockInResponse | null>(null);
+  const [resultFeedback, setResultFeedback] = useState<AttendanceResultFeedback | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -82,6 +86,11 @@ export function EmployeeSelfPage() {
   }
 
   async function clockIn() {
+    if (!emp?.work_location) {
+      setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+      return;
+    }
+
     setAttBusy(true);
     try {
       const pos = await getGeolocationPosition();
@@ -96,17 +105,9 @@ export function EmployeeSelfPage() {
       } else {
         await refreshAttendance();
       }
-      if (res.status === "already_marked") {
-        toast.push("success", res.message || "Attendance already marked.");
-      } else if (res.status === "sunday") {
-        toast.push("success", res.message || "No attendance required today.");
-      } else if (res.status === "late") {
-        toast.push("success", "Clock-in recorded (Late). ₦500 lateness deduction applied.");
-      } else {
-        toast.push("success", "Clock-in recorded.");
-      }
+      setResultFeedback(getAttendanceSuccessFeedback(res));
     } catch (e) {
-      toast.push("error", getAttendanceMarkErrorMessage(e));
+      setResultFeedback(getAttendanceErrorFeedback(e));
     } finally {
       setAttBusy(false);
     }
@@ -198,6 +199,7 @@ export function EmployeeSelfPage() {
 
   return (
     <div className="space-y-6">
+      <AttendanceResultModal feedback={resultFeedback} onConfirm={() => setResultFeedback(null)} />
       <div>
         <div className="text-2xl font-bold tracking-tight">Employee Details</div>
         <div className="mt-1 text-sm text-black/60">Update your own contact and account information. Payroll lines are managed by admin.</div>
@@ -221,7 +223,7 @@ export function EmployeeSelfPage() {
           <Button
             isLoading={attBusy}
             loadingLabel="Checking location…"
-            disabled={attBusy || Boolean(todayEntry) || !emp.work_location}
+            disabled={attBusy || Boolean(todayEntry)}
             onClick={() => void clockIn()}
           >
             {todayEntry ? "Attendance already marked" : attBusy ? "Checking location…" : "Mark Attendance"}

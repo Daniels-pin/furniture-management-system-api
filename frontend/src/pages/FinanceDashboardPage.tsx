@@ -11,10 +11,13 @@ import type { ExpenseEntry, ExpenseSummary, PendingEmployeePayments } from "../t
 import { formatMoney } from "../utils/money";
 import { parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
+import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmployeeAttendanceCard";
+import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
 
 export function FinanceDashboardPage() {
   const auth = useAuth();
   const toast = useToast();
+  const monthlyAttendance = useMonthlyEmployeeAttendance();
   const [searchParams] = useSearchParams();
   const moneyRequestsView = searchParams.get("moneyRequests") === "1";
   const [section, setSection] = useState<"payments" | "petty_cash">("payments");
@@ -286,6 +289,21 @@ export function FinanceDashboardPage() {
 
   return (
     <div className="space-y-6">
+      {monthlyAttendance.emp || monthlyAttendance.empLoading ? (
+        <MonthlyEmployeeAttendanceCard
+          empLoading={monthlyAttendance.empLoading}
+          emp={monthlyAttendance.emp}
+          attendance={monthlyAttendance.attendance}
+          attBusy={monthlyAttendance.attBusy}
+          clockRes={monthlyAttendance.clockRes}
+          todayEntry={monthlyAttendance.todayEntry}
+          onMarkAttendance={monthlyAttendance.markAttendance}
+          resultFeedback={monthlyAttendance.resultFeedback}
+          onDismissResultFeedback={monthlyAttendance.dismissResultFeedback}
+          showHistory
+          historyLimit={5}
+        />
+      ) : null}
       <Card className="!p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">

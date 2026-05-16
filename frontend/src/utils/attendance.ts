@@ -48,39 +48,97 @@ export type GeolocationReadOptions = {
   maximumAgeMs?: number;
   maxAttempts?: number;
   retryDelayMs?: number;
+  /** Hard cap for the entire read (all attempts). Prevents endless spinners on mobile Safari. */
+  maxTotalMs?: number;
 };
+
+type AttemptOptions = {
+  enableHighAccuracy: boolean;
+  timeoutMs: number;
+  maximumAgeMs: number;
+};
+
+function readPositionOnce(opts: AttemptOptions): Promise<GeolocationPosition> {
+  const guardMs = opts.timeoutMs + 2_000;
+
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(
+        Object.assign(new Error("Location request timed out. Wait a few seconds and try again."), {
+          code: GeolocationPositionError.TIMEOUT
+        })
+      );
+    }, guardMs);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(pos);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(err);
+      },
+      {
+        enableHighAccuracy: opts.enableHighAccuracy,
+        timeout: opts.timeoutMs,
+        maximumAge: opts.maximumAgeMs
+      }
+    );
+  });
+}
 
 /**
  * Resolves device coordinates with retries for transient GPS uncertainty
  * (e.g. iOS CoreLocation kCLErrorLocationUnknown / POSITION_UNAVAILABLE).
+ * Each attempt is guarded by an explicit timeout so callbacks cannot hang forever.
  */
 export async function getGeolocationPosition(options?: GeolocationReadOptions): Promise<GeolocationPosition> {
-  const {
-    enableHighAccuracy = true,
-    timeoutMs = 20_000,
-    maximumAgeMs = 0,
-    maxAttempts = 3,
-    retryDelayMs = 1_500
-  } = options ?? {};
+  const maxAttempts = options?.maxAttempts ?? 3;
+  const retryDelayMs = options?.retryDelayMs ?? 1_200;
+  const maxTotalMs = options?.maxTotalMs ?? 38_000;
+  const startedAt = Date.now();
 
   if (!("geolocation" in navigator)) {
     throw new Error("Geolocation is not supported on this device.");
   }
 
+  const attempts: AttemptOptions[] = [
+    {
+      enableHighAccuracy: options?.enableHighAccuracy ?? true,
+      timeoutMs: options?.timeoutMs ?? 12_000,
+      maximumAgeMs: options?.maximumAgeMs ?? 0
+    },
+    {
+      enableHighAccuracy: false,
+      timeoutMs: 10_000,
+      maximumAgeMs: Math.max(options?.maximumAgeMs ?? 0, 60_000)
+    },
+    {
+      enableHighAccuracy: false,
+      timeoutMs: 8_000,
+      maximumAgeMs: Math.max(options?.maximumAgeMs ?? 0, 300_000)
+    }
+  ];
+
   let lastError: GeolocationPositionError | Error | null = null;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const useHighAccuracy = attempt === 0 ? enableHighAccuracy : false;
-    const maximumAge = attempt === 0 ? maximumAgeMs : Math.max(maximumAgeMs, 5_000);
+  for (let attempt = 0; attempt < Math.min(maxAttempts, attempts.length); attempt++) {
+    if (Date.now() - startedAt >= maxTotalMs) break;
+
+    const attemptOpts = attempts[attempt];
+    const remaining = maxTotalMs - (Date.now() - startedAt);
+    attemptOpts.timeoutMs = Math.min(attemptOpts.timeoutMs, Math.max(4_000, remaining - retryDelayMs));
 
     try {
-      return await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: useHighAccuracy,
-          timeout: timeoutMs,
-          maximumAge
-        });
-      });
+      return await readPositionOnce(attemptOpts);
     } catch (e) {
       const geoErr =
         e instanceof GeolocationPositionError
@@ -92,12 +150,28 @@ export async function getGeolocationPosition(options?: GeolocationReadOptions): 
 
       const code = geoErr instanceof GeolocationPositionError ? geoErr.code : undefined;
       if (code === GeolocationPositionError.PERMISSION_DENIED) break;
-      if (attempt < maxAttempts - 1 && (code === GeolocationPositionError.TIMEOUT || code === GeolocationPositionError.POSITION_UNAVAILABLE)) {
+      if (
+        attempt < maxAttempts - 1 &&
+        (code === GeolocationPositionError.TIMEOUT || code === GeolocationPositionError.POSITION_UNAVAILABLE)
+      ) {
+        if (Date.now() - startedAt + retryDelayMs >= maxTotalMs) break;
         await sleep(retryDelayMs);
         continue;
       }
       break;
     }
+  }
+
+  if (lastError instanceof GeolocationPositionError && lastError.code === GeolocationPositionError.TIMEOUT) {
+    throw lastError;
+  }
+  if (lastError instanceof Error && /timed out/i.test(lastError.message)) {
+    throw lastError;
+  }
+  if (Date.now() - startedAt >= maxTotalMs) {
+    throw Object.assign(new Error("Location request timed out. Wait a few seconds and try again."), {
+      code: GeolocationPositionError.TIMEOUT
+    });
   }
 
   throw lastError ?? new Error("Could not determine your location.");
@@ -111,6 +185,68 @@ export function getGeolocationUserMessage(err: unknown): string {
 }
 
 /** User-facing message for attendance geo read or clock-in API failures. */
+export type AttendanceResultFeedback = {
+  variant: "success" | "error" | "info";
+  title: string;
+  message: string;
+};
+
+export function formatAttendanceClockInTime(iso: string | undefined | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d
+    .toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true })
+    .replace(/^0(\d)/, "$1");
+}
+
+export function getAttendanceBlockedNoLocationFeedback(): AttendanceResultFeedback {
+  return {
+    variant: "error",
+    title: "Cannot mark attendance",
+    message: "No work location assigned. Contact an administrator."
+  };
+}
+
+export function getAttendanceSuccessFeedback(res: EmployeeClockInResponse): AttendanceResultFeedback {
+  if (res.status === "already_marked") {
+    return {
+      variant: "info",
+      title: "Attendance already marked",
+      message: res.message || "You have already marked attendance for today."
+    };
+  }
+  if (res.status === "sunday") {
+    return {
+      variant: "info",
+      title: "No attendance required",
+      message: res.message || "Sundays are excluded. No attendance is required today."
+    };
+  }
+  const time = formatAttendanceClockInTime(res.entry?.check_in_at);
+  const timePart = time ? ` at ${time}` : "";
+  if (res.status === "late") {
+    return {
+      variant: "success",
+      title: "Attendance marked",
+      message: `Attendance marked successfully${timePart}. You were marked late. A ₦500 lateness deduction applies.`
+    };
+  }
+  return {
+    variant: "success",
+    title: "Attendance marked",
+    message: `Attendance marked successfully${timePart}.`
+  };
+}
+
+export function getAttendanceErrorFeedback(err: unknown): AttendanceResultFeedback {
+  return {
+    variant: "error",
+    title: "Attendance failed",
+    message: getAttendanceMarkErrorMessage(err)
+  };
+}
+
 export function getAttendanceMarkErrorMessage(err: unknown): string {
   if (err instanceof GeolocationPositionError || (err instanceof Error && !axios.isAxiosError(err))) {
     return geolocationFailureMessage(err instanceof GeolocationPositionError ? err : err);
