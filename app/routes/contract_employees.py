@@ -403,6 +403,7 @@ def increase_total_owed(
     db.commit()
     db.refresh(emp)
     derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
+    db.expire(emp, ["transactions"])
     return _to_out(emp, derived_totals=derived)
 
 
@@ -453,6 +454,7 @@ def decrease_total_owed(
     db.commit()
     db.refresh(emp)
     derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
+    db.expire(emp, ["transactions"])
     return _to_out(emp, derived_totals=derived)
 
 

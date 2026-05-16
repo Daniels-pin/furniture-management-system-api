@@ -71,6 +71,57 @@ def _get_reversed_payment_ids(db: Session, contract_employee_id: int) -> set[int
     return {int(r[0]) for r in rows if r[0] is not None}
 
 
+def _get_reversed_transaction_ids(db: Session, contract_employee_id: int) -> set[int]:
+    """Original transaction ids that have a paid reversal row for this contract employee."""
+
+    rev = aliased(models.EmployeeTransaction)
+    rows = (
+        db.query(rev.reversal_of_id)
+        .filter(
+            rev.contract_employee_id == contract_employee_id,
+            rev.txn_type == "reversal",
+            rev.status == "paid",
+            rev.reversal_of_id.isnot(None),
+        )
+        .all()
+    )
+    return {int(r[0]) for r in rows if r[0] is not None}
+
+
+def _sum_manual_owed_adjustments(db: Session, contract_employee_id: int, *, reversed_ids: set[int]) -> Decimal:
+    """
+    Net manual owed adjustments (admin increase/decrease), excluding job-linked rows.
+
+    Job acceptance creates job-linked owed_increase rows; those amounts are already included
+    in the job final_price sum and must not be double-counted here.
+    """
+
+    rows = (
+        db.query(
+            models.EmployeeTransaction.id,
+            models.EmployeeTransaction.txn_type,
+            models.EmployeeTransaction.amount,
+        )
+        .filter(
+            models.EmployeeTransaction.contract_employee_id == contract_employee_id,
+            models.EmployeeTransaction.status == "paid",
+            models.EmployeeTransaction.contract_job_id.is_(None),
+            models.EmployeeTransaction.txn_type.in_(["owed_increase", "owed_decrease"]),
+        )
+        .all()
+    )
+    net = Decimal("0")
+    for txn_id, txn_type, amount in rows:
+        if int(txn_id) in reversed_ids:
+            continue
+        amt = _as_decimal(amount)
+        if txn_type == "owed_increase":
+            net += amt
+        elif txn_type == "owed_decrease":
+            net -= amt
+    return net
+
+
 def compute_contract_employee_financials(
     db: Session,
     contract_employee_id: int,
@@ -80,13 +131,15 @@ def compute_contract_employee_financials(
     """
     Derive all financial totals from:
     - ContractJobs: only accepted/in_progress/completed jobs with a locked final price
+    - EmployeeTransaction (manual owed_increase / owed_decrease): paid rows not linked to a job
     - EmployeeTransaction (payment): only status=paid and finance-confirmed (best-effort)
 
     Excludes:
     - cancelled jobs
     - voided payment allocations
-    - reversed payment transactions
+    - reversed transactions
     - allocations tied to invalid jobs
+    - job-linked owed_increase rows (already represented by job final_price)
     """
 
     # Snapshot jobs to determine which are valid and which are excluded (for debug logging).
@@ -134,6 +187,11 @@ def compute_contract_employee_financials(
     # - Primary: processed_by_role in ('finance', 'admin')
     # - Legacy fallback: receipt_url present
     reversed_payment_ids = _get_reversed_payment_ids(db, contract_employee_id)
+    reversed_transaction_ids = _get_reversed_transaction_ids(db, contract_employee_id)
+    manual_owed_adjustment = _sum_manual_owed_adjustments(
+        db, contract_employee_id, reversed_ids=reversed_transaction_ids
+    )
+    total_owed = total_owed + manual_owed_adjustment
 
     payments_candidate_rows = (
         db.query(models.EmployeeTransaction.id)
@@ -232,6 +290,7 @@ def compute_contract_employee_financials(
     debug_info: dict[str, Any] = {
         "jobs_used": sorted(list(valid_job_ids)),
         "jobs_excluded": job_excluded,
+        "manual_owed_adjustment": str(manual_owed_adjustment),
         "payments_used_count": len(payments_used),
         "payments_used_sample": sorted(list(payments_used))[:25],
         "payments_excluded_count": len(payments_excluded),
