@@ -81,13 +81,15 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
   }, [enabled, auth.token]);
 
   const markAttendance = useCallback(async () => {
-    if (!emp?.work_location) {
-      setResultFeedback(getAttendanceBlockedNoLocationFeedback());
-      return;
-    }
-
     setAttBusy(true);
     try {
+      const me = await employeesApi.getMe();
+      setEmp(me);
+      if (!me.work_location) {
+        setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+        return;
+      }
+
       const pos = await getGeolocationPosition();
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
@@ -105,7 +107,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
     } finally {
       setAttBusy(false);
     }
-  }, [emp?.work_location, refreshAttendance]);
+  }, [refreshAttendance]);
 
   const todayEntry = findTodayAttendanceEntry(attendance);
 

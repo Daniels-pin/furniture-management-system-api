@@ -628,6 +628,43 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     return r * c
 
 
+# Modest buffer for consumer GPS drift (indoor/outdoor); applied on top of configured radius only.
+_GEO_VALIDATION_BUFFER_METERS = 15.0
+
+
+def _effective_geo_radius_meters(allowed: int) -> float:
+    return float(allowed) + _GEO_VALIDATION_BUFFER_METERS
+
+
+def _validate_geo_clock_in_distance(
+    employee_lat: float,
+    employee_lon: float,
+    loc: models.CompanyLocation,
+) -> tuple[float, int]:
+    """Return (distance_meters, configured_radius_meters); raise 403/409 when not allowed."""
+    allowed = int(loc.allowed_radius_meters or 0)
+    if allowed <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Assigned work location radius is not configured. Contact an administrator.",
+        )
+    distance = _haversine_meters(
+        float(employee_lat),
+        float(employee_lon),
+        float(loc.latitude),
+        float(loc.longitude),
+    )
+    if distance > _effective_geo_radius_meters(allowed):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You must be within your assigned work location to mark attendance. "
+                f"(About {int(round(distance))}m from the site center; allowed {allowed}m.)"
+            ),
+        )
+    return distance, allowed
+
+
 def _period_ids_with_any_data(db: Session) -> set[int]:
     s: set[int] = set()
     for (pid,) in db.query(models.EmployeeLatenessEntry.period_id).distinct():
@@ -1490,6 +1527,7 @@ def clock_in_my_attendance_geo(
     loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
     if loc is None:
         raise HTTPException(status_code=409, detail="Your assigned work location no longer exists. Contact an administrator.")
+    db.refresh(loc)
 
     now = _now_local()
     today = now.date()
@@ -1517,12 +1555,11 @@ def clock_in_my_attendance_geo(
             entry=out,
         )
 
-    distance = _haversine_meters(float(body.latitude), float(body.longitude), float(loc.latitude), float(loc.longitude))
-    allowed = int(loc.allowed_radius_meters or 0)
-    if allowed <= 0:
-        raise HTTPException(status_code=409, detail="Assigned work location radius is not configured. Contact an administrator.")
-    if distance > float(allowed):
-        raise HTTPException(status_code=403, detail="You must be within your assigned work location to mark attendance.")
+    distance, allowed = _validate_geo_clock_in_distance(
+        float(body.latitude),
+        float(body.longitude),
+        loc,
+    )
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
@@ -1587,6 +1624,7 @@ def clock_in_my_attendance_geo(
             "employee_longitude": float(body.longitude),
             "distance_meters": float(distance),
             "allowed_radius_meters": allowed,
+            "geo_validation_buffer_meters": _GEO_VALIDATION_BUFFER_METERS,
         },
     )
     db.commit()

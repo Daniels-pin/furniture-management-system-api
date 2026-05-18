@@ -88,13 +88,15 @@ export function EmployeeSelfPage() {
   }
 
   async function clockIn() {
-    if (!emp?.work_location) {
-      setResultFeedback(getAttendanceBlockedNoLocationFeedback());
-      return;
-    }
-
     setAttBusy(true);
     try {
+      const me = await employeesApi.getMe();
+      setEmp(me);
+      if (!me.work_location) {
+        setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+        return;
+      }
+
       const pos = await getGeolocationPosition();
 
       const res = await employeesApi.clockInAttendanceGeo({

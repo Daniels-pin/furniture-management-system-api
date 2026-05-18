@@ -19,6 +19,7 @@ export function getErrorMessage(err: unknown): string {
     if (data && typeof data === "object" && "detail" in data) {
       const detail = (data as any).detail;
       if (typeof detail === "string") return detail;
+      if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
       if (Array.isArray(detail) && detail[0]?.msg) return detail[0].msg as string;
     }
 

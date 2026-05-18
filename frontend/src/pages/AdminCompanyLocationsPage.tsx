@@ -212,8 +212,12 @@ export function AdminCompanyLocationsPage() {
           longitude: pin.lng,
           allowed_radius_meters: r
         });
-        await refresh();
+        const rows = await refresh();
         setSelectedId(updated.id);
+        const synced = rows.find((x) => x.id === updated.id) ?? updated;
+        setName(synced.name ?? "");
+        setRadius(String(synced.allowed_radius_meters ?? 0));
+        setPin({ lat: synced.latitude, lng: synced.longitude });
         toast.push("success", "Location updated.");
       } else {
         await companyLocationsApi.create({

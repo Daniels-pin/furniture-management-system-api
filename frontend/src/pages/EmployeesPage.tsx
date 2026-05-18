@@ -127,6 +127,7 @@ export function EmployeesPage() {
     }
 
     useEffect(() => {
+      if (factoryTab !== "assign_locations") return;
       let alive = true;
       (async () => {
         setLocsLoading(true);
@@ -143,7 +144,7 @@ export function EmployeesPage() {
       return () => {
         alive = false;
       };
-    }, [toast]);
+    }, [factoryTab, toast]);
 
     useEffect(() => {
       if (factoryTab !== "assign_locations") return;
@@ -164,6 +165,15 @@ export function EmployeesPage() {
         alive = false;
       };
     }, [factoryTab, assignSearch, toast]);
+
+    function applyLocationSelection(employeeId: number, locationId: number | null) {
+      const nextLoc = locationId == null ? null : locs.find((l) => l.id === locationId) ?? null;
+      setAssignRows((prev) =>
+        prev.map((x) =>
+          x.id === employeeId ? { ...x, work_location_id: locationId, work_location: nextLoc } : x
+        )
+      );
+    }
 
     async function saveAssignment(employeeId: number, locationId: number | null) {
       setSavingEmployeeId(employeeId);
@@ -265,7 +275,9 @@ export function EmployeesPage() {
                     <div key={r.id} className="rounded-2xl border border-black/10 bg-white p-4">
                       <div className="text-sm font-bold">{r.full_name}</div>
                       <div className="mt-1 text-xs font-semibold text-black/55">
-                        Current: {r.work_location?.name ?? "No location assigned"}
+                        {r.work_location?.name
+                          ? `Assigned: ${r.work_location.name} · ${r.work_location.allowed_radius_meters}m`
+                          : "No location assigned"}
                       </div>
                       <div className="mt-3 grid grid-cols-1 gap-2">
                         <select
@@ -275,9 +287,7 @@ export function EmployeesPage() {
                           onChange={(e) => {
                             const v = e.target.value;
                             const nextId = v === "none" ? null : Number(v);
-                            setAssignRows((prev) =>
-                              prev.map((x) => (x.id === r.id ? { ...x, work_location_id: nextId } : x))
-                            );
+                            applyLocationSelection(r.id, nextId);
                           }}
                         >
                           <option value="none">No location assigned</option>
@@ -321,9 +331,7 @@ export function EmployeesPage() {
                               onChange={(e) => {
                                 const v = e.target.value;
                                 const nextId = v === "none" ? null : Number(v);
-                                setAssignRows((prev) =>
-                                  prev.map((x) => (x.id === r.id ? { ...x, work_location_id: nextId } : x))
-                                );
+                                applyLocationSelection(r.id, nextId);
                               }}
                             >
                               <option value="none">No location assigned</option>
@@ -334,7 +342,9 @@ export function EmployeesPage() {
                               ))}
                             </select>
                             <div className="mt-1 text-xs font-semibold text-black/45">
-                              {r.work_location?.name ? `Current: ${r.work_location.name}` : "Current: No location assigned"}
+                              {r.work_location?.name
+                                ? `Assigned: ${r.work_location.name} · ${r.work_location.allowed_radius_meters}m`
+                                : "No location assigned"}
                             </div>
                           </td>
                           <td className="py-3 pr-0 text-right">

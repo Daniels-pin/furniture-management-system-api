@@ -14,6 +14,8 @@ from app import models
 from app.routes.employees import (
     ABSENCE_DEDUCTION_NAIRA,
     LATENESS_DEDUCTION_NAIRA,
+    _GEO_VALIDATION_BUFFER_METERS,
+    _effective_geo_radius_meters,
     _haversine_meters,
     _is_sunday,
     _late_minutes,
@@ -222,7 +224,7 @@ def test_geo_clock_in_outside_radius(client, geo_employee):
     lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, RADIUS_M + 50)
     r = _geo_clock_in(client, geo_employee["staff_token"], lat, lon)
     assert r.status_code == 403
-    assert r.json()["detail"] == "You must be within your assigned work location to mark attendance."
+    assert "within your assigned work location" in r.json()["detail"]
 
 
 def test_geo_clock_in_no_work_location(client, admin_token):
@@ -330,6 +332,80 @@ def test_delete_location_unassigns_employees_and_preserves_attendance(client, ge
     assert salary["attendance_deductions_eligible"] is False
     assert float(salary["lateness_deduction"]) == 0.0
     assert float(salary["absence_deduction"]) == 0.0
+
+
+def test_effective_geo_radius_includes_gps_buffer():
+    assert _effective_geo_radius_meters(100) == 100 + _GEO_VALIDATION_BUFFER_METERS
+
+
+def test_geo_clock_in_uses_updated_location_coordinates(client, admin_token):
+    """After admin edits a location pin, validation must use the new coordinates (same location id)."""
+    staff_token, user_id = _create_staff_user(client, admin_token)
+    emp_id = _create_monthly_employee(client, admin_token, user_id)
+    loc_id = _create_location(client, admin_token)
+    _assign_location(client, admin_token, emp_id, loc_id)
+
+    inside_lat, inside_lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 10)
+    far_lat, far_lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 500)
+
+    patch = client.patch(
+        f"/company-locations/{loc_id}",
+        json={"latitude": far_lat, "longitude": far_lon, "allowed_radius_meters": RADIUS_M},
+        headers=_auth(admin_token),
+    )
+    assert patch.status_code == 200, patch.text
+
+    rejected = _geo_clock_in(client, staff_token, inside_lat, inside_lon)
+    assert rejected.status_code == 403
+
+    restore = client.patch(
+        f"/company-locations/{loc_id}",
+        json={"latitude": OFFICE_LAT, "longitude": OFFICE_LON},
+        headers=_auth(admin_token),
+    )
+    assert restore.status_code == 200, restore.text
+
+    ok = _geo_clock_in(client, staff_token, inside_lat, inside_lon)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] in ("present", "late")
+
+
+def test_geo_clock_in_after_reassign_to_second_location(client, admin_token):
+    staff_token, user_id = _create_staff_user(client, admin_token)
+    emp_id = _create_monthly_employee(client, admin_token, user_id)
+    loc_a = _create_location(client, admin_token)
+    loc_b = _create_location(client, admin_token)
+
+    _assign_location(client, admin_token, emp_id, loc_a)
+    at_a_lat, at_a_lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 10)
+    at_b_lat, at_b_lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 10)
+
+    r_a = _geo_clock_in(client, staff_token, at_a_lat, at_a_lon)
+    assert r_a.status_code == 200, r_a.text
+
+    _assign_location(client, admin_token, emp_id, loc_b)
+    r_b = _geo_clock_in(client, staff_token, at_b_lat, at_b_lon)
+    assert r_b.status_code == 200, r_b.text
+    assert r_b.json()["status"] == "already_marked"
+
+
+def test_geo_clock_in_factory_location_assignment_endpoint(client, admin_token, factory_token):
+    """Factory role uses /location-assignment; geo validation must honor that assignment."""
+    staff_token, user_id = _create_staff_user(client, admin_token)
+    emp_id = _create_monthly_employee(client, admin_token, user_id)
+    loc_id = _create_location(client, admin_token)
+
+    assign = client.patch(
+        f"/employees/{emp_id}/location-assignment",
+        json={"location_id": loc_id},
+        headers=_auth(factory_token),
+    )
+    assert assign.status_code == 200, assign.text
+    assert assign.json()["work_location_id"] == loc_id
+
+    lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 10)
+    r = _geo_clock_in(client, staff_token, lat, lon)
+    assert r.status_code == 200, r.text
 
 
 def test_delete_location_with_multiple_assignees(client, admin_token):

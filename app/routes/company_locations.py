@@ -60,6 +60,12 @@ def update_location(
     if row is None:
         raise HTTPException(status_code=404, detail="Location not found")
     data = body.model_dump(exclude_unset=True)
+    if "latitude" in data and data["latitude"] is not None:
+        data["latitude"] = float(data["latitude"])
+    if "longitude" in data and data["longitude"] is not None:
+        data["longitude"] = float(data["longitude"])
+    if "allowed_radius_meters" in data and data["allowed_radius_meters"] is not None:
+        data["allowed_radius_meters"] = int(data["allowed_radius_meters"])
     if "name" in data and data["name"] is not None:
         taken = (
             db.query(models.CompanyLocation)
