@@ -1174,6 +1174,8 @@ class EmployeeSalaryBreakdown(BaseModel):
     absence_deduction: Decimal = Decimal("0")
     absence_deduction_override: Optional[Decimal] = None
     absence_rate_naira: Decimal = Decimal("1000")
+    # False when no work location is assigned (unpaid periods); lateness/absence amounts are zero.
+    attendance_deductions_eligible: bool = True
     # Entry totals (raw entries, excluding manual adjustments)
     penalties_entries_total: Decimal = Decimal("0")
     bonuses_entries_total: Decimal = Decimal("0")

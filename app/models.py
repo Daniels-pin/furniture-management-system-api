@@ -484,6 +484,8 @@ class Employee(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
     # Optional geo-attendance assigned work location (Monthly Employees only; enforced at API layer).
     work_location_id = Column(Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True, index=True)
+    # When set, lateness/absence payroll deductions apply from this date forward (unpaid periods only).
+    work_location_assigned_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
     deleted_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)

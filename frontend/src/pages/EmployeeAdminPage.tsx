@@ -558,17 +558,25 @@ export function EmployeeAdminPage() {
         <Card>
           <div className="text-sm font-semibold text-black">Payslip — {emp.period.label}</div>
           <p className="mt-1 text-xs text-black/55">
-            Review before payment or export. Net equals base minus lateness and penalties, plus bonuses. Total deductions
-            include lateness and penalties.
+            Review before payment or export. Net equals base minus lateness, absence, and other deductions, plus bonuses.
           </p>
+          {salary.attendance_deductions_eligible === false ? (
+            <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+              No work location assigned — late and absence deductions do not apply until a location is assigned.
+            </p>
+          ) : null}
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
             <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
               <div className="text-xs font-semibold text-black/60">Base</div>
               <div className="mt-1 font-bold tabular-nums">{formatMoney(salary.base_salary)}</div>
             </div>
             <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
-              <div className="text-xs font-semibold text-black/60">Lateness ({salary.lateness_count}×)</div>
+              <div className="text-xs font-semibold text-black/60">Late deductions ({salary.lateness_count}×)</div>
               <div className="mt-1 font-bold tabular-nums text-red-700">−{formatMoney(salary.lateness_deduction)}</div>
+            </div>
+            <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+              <div className="text-xs font-semibold text-black/60">Absence deductions ({salary.absence_count ?? 0}×)</div>
+              <div className="mt-1 font-bold tabular-nums text-red-700">−{formatMoney(salary.absence_deduction ?? 0)}</div>
             </div>
             <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
               <div className="text-xs font-semibold text-black/60">Penalties</div>

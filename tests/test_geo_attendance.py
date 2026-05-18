@@ -186,6 +186,24 @@ def test_absence_deduction_override():
     assert b.final_payable == Decimal("98500")
 
 
+def test_salary_breakdown_zeros_attendance_deductions_when_ineligible():
+    b = _salary_breakdown(
+        Decimal("100000"),
+        lateness_count=2,
+        penalties_total=Decimal("0"),
+        bonuses_total=Decimal("0"),
+        absence_count=3,
+        apply_attendance_deductions=False,
+    )
+    assert b.lateness_deduction_auto == Decimal("1000")
+    assert b.absence_deduction_auto == Decimal("3000")
+    assert b.lateness_deduction == 0
+    assert b.absence_deduction == 0
+    assert b.attendance_deductions_eligible is False
+    assert b.total_deductions == 0
+    assert b.final_payable == Decimal("100000")
+
+
 # --- Integration: geo clock-in API ---
 
 

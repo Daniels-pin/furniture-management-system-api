@@ -210,3 +210,30 @@ def test_archived_summary_uses_period_roster_not_future_employees(client, admin_
     ).json()
     assert archived["employee_count"] == 1
     assert float(archived["total_base_salary"]) == float(summary_before["total_base_salary"])
+
+
+def test_no_attendance_deductions_without_work_location(client, admin_token):
+    emp_id = _create_employee(client, admin_token)
+    nav = client.get("/employees/periods", headers=_auth(admin_token)).json()
+    ap = nav["active_period"]
+    period = {"period_year": ap["year"], "period_month": ap["month"]}
+
+    late = client.post(
+        f"/employees/{emp_id}/lateness",
+        params=period,
+        json={"note": "Manual late"},
+        headers=_auth(admin_token),
+    )
+    assert late.status_code == 200, late.text
+
+    detail = client.get(f"/employees/{emp_id}", params=period, headers=_auth(admin_token)).json()
+    salary = detail["salary"]
+    assert len(detail["lateness_entries"]) == 1
+    assert salary["attendance_deductions_eligible"] is False
+    assert float(salary["lateness_deduction"]) == 0.0
+    assert float(salary["absence_deduction"]) == 0.0
+    assert float(salary["final_payable"]) == float(salary["base_salary"])
+
+    summary = client.get("/employees/payroll/summary", params=period, headers=_auth(admin_token)).json()
+    assert float(summary["total_lateness_deductions"]) == 0.0
+    assert float(summary["total_absence_deductions"]) == 0.0

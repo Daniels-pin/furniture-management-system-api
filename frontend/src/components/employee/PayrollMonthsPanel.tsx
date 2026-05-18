@@ -60,7 +60,8 @@ function MonthBodySkeleton() {
 function PayrollFinancialSummary({ summary, refreshing }: { summary: PayrollSummary; refreshing?: boolean }) {
   const totals = getPayrollSummaryTotals(summary);
   return (
-    <div className={["grid grid-cols-1 gap-3 sm:grid-cols-3", refreshing ? "opacity-80" : ""].join(" ")}>
+    <div className={refreshing ? "space-y-3 opacity-80" : "space-y-3"}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">Total Salaries</div>
         <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(totals.totalSalaries)}</div>
@@ -78,6 +79,17 @@ function PayrollFinancialSummary({ summary, refreshing }: { summary: PayrollSumm
         <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(totals.totalPayable)}</div>
         <p className="mt-1 text-xs text-white/60">Total salaries minus total deductions</p>
       </Card>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Card className="!p-4">
+          <div className="text-xs font-semibold text-black/55">Late deductions</div>
+          <div className="mt-1 text-base font-bold tabular-nums text-red-800">{formatMoney(totals.totalLatenessDeductions)}</div>
+        </Card>
+        <Card className="!p-4">
+          <div className="text-xs font-semibold text-black/55">Absence deductions</div>
+          <div className="mt-1 text-base font-bold tabular-nums text-red-800">{formatMoney(totals.totalAbsenceDeductions)}</div>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -343,12 +343,46 @@ def _last_day_of_month(year: int, month: int) -> date_type:
     return date_type(year, month + 1, 1) - timedelta(days=1)
 
 
+def _work_location_assigned_date(emp: models.Employee) -> Optional[date_type]:
+    at = getattr(emp, "work_location_assigned_at", None)
+    if at is None:
+        return None
+    if at.tzinfo is None:
+        return at.date()
+    return at.astimezone(_ATTENDANCE_TZ).date()
+
+
+def _attendance_deductions_apply(db: Session, emp: models.Employee, period_id: int) -> bool:
+    """Lateness/absence payroll deductions require an assigned work location (unpaid periods only)."""
+    if _period_paid(db, emp.id, period_id):
+        return True
+    return emp.work_location_id is not None
+
+
+def _set_work_location_assignment(emp: models.Employee, location_id: Optional[int]) -> None:
+    """Assign or clear work location; stamp assignment time when a location is set."""
+    if location_id is not None:
+        new_id = int(location_id)
+        if emp.work_location_id != new_id:
+            emp.work_location_assigned_at = datetime.utcnow()
+        emp.work_location_id = new_id
+    else:
+        emp.work_location_id = None
+        emp.work_location_assigned_at = None
+
+
 def _sync_absence_entries_for_period(db: Session, employee_id: int, period: models.SalaryPeriod) -> None:
     """Create absence rows for past workdays in period with no attendance (Sundays excluded)."""
     if _period_paid(db, employee_id, period.id):
         return
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp is None or emp.work_location_id is None:
+        return
     today = _now_local().date()
     start = date_type(period.year, period.month, 1)
+    assigned = _work_location_assigned_date(emp)
+    if assigned is not None and start < assigned:
+        start = assigned
     end = min(today - timedelta(days=1), _last_day_of_month(period.year, period.month))
     if end < start:
         return
@@ -426,14 +460,53 @@ def _remove_absence_for_date(db: Session, employee_id: int, day: date_type) -> N
 
 
 def _absence_count_for_period(db: Session, employee_id: int, period: models.SalaryPeriod) -> int:
-    if period.is_active:
+    emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
+    if emp is None:
+        return 0
+    paid = _period_paid(db, employee_id, period.id)
+    if not paid and emp.work_location_id is None:
+        return 0
+    if period.is_active and (paid or emp.work_location_id is not None):
         _sync_absence_entries_for_period(db, employee_id, period)
-    return (
+    q = (
         db.query(models.EmployeeAbsenceEntry)
         .filter_by(employee_id=employee_id, period_id=period.id)
         .filter(models.EmployeeAbsenceEntry.voided_at.is_(None))
-        .count()
     )
+    if not paid:
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.filter(models.EmployeeAbsenceEntry.absence_date >= assigned)
+    return q.count()
+
+
+def _lateness_count_for_payroll(db: Session, emp: models.Employee, period_id: int) -> int:
+    if not _attendance_deductions_apply(db, emp, period_id):
+        return 0
+    q = (
+        db.query(func.count(models.EmployeeLatenessEntry.id))
+        .filter(
+            models.EmployeeLatenessEntry.employee_id == emp.id,
+            models.EmployeeLatenessEntry.period_id == period_id,
+            models.EmployeeLatenessEntry.voided_at.is_(None),
+        )
+    )
+    if not _period_paid(db, emp.id, period_id):
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeLatenessEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            ).filter(
+                or_(
+                    models.EmployeeAttendanceEntry.attendance_date >= assigned,
+                    and_(
+                        models.EmployeeLatenessEntry.attendance_id.is_(None),
+                        func.date(models.EmployeeLatenessEntry.created_at) >= assigned,
+                    ),
+                )
+            )
+    return int(q.scalar() or 0)
 
 
 def _attendance_row_to_history(
@@ -697,13 +770,18 @@ def _salary_breakdown(
     lateness_deduction_override: Optional[Decimal] = None,
     absence_deduction_override: Optional[Decimal] = None,
     adjustment_note: Optional[str] = None,
+    apply_attendance_deductions: bool = True,
 ) -> EmployeeSalaryBreakdown:
     lateness_rate = LATENESS_DEDUCTION_NAIRA
     absence_rate = ABSENCE_DEDUCTION_NAIRA
     lateness_auto = lateness_rate * Decimal(lateness_count)
     absence_auto = absence_rate * Decimal(absence_count)
-    lateness_ded = lateness_deduction_override if lateness_deduction_override is not None else lateness_auto
-    absence_ded = absence_deduction_override if absence_deduction_override is not None else absence_auto
+    if apply_attendance_deductions:
+        lateness_ded = lateness_deduction_override if lateness_deduction_override is not None else lateness_auto
+        absence_ded = absence_deduction_override if absence_deduction_override is not None else absence_auto
+    else:
+        lateness_ded = Decimal("0")
+        absence_ded = Decimal("0")
     base_used = period_base_salary if period_base_salary is not None else base
     penalties_entries_total = penalties_total
     bonuses_entries_total = bonuses_total
@@ -725,6 +803,7 @@ def _salary_breakdown(
         absence_deduction=absence_ded,
         absence_deduction_override=absence_deduction_override,
         absence_rate_naira=absence_rate,
+        attendance_deductions_eligible=apply_attendance_deductions,
         penalties_entries_total=penalties_entries_total,
         bonuses_entries_total=bonuses_entries_total,
         adjustment_bonus=(adjustment_bonus or Decimal("0")),
@@ -744,6 +823,31 @@ def _validate_breakdown(b: EmployeeSalaryBreakdown) -> None:
             status_code=400,
             detail="Total deductions cannot exceed base salary plus bonuses for this period.",
         )
+
+
+def _payroll_salary_for_employee(
+    db: Session,
+    emp: models.Employee,
+    period: models.SalaryPeriod,
+    penalties_total: Decimal,
+    bonuses_total: Decimal,
+    *,
+    lateness_extra: int = 0,
+    payroll: Optional[models.EmployeePeriodPayroll] = None,
+) -> EmployeeSalaryBreakdown:
+    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+    lc = _lateness_count_for_payroll(db, emp, period.id) + lateness_extra
+    ac = _absence_count_for_period(db, emp.id, period)
+    apply_att = _attendance_deductions_apply(db, emp, period.id)
+    return _salary_breakdown(
+        base,
+        lc,
+        penalties_total,
+        bonuses_total,
+        absence_count=ac,
+        apply_attendance_deductions=apply_att,
+        **_payroll_breakdown_kwargs(payroll),
+    )
 
 
 def _log_payroll(db: Session, action: str, entity_id: Optional[int], user, meta: dict) -> None:
@@ -808,12 +912,9 @@ def _employee_to_out(
         u = db.query(models.User).filter(models.User.id == emp.user_id).first()
         if u:
             linked_username = u.email
-    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
-    n = len(lateness)
-    ac = _absence_count_for_period(db, emp.id, period)
     pen = sum((p.amount for p in penalties), Decimal("0"))
     bon = sum((b.amount for b in bonuses), Decimal("0"))
-    salary = _salary_breakdown(base, n, pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll))
+    salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -855,12 +956,16 @@ def _list_item(
     payroll: Optional[models.EmployeePeriodPayroll],
 ) -> EmployeeListItemOut:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+    lc = _lateness_count_for_payroll(db, emp, period.id)
+    ac = _absence_count_for_period(db, emp.id, period)
+    apply_att = _attendance_deductions_apply(db, emp, period.id)
     salary = _salary_breakdown(
         base,
-        lateness_count,
+        lc,
         penalties_total,
         bonuses_total,
-        absence_count=absence_count,
+        absence_count=ac,
+        apply_attendance_deductions=apply_att,
         **_payroll_breakdown_kwargs(payroll),
     )
     pay = EmployeePaymentOut(
@@ -1051,11 +1156,20 @@ def payroll_summary(
     total_ded = Decimal("0")
     for e in emps:
         base = e.base_salary if e.base_salary is not None else Decimal("0")
-        lc = lateness_map.get(e.id, 0)
-        ac = absence_map.get(e.id, 0)
         pt = pen_map.get(e.id, Decimal("0"))
         bt = bon_map.get(e.id, Decimal("0"))
-        br = _salary_breakdown(base, lc, pt, bt, absence_count=ac, **_payroll_breakdown_kwargs(payroll_map.get(e.id)))
+        lc = _lateness_count_for_payroll(db, e, period.id)
+        ac = _absence_count_for_period(db, e.id, period)
+        apply_att = _attendance_deductions_apply(db, e, period.id)
+        br = _salary_breakdown(
+            base,
+            lc,
+            pt,
+            bt,
+            absence_count=ac,
+            apply_attendance_deductions=apply_att,
+            **_payroll_breakdown_kwargs(payroll_map.get(e.id)),
+        )
         total_base += br.base_salary_used
         total_lat += br.lateness_deduction
         total_abs += br.absence_deduction
@@ -1141,12 +1255,9 @@ def export_employees_csv(
         ]
     )
     for e in emps:
-        lc = lateness_map.get(e.id, 0)
-        ac = absence_map.get(e.id, 0)
         pt = pen_map.get(e.id, Decimal("0"))
         bt = bon_map.get(e.id, Decimal("0"))
-        base = e.base_salary if e.base_salary is not None else Decimal("0")
-        s = _salary_breakdown(base, lc, pt, bt, absence_count=ac, **_payroll_breakdown_kwargs(payroll_map.get(e.id)))
+        s = _payroll_salary_for_employee(db, e, period, pt, bt, payroll=payroll_map.get(e.id))
         pr = payroll_map.get(e.id)
         w.writerow(
             [
@@ -1231,11 +1342,9 @@ def list_my_employee_transactions(
         period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
         if period:
             lateness, penalties, bonuses, payroll = _load_rows_for_period(db, emp.id, period)
-            base = emp.base_salary if emp.base_salary is not None else Decimal("0")
             pen = sum((p.amount for p in penalties), Decimal("0"))
             bon = sum((b.amount for b in bonuses), Decimal("0"))
-            ac = _absence_count_for_period(db, emp.id, period)
-            salary = _salary_breakdown(base, len(lateness), pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll))
+            salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
             due = salary.final_payable
             paid_total = Decimal("0")
             for o in outs:
@@ -1307,7 +1416,7 @@ def clock_in_my_attendance(
     _remove_absence_for_date(db, emp.id, today)
 
     lateness_entry_id: Optional[int] = None
-    if is_late:
+    if is_late and emp.work_location_id is not None:
         # Prevent duplicates defensively (unique constraint also guards this).
         existing_late = (
             db.query(models.EmployeeLatenessEntry)
@@ -1513,9 +1622,9 @@ def assign_employee_work_location(
         loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
         if loc is None:
             raise HTTPException(status_code=404, detail="Location not found")
-        emp.work_location_id = int(loc.id)
+        _set_work_location_assignment(emp, int(loc.id))
     else:
-        emp.work_location_id = None
+        _set_work_location_assignment(emp, None)
 
     emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1567,9 +1676,9 @@ def patch_employee_location_assignment(
         loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
         if loc is None:
             raise HTTPException(status_code=404, detail="Location not found")
-        emp.work_location_id = int(loc.id)
+        _set_work_location_assignment(emp, int(loc.id))
     else:
-        emp.work_location_id = None
+        _set_work_location_assignment(emp, None)
 
     emp.updated_at = datetime.utcnow()
     db.commit()
@@ -1732,14 +1841,13 @@ def patch_employee_period_payment(
     period = get_or_create_period(db, period_year, period_month)
     _assert_period_is_editable(period)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    ac = _absence_count_for_period(db, employee_id, period)
-    salary = _salary_breakdown(
-        emp.base_salary if emp.base_salary is not None else Decimal("0"),
-        len(lateness),
+    salary = _payroll_salary_for_employee(
+        db,
+        emp,
+        period,
         sum((p.amount for p in penalties), Decimal("0")),
         sum((b.amount for b in bonuses), Decimal("0")),
-        absence_count=ac,
-        **_payroll_breakdown_kwargs(payroll),
+        payroll=payroll,
     )
     _validate_breakdown(salary)
 
@@ -1803,8 +1911,9 @@ def patch_employee_payroll_adjustments(
 
     payroll = _get_or_create_payroll_row(db, employee_id, period.id)
     lateness, penalties, bonuses, _ = _load_rows_for_period(db, employee_id, period)
-    lateness_count = len(lateness)
+    lateness_count = _lateness_count_for_payroll(db, emp, period.id)
     ac = _absence_count_for_period(db, employee_id, period)
+    apply_att = _attendance_deductions_apply(db, emp, period.id)
     auto_lateness = LATENESS_DEDUCTION_NAIRA * Decimal(lateness_count)
     auto_absence = ABSENCE_DEDUCTION_NAIRA * Decimal(ac)
 
@@ -1841,6 +1950,7 @@ def patch_employee_payroll_adjustments(
         pen_entries,
         bon_entries,
         absence_count=ac,
+        apply_attendance_deductions=apply_att,
         **_payroll_breakdown_kwargs(payroll),
     )
     _validate_breakdown(projected)
@@ -1967,12 +2077,17 @@ def add_lateness_entry(
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     pen = sum((p.amount for p in penalties), Decimal("0"))
     bon = sum((b.amount for b in bonuses), Decimal("0"))
-    ac = _absence_count_for_period(db, employee_id, period)
-    projected = _salary_breakdown(
-        base, len(lateness) + 1, pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll)
+    apply_att = _attendance_deductions_apply(db, emp, period.id)
+    projected = _payroll_salary_for_employee(
+        db,
+        emp,
+        period,
+        pen,
+        bon,
+        lateness_extra=1 if apply_att else 0,
+        payroll=payroll,
     )
     _validate_breakdown(projected)
 
@@ -2105,13 +2220,9 @@ def add_penalty(
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     pen = sum((p.amount for p in penalties), Decimal("0")) + body.amount
     bon = sum((b.amount for b in bonuses), Decimal("0"))
-    ac = _absence_count_for_period(db, employee_id, period)
-    projected = _salary_breakdown(
-        base, len(lateness), pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll)
-    )
+    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
     _validate_breakdown(projected)
 
     row = models.EmployeePenalty(
@@ -2248,13 +2359,9 @@ def add_bonus(
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     pen = sum((p.amount for p in penalties), Decimal("0"))
     bon = sum((b.amount for b in bonuses), Decimal("0")) + body.amount
-    ac = _absence_count_for_period(db, employee_id, period)
-    projected = _salary_breakdown(
-        base, len(lateness), pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll)
-    )
+    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
     _validate_breakdown(projected)
 
     row = models.EmployeeBonus(
@@ -2553,13 +2660,9 @@ def list_employee_transactions(
         period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
         if emp and period:
             lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-            base = emp.base_salary if emp.base_salary is not None else Decimal("0")
             pen = sum((p.amount for p in penalties), Decimal("0"))
             bon = sum((b.amount for b in bonuses), Decimal("0"))
-            ac = _absence_count_for_period(db, employee_id, period)
-            salary = _salary_breakdown(
-                base, len(lateness), pen, bon, absence_count=ac, **_payroll_breakdown_kwargs(payroll)
-            )
+            salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
             due = salary.final_payable
             paid_total = Decimal("0")
             for o in outs:

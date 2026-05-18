@@ -495,6 +495,7 @@ export type EmployeeSalaryBreakdown = {
   absence_deduction?: string | number;
   absence_deduction_override?: string | number | null;
   absence_rate_naira?: string | number;
+  attendance_deductions_eligible?: boolean;
   penalties_entries_total?: string | number;
   bonuses_entries_total?: string | number;
   adjustment_bonus?: string | number;

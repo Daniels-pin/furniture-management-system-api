@@ -513,7 +513,13 @@ export function MonthlyEmployeeDetailPage() {
         <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
         <p className="mt-1 text-xs text-black/55">
           Late after 8:15 AM attracts ₦500; unmarked workdays attract ₦1,000 absence penalty (Sundays excluded).
+          Assign a work location before attendance deductions apply to payroll.
         </p>
+        {detail.salary.attendance_deductions_eligible === false ? (
+          <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+            No work location assigned — late and absence payroll deductions are not applied until a location is assigned.
+          </p>
+        ) : null}
         {attLoading ? (
           <div className="mt-2 text-sm text-black/60">Loading…</div>
         ) : att.length === 0 ? (

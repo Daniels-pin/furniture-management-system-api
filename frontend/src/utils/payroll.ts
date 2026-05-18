@@ -48,10 +48,14 @@ export function getPayrollSummaryTotals(summary: PayrollSummary) {
   const bonuses = parseMoneyNumber(summary.total_bonuses) ?? 0;
   const deductions = parseMoneyNumber(summary.total_deductions) ?? 0;
   const payable = parseMoneyNumber(summary.net_payroll) ?? 0;
+  const totalLatenessDeductions = parseMoneyNumber(summary.total_lateness_deductions) ?? 0;
+  const totalAbsenceDeductions = parseMoneyNumber(summary.total_absence_deductions) ?? 0;
   const totalSalaries = base + bonuses;
   return {
     totalSalaries,
     totalDeductions: deductions,
+    totalLatenessDeductions,
+    totalAbsenceDeductions,
     totalPayable: payable,
     bonuses,
     hasBonuses: bonuses > 0.009
