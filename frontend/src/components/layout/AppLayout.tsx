@@ -10,6 +10,7 @@ import { env } from "../../env";
 import { usePageHeaderState } from "./pageHeader";
 import type { NotificationItem } from "../../types/api";
 import { isContractJobNotification, isNewJobNotification } from "../../utils/jobNotifications";
+import { formatLagosDateTime } from "../../utils/datetime";
 
 function NavItem({
   to,
@@ -751,7 +752,7 @@ export function AppLayout() {
                                       <div className="text-sm font-semibold">{n.title}</div>
                                       {n.message ? <div className="mt-0.5 text-xs text-black/60">{n.message}</div> : null}
                                       <div className="mt-1 text-[11px] font-semibold text-black/45">
-                                        {new Date(n.created_at).toLocaleString()}
+                                        {formatLagosDateTime(n.created_at)}
                                       </div>
                                     </div>
                                     <div className="shrink-0 text-[11px] font-bold text-black/50">{n.read_at ? "Read" : "New"}</div>

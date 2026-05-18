@@ -11,6 +11,7 @@ import { Input } from "../components/ui/Input";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, sanitizeMoneyInput } from "../utils/moneyInput";
+import { formatLagosDateTime } from "../utils/datetime";
 
 function fmtNum(v: string | number | null | undefined) {
   if (v === null || v === undefined || v === "") return "—";
@@ -18,11 +19,7 @@ function fmtNum(v: string | number | null | undefined) {
 }
 
 function fmtWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatLagosDateTime(iso);
 }
 
 function toLocalDatetimeValue(d: Date) {

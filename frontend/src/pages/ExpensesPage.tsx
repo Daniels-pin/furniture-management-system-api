@@ -7,6 +7,7 @@ import { expensesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import type { ExpenseEntry, ExpenseEntryType, ExpenseSummary } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
@@ -480,7 +481,7 @@ export function ExpensesPage() {
           <div className="space-y-4">
             <div className="rounded-2xl border border-black/10 bg-white p-3 text-sm">
               <div className="text-xs font-semibold text-black/55">Date/time</div>
-              <div className="mt-0.5 font-bold">{new Date(detailFor.entry_date).toLocaleString()}</div>
+              <div className="mt-0.5 font-bold">{formatLagosDateTime(detailFor.entry_date)}</div>
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <div className="text-xs font-semibold text-black/55">Type</div>

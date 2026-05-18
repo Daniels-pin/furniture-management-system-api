@@ -9,6 +9,7 @@ import type {
 } from "../../types/api";
 import type { AttendanceResultFeedback } from "../../utils/attendance";
 import { AttendanceHistoryList } from "./AttendanceHistoryList";
+import { formatLagosDateTime, formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
 
 type Props = {
@@ -26,14 +27,6 @@ type Props = {
   showHistory?: boolean;
   compact?: boolean;
 };
-
-function formatStatusTime(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d
-    .toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true })
-    .replace(/^0(\d)/, "$1");
-}
 
 export function MonthlyEmployeeAttendanceCard({
   empLoading,
@@ -79,7 +72,7 @@ export function MonthlyEmployeeAttendanceCard({
 
   const statusLine = (() => {
     if (clockRes?.status === "sunday") return clockRes.message ?? "Sundays are excluded.";
-    if (todayEntry) return `Attendance Marked – ${formatStatusTime(todayEntry.check_in_at)}`;
+    if (todayEntry) return `Attendance Marked – ${formatLagosTime(todayEntry.check_in_at)}`;
     return "Attendance Pending";
   })();
 
@@ -124,7 +117,7 @@ export function MonthlyEmployeeAttendanceCard({
             {todayEntry.is_late ? "Late" : "Present"}
           </span>
           <span className="text-black/60">
-            {new Date(todayEntry.check_in_at).toLocaleString()}
+            {formatLagosDateTime(todayEntry.check_in_at)}
             {todayEntry.is_late && typeof todayEntry.late_minutes === "number" ? ` · ${todayEntry.late_minutes} min late` : ""}
           </span>
           <span className="text-xs font-semibold tabular-nums text-red-800">

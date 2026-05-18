@@ -9,13 +9,10 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
+import { formatLagosDateTime } from "../utils/datetime";
 
 function fmtWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatLagosDateTime(iso);
 }
 
 function kindLabel(k: MachineActivity["kind"]) {

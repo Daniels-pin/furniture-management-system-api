@@ -13,6 +13,7 @@ import {
   isContractJobNotification,
   sortJobsByAttention
 } from "../utils/jobNotifications";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { Modal } from "../components/ui/Modal";
@@ -628,7 +629,7 @@ export function ContractEmployeeDashboardPage() {
                             </span>
                           </div>
                           <div className="mt-1 text-xs text-black/60">
-                            {new Date(t.created_at).toLocaleString()}
+                            {formatLagosDateTime(t.created_at)}
                             {relatedJob ? ` • ${relatedJob}` : ""}
                           </div>
                           {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
@@ -848,10 +849,10 @@ export function ContractEmployeeDashboardPage() {
                           {typeof j.balance !== "undefined" && j.balance !== null ? formatMoney(j.balance) : "—"}
                         </td>
                         <td className="py-3 pr-4 text-xs font-semibold text-black/60">
-                          Created: {new Date(j.created_at).toLocaleString()}
-                          {j.price_accepted_at ? ` • Accepted: ${new Date(j.price_accepted_at).toLocaleString()}` : ""}
-                          {j.started_at ? ` • Started: ${new Date(j.started_at).toLocaleString()}` : ""}
-                          {j.completed_at ? ` • Completed: ${new Date(j.completed_at).toLocaleString()}` : ""}
+                          Created: {formatLagosDateTime(j.created_at)}
+                          {j.price_accepted_at ? ` • Accepted: ${formatLagosDateTime(j.price_accepted_at)}` : ""}
+                          {j.started_at ? ` • Started: ${formatLagosDateTime(j.started_at)}` : ""}
+                          {j.completed_at ? ` • Completed: ${formatLagosDateTime(j.completed_at)}` : ""}
                           {j.paid_flag ? " • Paid" : ""}
                         </td>
                         <td className="py-3 pr-0 text-right">
@@ -1327,7 +1328,7 @@ export function ContractEmployeeDashboardPage() {
                   <div className="min-w-0">
                     <div className="font-semibold">Job #{j.id}</div>
                     <div className="text-xs text-black/60">
-                      {j.completed_at ? `Completed: ${new Date(j.completed_at).toLocaleString()}` : "Completed"}
+                      {j.completed_at ? `Completed: ${formatLagosDateTime(j.completed_at)}` : "Completed"}
                       {j.final_price ? ` • Price: ${formatMoney(j.final_price)}` : ""}
                     </div>
                   </div>

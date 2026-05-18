@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EmployeeAttendanceHistoryItem } from "../../types/api";
 import { attendanceTodayKey } from "../../utils/attendance";
+import { formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
 
 type Props = {
@@ -81,7 +82,7 @@ export function AttendanceHistoryList({
                   {item.status === "absent"
                     ? "No attendance marked"
                     : item.check_in_at
-                      ? new Date(item.check_in_at).toLocaleTimeString()
+                      ? formatLagosTime(item.check_in_at)
                       : "—"}
                   {item.work_location?.name ? ` · ${item.work_location.name}` : ""}
                   {typeof item.distance_meters === "number" ? ` · ${Math.round(item.distance_meters)}m` : ""}

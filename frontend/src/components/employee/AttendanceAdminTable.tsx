@@ -1,4 +1,5 @@
 import type { EmployeeAttendanceHistoryItem } from "../../types/api";
+import { formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
 
 function statusBadgeClass(status: EmployeeAttendanceHistoryItem["status"]) {
@@ -35,7 +36,7 @@ export function AttendanceAdminTable({ rows }: { rows: EmployeeAttendanceHistory
           <tr key={rowKey(a)} className="border-b border-black/5 hover:bg-black/[0.02]">
             <td className="py-3 pr-4 font-semibold">{a.attendance_date}</td>
             <td className="py-3 pr-4 text-xs font-semibold text-black/60">
-              {a.status === "absent" || !a.check_in_at ? "—" : new Date(a.check_in_at).toLocaleTimeString()}
+              {a.status === "absent" || !a.check_in_at ? "—" : formatLagosTime(a.check_in_at)}
             </td>
             <td className="py-3 pr-4">
               <span className={["rounded-full px-2 py-0.5 text-xs font-semibold", statusBadgeClass(a.status)].join(" ")}>

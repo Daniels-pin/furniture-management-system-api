@@ -9,6 +9,7 @@ import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
 import { PaginationFooter } from "../components/ui/Pagination";
 import type { ProformaListItem } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 
 const PAGE_SIZE = 20;
@@ -179,7 +180,7 @@ export function ProformaListPage() {
                     <td className="py-3 pr-4">{statusBadge(r.status)}</td>
                     <td className="py-3 pr-4">{formatMoney(r.grand_total)}</td>
                     <td className="py-3 pr-4 text-black/60">
-                      {new Date(r.created_at).toLocaleString()}
+                      {formatLagosDateTime(r.created_at)}
                       {r.created_by ? <span className="ml-2 text-black/40">· {r.created_by}</span> : null}
                     </td>
                     {showActions ? (

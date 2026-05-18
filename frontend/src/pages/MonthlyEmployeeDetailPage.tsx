@@ -10,6 +10,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { CompanyLocation, EmployeeAttendanceHistoryItem, EmployeeDetail, EmployeeTransaction } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
@@ -736,7 +737,7 @@ export function MonthlyEmployeeDetailPage() {
                       if (isInteractiveTarget(e.target)) return;
                     }}
                   >
-                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{new Date(t.created_at).toLocaleString()}</td>
+                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(t.created_at)}</td>
                     <td className="py-3 pr-4 font-semibold">{t.txn_type}</td>
                     <td className="py-3 pr-4">
                       <span

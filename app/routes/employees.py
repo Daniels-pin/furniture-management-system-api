@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import uuid
 from datetime import datetime
 import math
 from decimal import Decimal
 from typing import Optional
-from datetime import date as date_type, time as time_type, timedelta, timezone
-from zoneinfo import ZoneInfo
-from zoneinfo import ZoneInfoNotFoundError
+from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -21,6 +20,17 @@ from app.auth.auth import get_current_user, normalize_role, require_role
 from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
+from app.utils.timezone import (
+    lagos_date_of,
+    lagos_today,
+    late_minutes_after_cutoff,
+    now_lagos,
+    now_utc_naive,
+    to_lagos,
+    utc_naive_from,
+)
+
+logger = logging.getLogger(__name__)
 from app.schemas import (
     CompanyLocationOut,
     EmployeeLocationAssignmentItemOut,
@@ -56,12 +66,6 @@ router = APIRouter(prefix="/employees", tags=["Employees"])
 
 LATENESS_DEDUCTION_NAIRA = Decimal("500")
 ABSENCE_DEDUCTION_NAIRA = Decimal("1000")
-try:
-    _ATTENDANCE_TZ = ZoneInfo("Africa/Lagos")
-except ZoneInfoNotFoundError:
-    # Windows dev environments may not ship tzdata. Fall back to fixed UTC+1 (Lagos, no DST).
-    _ATTENDANCE_TZ = timezone(timedelta(hours=1))
-_LATE_THRESHOLD = time_type(8, 15)  # 08:15 AM
 
 _MONTH_NAMES = (
     "",
@@ -103,7 +107,8 @@ def _ym_key(year: int, month: int) -> tuple[int, int]:
 
 
 def _ym_from_datetime(dt: datetime) -> tuple[int, int]:
-    return dt.year, dt.month
+    d = lagos_date_of(dt)
+    return d.year, d.month
 
 
 def _ym_on_or_after(year: int, month: int, start: tuple[int, int]) -> bool:
@@ -250,7 +255,7 @@ def _try_auto_mark_period_month_paid(db: Session, period_id: int, actor_user=Non
     if not _all_active_employees_paid_for_period(db, period_id):
         return False
     period.month_payment_status = MONTH_PAYMENT_PAID
-    period.month_paid_at = datetime.utcnow()
+    period.month_paid_at = now_utc_naive()
     if actor_user is not None:
         period.month_paid_by_id = actor_user.id
     db.flush()
@@ -265,7 +270,7 @@ def ensure_payroll_periods_current(db: Session) -> Optional[models.SalaryPeriod]
         db.flush()
         return None
 
-    now = _now_local()
+    now = now_lagos()
     cy, cm = now.year, now.month
     if not _ym_on_or_after(cy, cm, first):
         db.query(models.SalaryPeriod).update({models.SalaryPeriod.is_active: False}, synchronize_session=False)
@@ -315,26 +320,14 @@ def _salary_period_out(db: Session, period: models.SalaryPeriod) -> SalaryPeriod
     )
 
 
-def _now_local() -> datetime:
-    # Attendance is a real-world clock-in event; treat it as Africa/Lagos local time.
-    # This avoids surprising "late" results from UTC offsets.
-    return datetime.now(tz=_ATTENDANCE_TZ).replace(microsecond=0)
-
-
 def _is_sunday(d: date_type) -> bool:
     # Python weekday(): Monday=0 ... Sunday=6
     return d.weekday() == 6
 
 
-def _late_minutes(check_in_at: datetime) -> Optional[int]:
-    if check_in_at.tzinfo is None:
-        return None
-    threshold_dt = check_in_at.replace(hour=_LATE_THRESHOLD.hour, minute=_LATE_THRESHOLD.minute, second=0)
-    if check_in_at <= threshold_dt:
-        return 0
-    delta = check_in_at - threshold_dt
-    mins = int(delta.total_seconds() // 60)
-    return mins if mins > 0 else 0
+def _late_minutes(check_in_at: datetime) -> int:
+    """Minutes after 08:15 Lagos; works for naive UTC rows from DB and aware clock-in times."""
+    return late_minutes_after_cutoff(check_in_at)
 
 
 def _last_day_of_month(year: int, month: int) -> date_type:
@@ -347,9 +340,7 @@ def _work_location_assigned_date(emp: models.Employee) -> Optional[date_type]:
     at = getattr(emp, "work_location_assigned_at", None)
     if at is None:
         return None
-    if at.tzinfo is None:
-        return at.date()
-    return at.astimezone(_ATTENDANCE_TZ).date()
+    return lagos_date_of(at)
 
 
 def _attendance_deductions_apply(db: Session, emp: models.Employee, period_id: int) -> bool:
@@ -364,7 +355,7 @@ def _set_work_location_assignment(emp: models.Employee, location_id: Optional[in
     if location_id is not None:
         new_id = int(location_id)
         if emp.work_location_id != new_id:
-            emp.work_location_assigned_at = datetime.utcnow()
+            emp.work_location_assigned_at = now_utc_naive()
         emp.work_location_id = new_id
     else:
         emp.work_location_id = None
@@ -378,7 +369,7 @@ def _sync_absence_entries_for_period(db: Session, employee_id: int, period: mode
     emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if emp is None or emp.work_location_id is None:
         return
-    today = _now_local().date()
+    today = lagos_today()
     start = date_type(period.year, period.month, 1)
     assigned = _work_location_assigned_date(emp)
     if assigned is not None and start < assigned:
@@ -430,7 +421,7 @@ def _ensure_absences_synced(db: Session, employee_id: int) -> None:
     first = _first_operational_payroll_month(db)
     if first is None:
         return
-    today = _now_local().date()
+    today = lagos_today()
     y, m = today.year, today.month
     seen: set[int] = set()
     for _ in range(3):
@@ -643,11 +634,50 @@ def _effective_geo_radius_meters(allowed: int, gps_accuracy_meters: float | None
     return effective
 
 
+def _log_geo_clock_in_validation(
+    *,
+    outcome: str,
+    employee_id: int | None,
+    location: models.CompanyLocation,
+    employee_lat: float,
+    employee_lon: float,
+    distance_meters: float,
+    allowed_radius_meters: int,
+    gps_accuracy_meters: float | None,
+    effective_radius_meters: float,
+    rejection_reason: str | None = None,
+) -> None:
+    """Structured diagnostics for geo-attendance investigation (no PII beyond employee id)."""
+    acc_repr = "none" if gps_accuracy_meters is None else f"{gps_accuracy_meters:.1f}"
+    logger.info(
+        "geo_attendance_validation outcome=%s employee_id=%s location_id=%s location_name=%r "
+        "employee_lat=%.7f employee_lon=%.7f site_lat=%.7f site_lon=%.7f "
+        "distance_m=%.1f allowed_radius_m=%s buffer_m=%.0f gps_accuracy_m=%s effective_radius_m=%.1f "
+        "rejection_reason=%s",
+        outcome,
+        employee_id,
+        int(location.id),
+        location.name,
+        float(employee_lat),
+        float(employee_lon),
+        float(location.latitude),
+        float(location.longitude),
+        float(distance_meters),
+        allowed_radius_meters,
+        _GEO_VALIDATION_BUFFER_METERS,
+        acc_repr,
+        float(effective_radius_meters),
+        rejection_reason or "",
+    )
+
+
 def _validate_geo_clock_in_distance(
     employee_lat: float,
     employee_lon: float,
     loc: models.CompanyLocation,
     gps_accuracy_meters: float | None = None,
+    *,
+    employee_id: int | None = None,
 ) -> tuple[float, int]:
     """Return (distance_meters, configured_radius_meters); raise 403/409 when not allowed."""
     allowed = int(loc.allowed_radius_meters or 0)
@@ -664,6 +694,18 @@ def _validate_geo_clock_in_distance(
     )
     effective = _effective_geo_radius_meters(allowed, gps_accuracy_meters)
     if distance > effective:
+        _log_geo_clock_in_validation(
+            outcome="rejected",
+            employee_id=employee_id,
+            location=loc,
+            employee_lat=employee_lat,
+            employee_lon=employee_lon,
+            distance_meters=distance,
+            allowed_radius_meters=allowed,
+            gps_accuracy_meters=gps_accuracy_meters,
+            effective_radius_meters=effective,
+            rejection_reason="distance_exceeds_effective_radius",
+        )
         extra = ""
         if gps_accuracy_meters is not None and gps_accuracy_meters > 0:
             extra = f" GPS accuracy was about {int(round(gps_accuracy_meters))}m."
@@ -675,6 +717,17 @@ def _validate_geo_clock_in_distance(
                 f" plus location tolerance, up to {int(round(effective))}m.{extra})"
             ),
         )
+    _log_geo_clock_in_validation(
+        outcome="accepted",
+        employee_id=employee_id,
+        location=loc,
+        employee_lat=employee_lat,
+        employee_lon=employee_lon,
+        distance_meters=distance,
+        allowed_radius_meters=allowed,
+        gps_accuracy_meters=gps_accuracy_meters,
+        effective_radius_meters=effective,
+    )
     return distance, allowed
 
 
@@ -1130,7 +1183,7 @@ def mark_period_month_paid(
     if period.month_payment_status == MONTH_PAYMENT_PAID:
         raise HTTPException(status_code=400, detail="This month is already marked paid.")
     period.month_payment_status = MONTH_PAYMENT_PAID
-    period.month_paid_at = datetime.utcnow()
+    period.month_paid_at = now_utc_naive()
     period.month_paid_by_id = current_user.id
     _log_payroll(
         db,
@@ -1168,8 +1221,8 @@ def start_next_payroll_month(
             p = rows[0]
             ny, nm = _next_calendar_month(p.year, p.month)
         else:
-            now = datetime.utcnow()
-            ny, nm = now.year, now.month
+            today = lagos_today()
+            ny, nm = today.year, today.month
 
     new_p = get_or_create_period(db, ny, nm)
     db.query(models.SalaryPeriod).update({models.SalaryPeriod.is_active: False}, synchronize_session=False)
@@ -1422,7 +1475,7 @@ def clock_in_my_attendance(
     if emp is None:
         raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
 
-    now = _now_local()
+    now = now_lagos()
     today = now.date()
     if _is_sunday(today):
         return EmployeeClockInOut(
@@ -1444,22 +1497,22 @@ def clock_in_my_attendance(
         out = _attendance_row_to_history(existing, lateness_entry_id=int(late_id) if late_id is not None else None)
         return EmployeeClockInOut(
             status="already_marked",
-            message=f"Attendance already marked at {existing.check_in_at.astimezone(_ATTENDANCE_TZ).strftime('%I:%M %p').lstrip('0')}.",
+            message=f"Attendance already marked at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}.",
             entry=out,
         )
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
     mins = _late_minutes(now)
-    is_late = bool(mins and mins > 0)
+    is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
         employee_id=emp.id,
         period_id=period.id,
         attendance_date=today,
-        check_in_at=now,
+        check_in_at=utc_naive_from(now),
         is_late=is_late,
-        late_minutes=int(mins) if mins is not None else None,
+        late_minutes=mins if is_late else 0,
     )
     db.add(att)
     db.flush()
@@ -1477,7 +1530,7 @@ def clock_in_my_attendance(
             .first()
         )
         if existing_late is None:
-            late_note = f"Late attendance: {today.isoformat()} (clock-in {now.astimezone(_ATTENDANCE_TZ).strftime('%H:%M')})"
+            late_note = f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
             le = models.EmployeeLatenessEntry(
                 employee_id=emp.id,
                 period_id=period.id,
@@ -1542,7 +1595,7 @@ def clock_in_my_attendance_geo(
         raise HTTPException(status_code=409, detail="Your assigned work location no longer exists. Contact an administrator.")
     db.refresh(loc)
 
-    now = _now_local()
+    now = now_lagos()
     today = now.date()
     if _is_sunday(today):
         return EmployeeClockInOut(
@@ -1564,7 +1617,7 @@ def clock_in_my_attendance_geo(
         out = _attendance_row_to_history(existing, lateness_entry_id=int(late_id) if late_id is not None else None)
         return EmployeeClockInOut(
             status="already_marked",
-            message=f"Attendance already marked at {existing.check_in_at.astimezone(_ATTENDANCE_TZ).strftime('%I:%M %p').lstrip('0')}.",
+            message=f"Attendance already marked at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}.",
             entry=out,
         )
 
@@ -1574,20 +1627,21 @@ def clock_in_my_attendance_geo(
         float(body.longitude),
         loc,
         gps_accuracy_meters=gps_accuracy,
+        employee_id=int(emp.id),
     )
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
     mins = _late_minutes(now)
-    is_late = bool(mins and mins > 0)
+    is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
         employee_id=emp.id,
         period_id=period.id,
         attendance_date=today,
-        check_in_at=now,
+        check_in_at=utc_naive_from(now),
         is_late=is_late,
-        late_minutes=int(mins) if mins is not None else None,
+        late_minutes=mins if is_late else 0,
         work_location_id=loc.id,
         employee_latitude=float(body.latitude),
         employee_longitude=float(body.longitude),
@@ -1609,7 +1663,7 @@ def clock_in_my_attendance_geo(
         )
         if existing_late is None:
             late_note = (
-                f"Late attendance: {today.isoformat()} (clock-in {now.astimezone(_ATTENDANCE_TZ).strftime('%H:%M')})"
+                f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
             )
             le = models.EmployeeLatenessEntry(
                 employee_id=emp.id,
@@ -1681,7 +1735,7 @@ def assign_employee_work_location(
     else:
         _set_work_location_assignment(emp, None)
 
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
 
     period = resolve_period(db, period_year, period_month)
@@ -1735,7 +1789,7 @@ def patch_employee_location_assignment(
     else:
         _set_work_location_assignment(emp, None)
 
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
     db.refresh(emp)
     return EmployeeLocationAssignmentPatchOut(
@@ -1803,7 +1857,7 @@ def patch_my_employee(
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(emp, k, v)
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
     db.refresh(emp)
     period = resolve_period(db, None, None)
@@ -1912,9 +1966,9 @@ def patch_employee_period_payment(
         if row.payment_status == "paid":
             raise HTTPException(status_code=400, detail="Salary is already marked paid for this period.")
         row.payment_status = "paid"
-        row.payment_date = body.payment_date or datetime.utcnow()
+        row.payment_date = body.payment_date or now_utc_naive()
         row.payment_reference = body.payment_reference
-        row.updated_at = datetime.utcnow()
+        row.updated_at = now_utc_naive()
         row.updated_by_id = current_user.id
         _log_payroll(
             db,
@@ -1928,7 +1982,7 @@ def patch_employee_period_payment(
         row.payment_status = "unpaid"
         row.payment_date = None
         row.payment_reference = None
-        row.updated_at = datetime.utcnow()
+        row.updated_at = now_utc_naive()
         row.updated_by_id = current_user.id
         _log_payroll(
             db,
@@ -1992,9 +2046,9 @@ def patch_employee_payroll_adjustments(
     if body.note is not None:
         payroll.adjustment_note = body.note
 
-    payroll.updated_at = datetime.utcnow()
+    payroll.updated_at = now_utc_naive()
     payroll.updated_by_id = current_user.id
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
 
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     pen_entries = sum((p.amount for p in penalties), Decimal("0"))
@@ -2078,7 +2132,7 @@ def patch_employee_admin(
                 raise HTTPException(status_code=400, detail="That user is already linked to another employee")
     for k, v in data.items():
         setattr(emp, k, v)
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     period = resolve_period(db, period_year, period_month)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     br = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2104,9 +2158,9 @@ def delete_employee(
     )
     if emp is None:
         raise HTTPException(status_code=404, detail="Employee not found")
-    emp.deleted_at = datetime.utcnow()
+    emp.deleted_at = now_utc_naive()
     emp.deleted_by_id = current_user.id
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
     return {"message": "Employee removed"}
 
@@ -2148,7 +2202,7 @@ def add_lateness_entry(
 
     row = models.EmployeeLatenessEntry(employee_id=employee_id, period_id=period.id, note=body.note)
     db.add(row)
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.flush()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     out = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2182,7 +2236,7 @@ def delete_lateness_entry(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Lateness entry not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = "void_via_delete_endpoint"
     log_financial_action(
@@ -2199,7 +2253,7 @@ def delete_lateness_entry(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2231,7 +2285,7 @@ def void_lateness_entry(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Lateness entry not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = (reason or "").strip() or None
     log_financial_action(
@@ -2248,7 +2302,7 @@ def void_lateness_entry(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2287,7 +2341,7 @@ def add_penalty(
         amount=body.amount,
     )
     db.add(row)
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.flush()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     out = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2321,7 +2375,7 @@ def delete_penalty(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Penalty not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = "void_via_delete_endpoint"
     log_financial_action(
@@ -2338,7 +2392,7 @@ def delete_penalty(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2370,7 +2424,7 @@ def void_penalty(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Penalty not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = (reason or "").strip() or None
     log_financial_action(
@@ -2387,7 +2441,7 @@ def void_penalty(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2426,7 +2480,7 @@ def add_bonus(
         amount=body.amount,
     )
     db.add(row)
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.flush()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     out = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2460,7 +2514,7 @@ def delete_bonus(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Bonus not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = "void_via_delete_endpoint"
     log_financial_action(
@@ -2477,7 +2531,7 @@ def delete_bonus(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2509,7 +2563,7 @@ def void_bonus(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Bonus not found")
-    row.voided_at = datetime.utcnow()
+    row.voided_at = now_utc_naive()
     row.voided_by_id = current_user.id
     row.void_reason = (reason or "").strip() or None
     log_financial_action(
@@ -2526,7 +2580,7 @@ def void_bonus(
         .first()
     )
     if emp:
-        emp.updated_at = datetime.utcnow()
+        emp.updated_at = now_utc_naive()
     db.commit()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
@@ -2563,11 +2617,11 @@ async def upload_document(
             "id": doc_id,
             "url": url,
             "label": (label or "").strip() or None,
-            "uploaded_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "uploaded_at": now_utc_naive().replace(microsecond=0).isoformat() + "Z",
         }
     )
     emp.documents = docs
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
     period = resolve_period(db, period_year, period_month)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
@@ -2600,7 +2654,7 @@ def delete_document(
     if len(docs) == len(emp.documents or []):
         raise HTTPException(status_code=404, detail="Document not found")
     emp.documents = docs
-    emp.updated_at = datetime.utcnow()
+    emp.updated_at = now_utc_naive()
     db.commit()
     period = resolve_period(db, period_year, period_month)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)

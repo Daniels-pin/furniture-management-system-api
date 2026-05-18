@@ -6,6 +6,7 @@ import { useToast } from "../state/toast";
 import { usePageHeader } from "../components/layout/pageHeader";
 import type { EmployeeDetail, EmployeeTransaction } from "../types/api";
 import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmployeeFinancePanel";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { sanitizeMoneyInput } from "../utils/moneyInput";
 
@@ -115,7 +116,7 @@ export function StaffFinanceSelf() {
             {emp.lateness_entries.map((x) => (
               <li key={x.id} className="rounded-xl border border-black/10 px-3 py-2 text-sm">
                 <div className="font-semibold">{x.note || "Lateness"}</div>
-                <div className="mt-0.5 text-xs text-black/55">{new Date(x.created_at).toLocaleString()}</div>
+                <div className="mt-0.5 text-xs text-black/55">{formatLagosDateTime(x.created_at)}</div>
               </li>
             ))}
           </ul>
@@ -176,7 +177,7 @@ export function StaffFinanceSelf() {
               <tbody>
                 {txns.map((t) => (
                   <tr key={t.id} className="border-b border-black/5">
-                    <td className="py-2 pr-3 text-black/80">{new Date(t.created_at).toLocaleString()}</td>
+                    <td className="py-2 pr-3 text-black/80">{formatLagosDateTime(t.created_at)}</td>
                     <td className="py-2 pr-3 font-semibold">{t.txn_type}</td>
                     <td className="py-2 pr-3">{t.status}</td>
                     <td className="py-2 pr-0 tabular-nums font-semibold">{formatMoney(t.amount)}</td>

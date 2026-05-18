@@ -8,11 +8,10 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
+import { formatLagosDateTime, lagosDateKey } from "../utils/datetime";
 
 function todayYmd() {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return lagosDateKey(new Date());
 }
 
 function shiftYmd(ymd: string, deltaDays: number) {
@@ -24,11 +23,7 @@ function shiftYmd(ymd: string, deltaDays: number) {
 }
 
 function fmtWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatLagosDateTime(iso);
 }
 
 type StatusFilter = "all" | "returned" | "in_use";
@@ -442,7 +437,7 @@ export function EquipmentPage() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_1fr]">
         <Card className="!p-4">
           <div className="text-sm font-bold">Tool check-outs by day</div>
-          <p className="mt-1 text-xs text-black/55">Grouped by checkout date (UTC calendar day).</p>
+          <p className="mt-1 text-xs text-black/55">Grouped by checkout date (Nigerian time / WAT).</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button type="button" variant="secondary" onClick={() => setSelectedDate((d) => shiftYmd(d, -1))}>
               Prev

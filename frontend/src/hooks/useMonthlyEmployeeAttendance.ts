@@ -4,6 +4,7 @@ import { useAuth } from "../state/auth";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import type { AttendanceResultFeedback } from "../utils/attendance";
 import {
+  attendanceGeoAccuracyMeters,
   findTodayAttendanceEntry,
   getAttendanceBlockedNoLocationFeedback,
   getAttendanceErrorFeedback,
@@ -94,7 +95,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
-        accuracy_meters: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : undefined
+        accuracy_meters: attendanceGeoAccuracyMeters(pos)
       });
       setClockRes(res);
       if (res.entry) {

@@ -7,6 +7,7 @@ import { Input } from "../components/ui/Input";
 import { contractJobsApi, notificationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import type { ContractJob, ContractJobNegotiationEvent, EmployeeTransaction } from "../types/api";
 import { usePageHeader } from "../components/layout/pageHeader";
@@ -43,7 +44,7 @@ function TimelineRow({ label, value }: { label: string; value?: string | null })
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-sm">
       <div className="text-xs font-semibold text-black/60">{label}</div>
-      <div className="font-semibold tabular-nums">{value ? new Date(value).toLocaleString() : "—"}</div>
+      <div className="font-semibold tabular-nums">{value ? formatLagosDateTime(value) : "—"}</div>
     </div>
   );
 }
@@ -63,7 +64,7 @@ function NegotiationHistory({ items }: { items: ContractJobNegotiationEvent[] })
             <div className="text-xs font-semibold text-black/60">
               {e.actor_role === "admin" ? "Admin" : e.actor_role === "contract_employee" ? "Employee" : (e.actor_role || "User")}
             </div>
-            <div className="text-xs font-semibold text-black/60">{new Date(e.created_at).toLocaleString()}</div>
+            <div className="text-xs font-semibold text-black/60">{formatLagosDateTime(e.created_at)}</div>
           </div>
           <div className="mt-1 text-xs text-black/70">
             Offer: <span className="font-semibold tabular-nums text-black">{formatMoney(e.offer_price)}</span>
@@ -308,7 +309,7 @@ export function AdminJobDetailPage() {
                     {t.paid_at ? (
                       <>
                         {" "}
-                        • Paid at: <span className="font-semibold text-black">{new Date(t.paid_at).toLocaleString()}</span>
+                        • Paid at: <span className="font-semibold text-black">{formatLagosDateTime(t.paid_at)}</span>
                       </>
                     ) : null}
                   </div>

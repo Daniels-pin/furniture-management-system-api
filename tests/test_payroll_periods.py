@@ -112,7 +112,7 @@ def test_ensure_payroll_periods_current_advances_month(db_session):
 
     fake_now = __import__("datetime").datetime(2026, 5, 15, 9, 0, tzinfo=__import__("zoneinfo").ZoneInfo("Africa/Lagos"))
 
-    with patch("app.routes.employees._now_local", return_value=fake_now):
+    with patch("app.routes.employees.now_lagos", return_value=fake_now):
         ensure_payroll_periods_current(db)
         db.commit()
 

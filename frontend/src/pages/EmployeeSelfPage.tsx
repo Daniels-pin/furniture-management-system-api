@@ -7,8 +7,10 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import type { EmployeeAttendanceEntry, EmployeeAttendanceHistoryItem, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import { AttendanceHistoryList } from "../components/employee/AttendanceHistoryList";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import {
+  attendanceGeoAccuracyMeters,
   findTodayAttendanceEntry,
   getAttendanceBlockedNoLocationFeedback,
   getAttendanceErrorFeedback,
@@ -102,7 +104,7 @@ export function EmployeeSelfPage() {
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
-        accuracy_meters: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : undefined
+        accuracy_meters: attendanceGeoAccuracyMeters(pos)
       });
       setClockRes(res);
       if (res.entry) {
@@ -246,7 +248,7 @@ export function EmployeeSelfPage() {
               {todayEntry.is_late ? "Late" : "Present"}
             </span>
             <span className="text-black/60">
-              {new Date(todayEntry.check_in_at).toLocaleString()}
+              {formatLagosDateTime(todayEntry.check_in_at)}
               {todayEntry.is_late && typeof todayEntry.late_minutes === "number" ? ` · ${todayEntry.late_minutes} min late` : ""}
             </span>
           </div>

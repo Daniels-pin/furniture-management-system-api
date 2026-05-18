@@ -7,6 +7,7 @@ import type { DraftModule, DraftSummary } from "../types/api";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "./auth";
 import { useToast } from "./toast";
+import { formatLagosDateTime } from "../utils/datetime";
 
 const RECOVERY_KEY = "furniture_draft_recover_v1";
 
@@ -120,7 +121,7 @@ export function DraftRecoveryGate({ children }: { children: React.ReactNode }) {
           </div>
           {draft?.updated_at ? (
             <div className="text-xs font-semibold text-black/40">
-              Last saved: {new Date(draft.updated_at).toLocaleString()}
+              Last saved: {formatLagosDateTime(draft.updated_at)}
             </div>
           ) : null}
           <div className="flex justify-end gap-2">

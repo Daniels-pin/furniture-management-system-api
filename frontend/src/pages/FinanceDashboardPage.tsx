@@ -8,6 +8,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { ExpenseEntry, ExpenseSummary, PendingEmployeePayments } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import { canCancelUnpaidPaymentTransfer, getFinancialActivityStatusLabel } from "../utils/financialActivity";
@@ -89,9 +90,7 @@ export function FinanceDashboardPage() {
 
   function fmtSentToFinanceDate(it: { sent_to_finance_at?: string | null; transaction: { created_at: string } }) {
     const raw = it.sent_to_finance_at ?? it.transaction.created_at;
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return "—";
-    return d.toLocaleString();
+    return formatLagosDateTime(raw);
   }
 
   function toFiniteNumber(x: unknown): number | null {
@@ -979,7 +978,7 @@ export function FinanceDashboardPage() {
                             {(it.transaction as any)?.processed_by_role ? ` (${(it.transaction as any).processed_by_role})` : ""}
                           </td>
                           <td className="py-3 pr-0 text-right text-xs font-semibold text-black/60">
-                            {it.transaction.paid_at ? new Date(it.transaction.paid_at).toLocaleString() : "—"}
+                            {it.transaction.paid_at ? formatLagosDateTime(it.transaction.paid_at) : "—"}
                           </td>
                         </tr>
                       ))}
@@ -1099,13 +1098,13 @@ export function FinanceDashboardPage() {
                   <div>
                     <div className="text-xs font-semibold text-black/55">Created</div>
                     <div className="mt-0.5 text-xs font-semibold text-black/70">
-                      {detail.transaction?.created_at ? new Date(detail.transaction.created_at).toLocaleString() : "—"}
+                      {detail.transaction?.created_at ? formatLagosDateTime(detail.transaction.created_at) : "—"}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs font-semibold text-black/55">Paid/confirmed at</div>
                     <div className="mt-0.5 text-xs font-semibold text-black/70">
-                      {detail.transaction?.paid_at ? new Date(detail.transaction.paid_at).toLocaleString() : "—"}
+                      {detail.transaction?.paid_at ? formatLagosDateTime(detail.transaction.paid_at) : "—"}
                     </div>
                   </div>
                   <div className="sm:col-span-2">
@@ -1346,7 +1345,7 @@ export function FinanceDashboardPage() {
           <div className="space-y-4">
             <div className="rounded-2xl border border-black/10 bg-white p-3 text-sm">
               <div className="text-xs font-semibold text-black/55">Date/time</div>
-              <div className="mt-0.5 font-bold">{new Date(pettyDetailFor.entry_date).toLocaleString()}</div>
+              <div className="mt-0.5 font-bold">{formatLagosDateTime(pettyDetailFor.entry_date)}</div>
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <div className="text-xs font-semibold text-black/55">Type</div>

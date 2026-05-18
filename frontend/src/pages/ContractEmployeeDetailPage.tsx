@@ -7,6 +7,7 @@ import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import type { ContractEmployeeDetail, ContractJob, NotificationItem } from "../types/api";
@@ -1070,7 +1071,7 @@ export function ContractEmployeeDetailPage() {
                         <div className="font-bold tabular-nums">{formatMoney(t.amount)}</div>
                       </div>
                       <div className="mt-0.5 text-xs text-black/55">
-                        {new Date(t.created_at).toLocaleString()} • <span className="font-semibold">{statusLabel}</span>
+                        {formatLagosDateTime(t.created_at)} • <span className="font-semibold">{statusLabel}</span>
                         {relatedJob ? ` • ${relatedJob}` : ""}
                         {typeof t.running_balance !== "undefined" && t.running_balance !== null
                           ? ` • Balance: ${formatMoney(t.running_balance)}`

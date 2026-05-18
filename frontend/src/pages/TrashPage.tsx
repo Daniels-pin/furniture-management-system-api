@@ -7,13 +7,10 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { TrashItem } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 
 function formatWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatLagosDateTime(iso);
 }
 
 function rowKey(row: TrashItem) {

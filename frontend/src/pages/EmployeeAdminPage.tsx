@@ -9,6 +9,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { EmployeeDetail, PayrollPeriodsNav, User } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 
@@ -674,7 +675,7 @@ export function EmployeeAdminPage() {
               emp.lateness_entries.map((x) => (
                 <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
                   <span className="text-black/70">
-                    {new Date(x.created_at).toLocaleString()}
+                    {formatLagosDateTime(x.created_at)}
                     {x.note ? ` — ${x.note}` : ""}
                   </span>
                   <Button

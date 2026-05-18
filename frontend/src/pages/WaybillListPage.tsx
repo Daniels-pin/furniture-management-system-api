@@ -7,6 +7,7 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { PaginationFooter } from "../components/ui/Pagination";
 import type { WaybillListItem } from "../types/api";
+import { formatLagosDateTime } from "../utils/datetime";
 
 const PAGE_SIZE = 20;
 
@@ -131,7 +132,7 @@ export function WaybillListPage() {
                     <td className="py-3 pr-4 text-black/80">{r.customer_name}</td>
                     <td className="py-3 pr-4">{deliveryBadge(r.delivery_status)}</td>
                     <td className="py-3 pr-0 text-black/60">
-                      {new Date(r.created_at).toLocaleString()}
+                      {formatLagosDateTime(r.created_at)}
                       {r.created_by ? <span className="ml-2 text-black/40">· {r.created_by}</span> : null}
                     </td>
                   </tr>

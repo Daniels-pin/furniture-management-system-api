@@ -18,6 +18,7 @@ from app.schemas import ExpenseEntryCreate, ExpenseEntryOut, ExpenseSummaryOut, 
 from app.schemas import ExpenseEntriesPageOut
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
+from app.utils.timezone import lagos_today_utc_bounds
 
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
 
@@ -114,8 +115,7 @@ def expense_summary(
         .scalar()
         or 0
     )
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    today_start, today_end = lagos_today_utc_bounds()
     today_exp = (
         db.query(func.coalesce(func.sum(models.ExpenseEntry.amount), 0))
         .filter(

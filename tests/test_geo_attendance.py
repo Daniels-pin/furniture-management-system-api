@@ -249,7 +249,7 @@ def test_geo_clock_in_duplicate_same_day(client, geo_employee):
 def test_geo_clock_in_sunday_excluded(client, geo_employee):
     sunday = datetime(2026, 5, 17, 9, 0, 0, tzinfo=LAGOS)
 
-    with patch("app.routes.employees._now_local", return_value=sunday):
+    with patch("app.routes.employees.now_lagos", return_value=sunday):
         r = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
 
     assert r.status_code == 200, r.text
@@ -261,7 +261,7 @@ def test_geo_clock_in_sunday_excluded(client, geo_employee):
 def test_geo_clock_in_late_creates_lateness_entry(client, geo_employee, db_session):
     late_morning = datetime(2026, 5, 15, 8, 16, 0, tzinfo=LAGOS)
 
-    with patch("app.routes.employees._now_local", return_value=late_morning):
+    with patch("app.routes.employees.now_lagos", return_value=late_morning):
         r = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
 
     assert r.status_code == 200, r.text
@@ -282,7 +282,7 @@ def test_geo_clock_in_late_creates_lateness_entry(client, geo_employee, db_sessi
     assert len(late_rows) == 1
 
     # Second clock-in same day must not duplicate lateness
-    with patch("app.routes.employees._now_local", return_value=late_morning):
+    with patch("app.routes.employees.now_lagos", return_value=late_morning):
         again = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
     assert again.json()["status"] == "already_marked"
 
@@ -355,6 +355,60 @@ def test_geo_clock_in_inside_radius_with_high_gps_uncertainty(client, geo_employ
         headers=_auth(geo_employee["staff_token"]),
     )
     assert r.status_code == 200, r.text
+
+
+def test_geo_clock_in_desktop_uncertainty_without_accuracy(client, geo_employee):
+    """Without reported accuracy only the 15m buffer applies; with client fallback accuracy, in-radius fixes succeed."""
+    lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, RADIUS_M + 25)
+    no_accuracy = client.post(
+        "/employees/me/attendance/clock-in-geo",
+        json={"latitude": lat, "longitude": lon},
+        headers=_auth(geo_employee["staff_token"]),
+    )
+    assert no_accuracy.status_code == 403
+
+    with_fallback = client.post(
+        "/employees/me/attendance/clock-in-geo",
+        json={"latitude": lat, "longitude": lon, "accuracy_meters": 75},
+        headers=_auth(geo_employee["staff_token"]),
+    )
+    assert with_fallback.status_code == 200, with_fallback.text
+
+
+def test_geo_clock_in_tight_radius_needs_accuracy_envelope(client, admin_token):
+    """Small site radius (e.g. 20m) requires GPS accuracy tolerance; buffer-only is too strict for real devices."""
+    staff_token, user_id = _create_staff_user(client, admin_token)
+    emp_id = _create_monthly_employee(client, admin_token, user_id)
+    tight_radius = 20
+    r = client.post(
+        "/company-locations",
+        json={
+            "name": f"Tight-{uuid.uuid4().hex[:6]}",
+            "latitude": OFFICE_LAT,
+            "longitude": OFFICE_LON,
+            "allowed_radius_meters": tight_radius,
+        },
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    loc_id = r.json()["id"]
+    _assign_location(client, admin_token, emp_id, loc_id)
+
+    # 40m from center: outside buffer-only (20+15=35m) but inside accuracy envelope (20+75=95m).
+    lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 40)
+    buffer_only = client.post(
+        "/employees/me/attendance/clock-in-geo",
+        json={"latitude": lat, "longitude": lon},
+        headers=_auth(staff_token),
+    )
+    assert buffer_only.status_code == 403
+
+    with_accuracy = client.post(
+        "/employees/me/attendance/clock-in-geo",
+        json={"latitude": lat, "longitude": lon, "accuracy_meters": 75},
+        headers=_auth(staff_token),
+    )
+    assert with_accuracy.status_code == 200, with_accuracy.text
 
 
 def test_geo_clock_in_uses_updated_location_coordinates(client, admin_token):

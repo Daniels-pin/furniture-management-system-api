@@ -1,9 +1,11 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, EmailStr, Field, computed_field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, computed_field, field_serializer, field_validator, model_validator
 from datetime import date, datetime
 from typing import List, Literal, Optional
 from enum import Enum
+
+from app.utils.timezone import datetime_for_api
 
 DocumentLineType = Literal["item", "subheading"]
 
@@ -1079,6 +1081,10 @@ class EmployeeAttendanceEntryOut(BaseModel):
     distance_meters: Optional[float] = None
     work_location: Optional[CompanyLocationOut] = None
 
+    @field_serializer("check_in_at")
+    def _serialize_check_in_at(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
     class Config:
         from_attributes = True
 
@@ -1103,6 +1109,10 @@ class EmployeeAttendanceHistoryOut(BaseModel):
     employee_longitude: Optional[float] = None
     distance_meters: Optional[float] = None
     work_location: Optional[CompanyLocationOut] = None
+
+    @field_serializer("check_in_at")
+    def _serialize_check_in_at(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
 
 
 class EmployeeClockInOut(BaseModel):
@@ -1568,6 +1578,10 @@ class EmployeeTransactionOut(BaseModel):
     cancelled_reason: Optional[str] = None
     allocations: Optional[List[EmployeePaymentAllocationOut]] = None
 
+    @field_serializer("created_at", "paid_at", "cancelled_at")
+    def _serialize_txn_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
+
     class Config:
         from_attributes = True
 
@@ -1753,6 +1767,10 @@ class NotificationOut(BaseModel):
     entity_id: Optional[int] = None
     created_at: datetime
     read_at: Optional[datetime] = None
+
+    @field_serializer("created_at", "read_at")
+    def _serialize_notification_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
 
     class Config:
         from_attributes = True
