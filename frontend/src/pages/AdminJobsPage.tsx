@@ -12,12 +12,14 @@ import type { AdminJobsSummary, ContractEmployeeListItem, ContractJob, Notificat
 import { usePageHeader } from "../components/layout/pageHeader";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import {
+  captureEmployeeJobAttention,
   getEmployeeUnreadSummary,
   getJobActivityMs,
-  getPrimaryJobAlertLabel,
-  getUnreadNotifsForJob,
+  getJobAttentionRowClass,
+  resolveJobAttentionLabel,
   sortEmployeeGroupsByAttention,
-  sortJobsByAttention
+  sortJobsByAttention,
+  type JobAttentionSnapshot
 } from "../utils/jobNotifications";
 
 function JobStatusBadge({ status }: { status: ContractJob["status"] }) {
@@ -138,10 +140,11 @@ function JobAlertBadge({ label }: { label: string | null }) {
   return (
     <span
       className={[
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
         cls
       ].join(" ")}
     >
+      {isNewJob ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden /> : null}
       {label}
     </span>
   );
@@ -221,12 +224,14 @@ function AdminJobCard({
   job,
   onOpen,
   onCancel,
-  alertLabel
+  alertLabel,
+  rowClass
 }: {
   job: ContractJob;
   onOpen(): void;
   onCancel(): void;
   alertLabel: string | null;
+  rowClass?: string;
 }) {
   const vis = getRowVisual(job);
   const isLocked = Boolean(job.price_accepted_at) || job.final_price != null;
@@ -239,7 +244,7 @@ function AdminJobCard({
       className={[
         "w-full rounded-2xl border border-black/10 bg-white p-4 text-left shadow-soft transition",
         "active:scale-[0.99]",
-        vis.row
+        rowClass ?? vis.row
       ].join(" ")}
       onClick={onOpen}
     >
@@ -305,6 +310,8 @@ export function AdminJobsPage() {
   const [jobs, setJobs] = useState<ContractJob[]>([]);
   const [summary, setSummary] = useState<AdminJobsSummary | null>(null);
   const [unreadNotifs, setUnreadNotifs] = useState<NotificationItem[]>([]);
+  /** Per-job attention retained after employee group expand clears server unread state. */
+  const [jobAttentionSnapshots, setJobAttentionSnapshots] = useState<Record<number, JobAttentionSnapshot>>({});
   // Default to "all" to preserve visibility of historical (completed) jobs.
   const [statusFilter, setStatusFilter] = useState<"active" | "all" | "pending" | "in_progress" | "completed">("all");
   const [assignOpen, setAssignOpen] = useState(false);
@@ -436,18 +443,21 @@ export function AdminJobsPage() {
     const groups = Array.from(byEmp.entries()).map(([employeeId, list]) => {
       const employeeName = list.find((j) => j.contract_employee_name)?.contract_employee_name || `Employee #${employeeId}`;
       const summary = getEmployeeUnreadSummary(list, unreadNotifs);
+      const hasPersistedAttention = list.some((j) => jobAttentionSnapshots[j.id]);
       const jobsSorted = sortJobsByAttention(list, unreadNotifs);
       const maxActivity = summary.hasUnread
         ? summary.maxActivityMs
-        : jobsSorted.length
-          ? getJobActivityMs(jobsSorted[0], unreadNotifs)
-          : 0;
+        : hasPersistedAttention
+          ? Math.max(...list.map((j) => getJobActivityMs(j, unreadNotifs)))
+          : jobsSorted.length
+            ? getJobActivityMs(jobsSorted[0], unreadNotifs)
+            : 0;
       return {
         employeeId,
         employeeName,
         jobs: jobsSorted,
         maxActivity,
-        hasUnread: summary.hasUnread,
+        hasUnread: summary.hasUnread || hasPersistedAttention,
         newJobCount: summary.newJobCount,
         negotiationCount: summary.negotiationCount,
         cancelledCount: summary.cancelledCount
@@ -455,13 +465,33 @@ export function AdminJobsPage() {
     });
 
     return sortEmployeeGroupsByAttention(groups);
-  }, [searchFilteredJobs, unreadNotifs]);
+  }, [searchFilteredJobs, unreadNotifs, jobAttentionSnapshots]);
+
+  function openJob(jobId: number) {
+    setJobAttentionSnapshots((prev) => {
+      if (!prev[jobId]) return prev;
+      const next = { ...prev };
+      delete next[jobId];
+      return next;
+    });
+    nav(`/admin/jobs/${jobId}`);
+  }
+
+  function jobAlertLabel(jobId: number) {
+    return resolveJobAttentionLabel(jobId, unreadNotifs, jobAttentionSnapshots, "admin");
+  }
 
   async function toggleEmployeeGroup(employeeId: number, employeeKey: string) {
     if (jobSearchActive) return;
     const willOpen = !Boolean(expandedEmp[employeeKey]);
     setExpandedEmp((m) => ({ ...m, [employeeKey]: willOpen }));
     if (!willOpen) return;
+
+    const captured = captureEmployeeJobAttention(jobs, employeeId, unreadNotifs, "admin");
+    if (Object.keys(captured).length > 0) {
+      setJobAttentionSnapshots((prev) => ({ ...prev, ...captured }));
+    }
+
     try {
       await notificationsApi.markContractEmployeeJobsRead(employeeId);
       setUnreadNotifs((prev) =>
@@ -643,6 +673,7 @@ export function AdminJobsPage() {
               {grouped.map((g) => {
                 const key = String(g.employeeId);
                 const open = isEmployeeGroupOpen(key);
+                const showGroupAlerts = !open;
                 return (
                   <div key={g.employeeId} className="rounded-2xl border border-black/10 bg-white shadow-soft overflow-hidden">
                     <button
@@ -659,11 +690,13 @@ export function AdminJobsPage() {
                           <div className="mt-0.5 text-xs font-semibold text-black/55">{g.jobs.length} job{g.jobs.length === 1 ? "" : "s"}</div>
                         </div>
                         <div className="shrink-0 flex flex-wrap items-center justify-end gap-2">
-                          <EmployeeGroupAlertBadges
-                            newJobCount={g.newJobCount}
-                            negotiationCount={g.negotiationCount}
-                            cancelledCount={g.cancelledCount}
-                          />
+                          {showGroupAlerts ? (
+                            <EmployeeGroupAlertBadges
+                              newJobCount={g.newJobCount}
+                              negotiationCount={g.negotiationCount}
+                              cancelledCount={g.cancelledCount}
+                            />
+                          ) : null}
                           <span className="text-xs font-semibold text-black/45">{open ? "Hide" : "View"}</span>
                         </div>
                       </div>
@@ -672,13 +705,15 @@ export function AdminJobsPage() {
                     {open ? (
                       <div className="space-y-3 border-t border-black/10 bg-black/[0.01] p-3">
                         {g.jobs.map((j) => {
-                          const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
+                          const vis = getRowVisual(j);
+                          const rowClass = getJobAttentionRowClass(j, j.id, unreadNotifs, jobAttentionSnapshots, vis.row);
                           return (
                             <AdminJobCard
                               key={j.id}
                               job={j}
-                              alertLabel={getPrimaryJobAlertLabel(jobNotifs, "admin")}
-                              onOpen={() => nav(`/admin/jobs/${j.id}`)}
+                              alertLabel={jobAlertLabel(j.id)}
+                              rowClass={rowClass}
+                              onOpen={() => openJob(j.id)}
                               onCancel={() => {
                                 setCancelTarget(j);
                                 setCancelNote("");
@@ -712,6 +747,7 @@ export function AdminJobsPage() {
                   {grouped.map((g) => {
                     const key = String(g.employeeId);
                     const open = isEmployeeGroupOpen(key);
+                    const showGroupAlerts = !open;
                     return (
                       <Fragment key={g.employeeId}>
                         <tr className={g.hasUnread && !open ? "bg-amber-50/50" : "bg-black/[0.01]"}>
@@ -728,11 +764,13 @@ export function AdminJobsPage() {
                                 </div>
                               </div>
                               <div className="shrink-0 flex flex-wrap items-center gap-2">
-                                <EmployeeGroupAlertBadges
-                                  newJobCount={g.newJobCount}
-                                  negotiationCount={g.negotiationCount}
-                                  cancelledCount={g.cancelledCount}
-                                />
+                                {showGroupAlerts ? (
+                                  <EmployeeGroupAlertBadges
+                                    newJobCount={g.newJobCount}
+                                    negotiationCount={g.negotiationCount}
+                                    cancelledCount={g.cancelledCount}
+                                  />
+                                ) : null}
                                 <span className="text-xs font-semibold text-black/45">{open ? "Hide jobs" : "View jobs"}</span>
                               </div>
                             </button>
@@ -744,21 +782,22 @@ export function AdminJobsPage() {
                               const vis = getRowVisual(j);
                               const ui = getNegotiationUi(j);
                               const showNegotiation = ui.state !== "none";
-                              const jobNotifs = getUnreadNotifsForJob(j.id, unreadNotifs);
+                              const rowClass = getJobAttentionRowClass(j, j.id, unreadNotifs, jobAttentionSnapshots, vis.row);
                               return (
                                 <tr
                                   key={j.id}
-                                  className={["cursor-pointer", vis.row].join(" ")}
-                                  onClick={() => nav(`/admin/jobs/${j.id}`)}
+                                  className={["cursor-pointer", rowClass].join(" ")}
+                                  onClick={() => openJob(j.id)}
                                   role="button"
                                   tabIndex={0}
                                   onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") nav(`/admin/jobs/${j.id}`);
+                                    if (e.key === "Enter" || e.key === " ") openJob(j.id);
                                   }}
                                 >
                                   <td className="px-4 py-3">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <span className="font-semibold">#{j.id}</span>
+                                      <JobAlertBadge label={jobAlertLabel(j.id)} />
                                       <JobAttachmentBadge show={jobHasAttachment(j)} />
                                     </div>
                                   </td>
@@ -769,7 +808,6 @@ export function AdminJobsPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                       <NegotiationBadge state={showNegotiation || vis.negotiatingBadge ? ui.state : "none"} />
                                       <AcceptanceIndicator label={ui.acceptanceLabel} />
-                                      <JobAlertBadge label={getPrimaryJobAlertLabel(jobNotifs, "admin")} />
                                     </div>
                                   </td>
                                   <td className="px-4 py-3">

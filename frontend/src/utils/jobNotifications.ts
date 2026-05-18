@@ -119,3 +119,91 @@ export function sortEmployeeGroupsByAttention<T extends { hasUnread: boolean; ma
     return b.maxActivityMs - a.maxActivityMs;
   });
 }
+
+/** Captured when an employee group is expanded so per-job indicators survive employee-level mark-read. */
+export type JobAttentionSnapshot = {
+  primaryLabel: string | null;
+  hasNewJob: boolean;
+  hasNegotiation: boolean;
+  hasCancelled: boolean;
+};
+
+export function snapshotJobAttention(
+  jobId: number,
+  unreadNotifs: NotificationItem[],
+  role: "admin" | "contract_employee" = "admin"
+): JobAttentionSnapshot | null {
+  const notifs = getUnreadNotifsForJob(jobId, unreadNotifs);
+  if (!notifs.length) return null;
+  return {
+    primaryLabel: getPrimaryJobAlertLabel(notifs, role),
+    hasNewJob: notifs.some((n) => n.kind === "job_assigned"),
+    hasNegotiation: notifs.some((n) => isNegotiationNotification(n)),
+    hasCancelled: notifs.some((n) => n.kind === "job_cancelled")
+  };
+}
+
+export function captureEmployeeJobAttention(
+  jobs: ContractJob[],
+  employeeId: number,
+  unreadNotifs: NotificationItem[],
+  role: "admin" | "contract_employee" = "admin"
+): Record<number, JobAttentionSnapshot> {
+  const captured: Record<number, JobAttentionSnapshot> = {};
+  for (const j of jobs) {
+    if (Number(j.contract_employee_id) !== Number(employeeId)) continue;
+    const snap = snapshotJobAttention(j.id, unreadNotifs, role);
+    if (snap) captured[j.id] = snap;
+  }
+  return captured;
+}
+
+export function resolveJobAttentionLabel(
+  jobId: number,
+  unreadNotifs: NotificationItem[],
+  snapshots: Record<number, JobAttentionSnapshot>,
+  role: "admin" | "contract_employee" = "admin"
+): string | null {
+  const live = getPrimaryJobAlertLabel(getUnreadNotifsForJob(jobId, unreadNotifs), role);
+  if (live) return live;
+  return snapshots[jobId]?.primaryLabel ?? null;
+}
+
+export function jobHasPersistedAttention(
+  jobId: number,
+  unreadNotifs: NotificationItem[],
+  snapshots: Record<number, JobAttentionSnapshot>
+): boolean {
+  if (getUnreadNotifsForJob(jobId, unreadNotifs).length > 0) return true;
+  return Boolean(snapshots[jobId]);
+}
+
+export function jobHasNewJobAttention(
+  jobId: number,
+  unreadNotifs: NotificationItem[],
+  snapshots: Record<number, JobAttentionSnapshot>
+): boolean {
+  if (getUnreadNotifsForJob(jobId, unreadNotifs).some((n) => n.kind === "job_assigned")) return true;
+  return Boolean(snapshots[jobId]?.hasNewJob);
+}
+
+/** Row surface for jobs with unread or persisted attention (after group expand). */
+export function getJobAttentionRowClass(
+  job: ContractJob,
+  jobId: number,
+  unreadNotifs: NotificationItem[],
+  snapshots: Record<number, JobAttentionSnapshot>,
+  fallbackRowClass: string
+): string {
+  if (job.status === "cancelled" && !jobHasPersistedAttention(jobId, unreadNotifs, snapshots)) {
+    return fallbackRowClass;
+  }
+  const label = resolveJobAttentionLabel(jobId, unreadNotifs, snapshots, "admin");
+  if (jobHasNewJobAttention(jobId, unreadNotifs, snapshots) || label === "New Job") {
+    return "bg-amber-50/70 hover:bg-amber-50 ring-1 ring-inset ring-amber-200/70";
+  }
+  if (label) {
+    return "bg-indigo-50/40 hover:bg-indigo-50 ring-1 ring-inset ring-indigo-200/50";
+  }
+  return fallbackRowClass;
+}

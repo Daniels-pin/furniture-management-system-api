@@ -382,7 +382,6 @@ export function FinanceDashboardPage() {
           resultFeedback={monthlyAttendance.resultFeedback}
           onDismissResultFeedback={monthlyAttendance.dismissResultFeedback}
           showHistory
-          historyLimit={5}
         />
       ) : null}
       <Card className="!p-4">

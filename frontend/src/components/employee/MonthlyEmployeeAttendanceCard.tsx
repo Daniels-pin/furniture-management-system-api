@@ -1,13 +1,20 @@
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { AttendanceResultModal } from "./AttendanceResultModal";
-import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../../types/api";
+import type {
+  EmployeeAttendanceEntry,
+  EmployeeAttendanceHistoryItem,
+  EmployeeClockInResponse,
+  EmployeeDetail
+} from "../../types/api";
 import type { AttendanceResultFeedback } from "../../utils/attendance";
+import { AttendanceHistoryList } from "./AttendanceHistoryList";
+import { formatMoney } from "../../utils/money";
 
 type Props = {
   empLoading: boolean;
   emp: EmployeeDetail | null;
-  attendance: EmployeeAttendanceEntry[];
+  attendance: EmployeeAttendanceHistoryItem[];
   attBusy: boolean;
   clockRes: EmployeeClockInResponse | null;
   todayEntry: EmployeeAttendanceEntry | null;
@@ -17,7 +24,6 @@ type Props = {
   /** When set, shown instead of hiding the card while profile is missing. */
   missingProfileMessage?: string;
   showHistory?: boolean;
-  historyLimit?: number;
   compact?: boolean;
 };
 
@@ -41,7 +47,6 @@ export function MonthlyEmployeeAttendanceCard({
   onDismissResultFeedback,
   missingProfileMessage,
   showHistory = true,
-  historyLimit = 10,
   compact = false
 }: Props) {
   const resultModal = (
@@ -87,7 +92,7 @@ export function MonthlyEmployeeAttendanceCard({
           <p className="text-sm font-semibold text-black">Attendance</p>
           {compact ? <p className="mt-2 text-sm text-black/80">{statusLine}</p> : null}
           <p className={compact ? "mt-3 text-xs leading-relaxed text-black/55" : "mt-1 text-xs text-black/55"}>
-            Mark attendance. Late coming attracts a ₦500 deduction.
+            Mark attendance by 8:15 AM. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
           </p>
           {emp.work_location ? (
             <p className="mt-1 text-xs font-semibold text-black/60">
@@ -122,46 +127,15 @@ export function MonthlyEmployeeAttendanceCard({
             {new Date(todayEntry.check_in_at).toLocaleString()}
             {todayEntry.is_late && typeof todayEntry.late_minutes === "number" ? ` · ${todayEntry.late_minutes} min late` : ""}
           </span>
+          <span className="text-xs font-semibold tabular-nums text-red-800">
+            {Number(todayEntry.deduction_naira ?? 0) > 0 ? formatMoney(todayEntry.deduction_naira) : "₦0"}
+          </span>
         </div>
       ) : clockRes?.status === "sunday" ? (
         <p className="mt-3 text-sm font-semibold text-black/70">{clockRes.message ?? "Sundays are excluded."}</p>
       ) : null}
 
-      {showHistory && attendance.length > 0 ? (
-        <div className="mt-4">
-          <p className="text-xs font-semibold text-black/60">{compact ? "Recent attendance" : "History"}</p>
-          <ul className="mt-2 space-y-2">
-            {attendance.slice(0, historyLimit).map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/10 px-3 py-2 text-sm">
-                <div className="min-w-0">
-                  <p className="font-semibold">{a.attendance_date}</p>
-                  <p className="text-xs text-black/60">
-                    {new Date(a.check_in_at).toLocaleTimeString()}
-                    {a.work_location?.name ? ` · ${a.work_location.name}` : ""}
-                    {typeof a.distance_meters === "number" ? ` · ${Math.round(a.distance_meters)}m` : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={[
-                      "rounded-full px-2 py-0.5 text-xs font-semibold",
-                      a.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
-                    ].join(" ")}
-                  >
-                    {a.is_late ? "Late" : "Present"}
-                  </span>
-                  {a.is_late ? <span className="text-xs font-semibold text-red-800">₦500</span> : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : showHistory && !compact ? (
-        <div className="mt-4">
-          <p className="text-xs font-semibold text-black/60">History</p>
-          <p className="mt-2 text-sm text-black/60">No attendance yet.</p>
-        </div>
-      ) : null}
+      {showHistory ? <AttendanceHistoryList items={attendance} compact={compact} /> : null}
     </Card>
     </>
   );

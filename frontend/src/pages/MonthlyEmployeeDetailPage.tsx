@@ -9,9 +9,17 @@ import { companyLocationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { CompanyLocation, EmployeeAttendanceEntry, EmployeeDetail, EmployeeTransaction } from "../types/api";
+import type { CompanyLocation, EmployeeAttendanceHistoryItem, EmployeeDetail, EmployeeTransaction } from "../types/api";
 import { formatMoney } from "../utils/money";
+import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
+import {
+  absenceDeductionAuto,
+  absenceDeductionEffective,
+  computePayrollPreview,
+  latenessDeductionAuto,
+  latenessDeductionEffective
+} from "../utils/payroll";
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   const el = target instanceof Element ? target : null;
@@ -35,8 +43,9 @@ export function MonthlyEmployeeDetailPage() {
   const [detail, setDetail] = useState<EmployeeDetail | null>(null);
   const [txns, setTxns] = useState<EmployeeTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(false);
-  const [att, setAtt] = useState<EmployeeAttendanceEntry[]>([]);
+  const [att, setAtt] = useState<EmployeeAttendanceHistoryItem[]>([]);
   const [attLoading, setAttLoading] = useState(false);
+  const [attHistoryExpanded, setAttHistoryExpanded] = useState(false);
 
   const [locs, setLocs] = useState<CompanyLocation[]>([]);
   const [locsLoading, setLocsLoading] = useState(false);
@@ -50,9 +59,8 @@ export function MonthlyEmployeeDetailPage() {
   const [periodBaseSalary, setPeriodBaseSalary] = useState("");
   const [bonus, setBonus] = useState("");
   const [deduction, setDeduction] = useState("");
-  // UI shows (attendance lateness deductions + manual adjustment), but we only save/apply the manual adjustment
-  // to avoid double-deducting (lateness is already applied via salary.lateness_deduction).
-  const [latePenaltyTotal, setLatePenaltyTotal] = useState("");
+  const [latenessDeductionTotal, setLatenessDeductionTotal] = useState("");
+  const [absenceDeductionTotal, setAbsenceDeductionTotal] = useState("");
   const [adjNote, setAdjNote] = useState("");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -104,11 +112,9 @@ export function MonthlyEmployeeDetailPage() {
         setPeriodBaseSalary(baseOverride != null ? String(baseOverride) : "");
         setBonus(String(d.salary.adjustment_bonus ?? 0));
         setDeduction(String(d.salary.adjustment_deduction ?? 0));
-        const latenessAuto = Number(d.salary.lateness_deduction ?? 0);
-        const latePenaltyAdj = Number(d.salary.adjustment_late_penalty ?? 0);
-        setLatePenaltyTotal(String(latenessAuto + latePenaltyAdj));
-        // adjustment note is not currently returned in EmployeeDetail; keep local-only until refreshed via save.
-        setAdjNote("");
+        setLatenessDeductionTotal(String(latenessDeductionEffective(d.salary)));
+        setAbsenceDeductionTotal(String(absenceDeductionEffective(d.salary)));
+        setAdjNote(d.salary.adjustment_note?.trim() ?? "");
       } catch (e) {
         toast.push("error", getErrorMessage(e));
         nav("/employees?tab=monthly");
@@ -212,29 +218,42 @@ export function MonthlyEmployeeDetailPage() {
       isAdmin && baseSalary.trim()
         ? (parseMoneyInput(baseSalary) ?? baseFromApi)
         : baseFromApi;
-    const entriesBonus = Number(detail.salary.bonuses_entries_total ?? detail.salary.bonuses_total ?? 0);
-    const entriesPen = Number(detail.salary.penalties_entries_total ?? detail.salary.penalties_total ?? 0);
-    const lateness = Number(detail.salary.lateness_deduction ?? 0); // attendance-driven automatic deduction
+    const entriesBonus = Number(detail.salary.bonuses_entries_total ?? 0);
+    const entriesPen = Number(detail.salary.penalties_entries_total ?? 0);
+    const latenessAuto = latenessDeductionAuto(detail.salary);
+    const absenceAuto = absenceDeductionAuto(detail.salary);
 
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
     const b = parseMoneyInput(bonus) ?? 0;
     const d = parseMoneyInput(deduction) ?? 0;
-    const lateTotal = parseMoneyInput(latePenaltyTotal) ?? 0;
-    const lateAdj = Math.max(0, lateTotal - lateness);
+    const latenessTotal = parseMoneyInput(latenessDeductionTotal) ?? latenessAuto;
+    const absenceTotal = parseMoneyInput(absenceDeductionTotal) ?? absenceAuto;
     const baseUsed = baseOverride != null ? baseOverride : baseFromInput;
-    const finalPayable = baseUsed + entriesBonus + b - (entriesPen + d + lateAdj) - lateness;
+    const preview = computePayrollPreview({
+      baseUsed,
+      entriesBonus,
+      entriesPenalties: entriesPen,
+      adjustmentBonus: b,
+      adjustmentDeduction: d,
+      latenessDeduction: latenessTotal,
+      absenceDeduction: absenceTotal
+    });
     return {
       baseUsed,
       entriesBonus,
       entriesPen,
-      lateness,
+      latenessAuto,
+      absenceAuto,
+      latenessTotal,
+      absenceTotal,
+      latenessAdjusted: latenessTotal !== latenessAuto,
+      absenceAdjusted: absenceTotal !== absenceAuto,
       bonus: b,
       deduction: d,
-      latePenaltyTotal: lateTotal,
-      latePenaltyAdjustment: lateAdj,
-      finalPayable
+      finalPayable: preview.finalPayable,
+      totalDeductions: preview.totalDeductions
     };
-  }, [auth.role, detail, baseSalary, periodBaseSalary, bonus, deduction, latePenaltyTotal]);
+  }, [auth.role, detail, baseSalary, periodBaseSalary, bonus, deduction, latenessDeductionTotal, absenceDeductionTotal]);
 
   async function onSaveAdjustments() {
     if (!detail) return;
@@ -260,8 +279,12 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", "Fix comma formatting in deduction.");
       return;
     }
-    if (latePenaltyTotal.trim() && !isValidThousandsCommaNumber(latePenaltyTotal)) {
-      toast.push("error", "Fix comma formatting in late penalty.");
+    if (latenessDeductionTotal.trim() && !isValidThousandsCommaNumber(latenessDeductionTotal)) {
+      toast.push("error", "Fix comma formatting in lateness deduction.");
+      return;
+    }
+    if (absenceDeductionTotal.trim() && !isValidThousandsCommaNumber(absenceDeductionTotal)) {
+      toast.push("error", "Fix comma formatting in absence deduction.");
       return;
     }
 
@@ -269,9 +292,8 @@ export function MonthlyEmployeeDetailPage() {
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
     const b = bonus.trim() ? parseMoneyInput(bonus) : 0;
     const d = deduction.trim() ? parseMoneyInput(deduction) : 0;
-    const latenessAuto = Number(detail.salary.lateness_deduction ?? 0);
-    const lateTotal = latePenaltyTotal.trim() ? parseMoneyInput(latePenaltyTotal) : 0;
-    const l = Math.max(0, (lateTotal ?? 0) - latenessAuto);
+    const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : latenessDeductionAuto(detail.salary);
+    const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : absenceDeductionAuto(detail.salary);
     if (empBase !== null && (Number.isNaN(empBase) || empBase < 0)) {
       toast.push("error", "Enter a valid base salary (≥ 0).");
       return;
@@ -288,8 +310,12 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", "Enter a valid deduction (≥ 0).");
       return;
     }
-    if (l === null || Number.isNaN(l) || l < 0) {
-      toast.push("error", "Enter a valid late penalty (≥ 0).");
+    if (latenessTotal === null || Number.isNaN(latenessTotal) || latenessTotal < 0) {
+      toast.push("error", "Enter a valid lateness deduction (≥ 0).");
+      return;
+    }
+    if (absenceTotal === null || Number.isNaN(absenceTotal) || absenceTotal < 0) {
+      toast.push("error", "Enter a valid absence deduction (≥ 0).");
       return;
     }
 
@@ -308,7 +334,8 @@ export function MonthlyEmployeeDetailPage() {
             period_base_salary: baseOverride,
             bonus: b,
             deduction: d,
-            late_penalty: l,
+            lateness_deduction: latenessTotal,
+            absence_deduction: absenceTotal,
             note: adjNote.trim() || null,
             confirm_financial_edit: confirm
           },
@@ -319,9 +346,9 @@ export function MonthlyEmployeeDetailPage() {
       setBaseSalary(String(updated.base_salary ?? desiredBase ?? ""));
       setBonus(String(updated.salary.adjustment_bonus ?? b ?? 0));
       setDeduction(String(updated.salary.adjustment_deduction ?? d ?? 0));
-      const nextLatenessAuto = Number(updated.salary.lateness_deduction ?? 0);
-      const nextLatePenaltyAdj = Number(updated.salary.adjustment_late_penalty ?? l ?? 0);
-      setLatePenaltyTotal(String(nextLatenessAuto + nextLatePenaltyAdj));
+      setLatenessDeductionTotal(String(latenessDeductionEffective(updated.salary)));
+      setAbsenceDeductionTotal(String(absenceDeductionEffective(updated.salary)));
+      setAdjNote(updated.salary.adjustment_note?.trim() ?? "");
       toast.push("success", "Saved adjustments.");
     } catch (e) {
       toast.push("error", getErrorMessage(e));
@@ -484,51 +511,33 @@ export function MonthlyEmployeeDetailPage() {
 
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
-        <p className="mt-1 text-xs text-black/55">Mark attendance. Late coming attracts a ₦500 deduction.</p>
+        <p className="mt-1 text-xs text-black/55">
+          Late after 8:15 AM attracts ₦500; unmarked workdays attract ₦1,000 absence penalty (Sundays excluded).
+        </p>
         {attLoading ? (
           <div className="mt-2 text-sm text-black/60">Loading…</div>
         ) : att.length === 0 ? (
           <div className="mt-2 text-sm text-black/60">No attendance yet.</div>
         ) : (
           <div className="mt-3 min-w-0 overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="text-black/60">
-                <tr className="border-b border-black/10">
-                  <th className="py-3 pr-4 font-semibold">Date</th>
-                  <th className="py-3 pr-4 font-semibold">Clock-in</th>
-                  <th className="py-3 pr-4 font-semibold">Status</th>
-                  <th className="py-3 pr-4 font-semibold">Location</th>
-                  <th className="py-3 pr-4 font-semibold">Distance</th>
-                  <th className="py-3 pr-0 text-right font-semibold">Deduction</th>
-                </tr>
-              </thead>
-              <tbody>
-                {att.slice(0, 30).map((a) => (
-                  <tr key={a.id} className="border-b border-black/5 hover:bg-black/[0.02]">
-                    <td className="py-3 pr-4 font-semibold">{a.attendance_date}</td>
-                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{new Date(a.check_in_at).toLocaleTimeString()}</td>
-                    <td className="py-3 pr-4">
-                      <span
-                        className={[
-                          "rounded-full px-2 py-0.5 text-xs font-semibold",
-                          a.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
-                        ].join(" ")}
-                      >
-                        {a.is_late ? "Late" : "Present"}
-                      </span>
-                      {a.is_late && typeof a.late_minutes === "number" ? (
-                        <span className="ml-2 text-xs font-semibold text-black/55">{a.late_minutes} min late</span>
-                      ) : null}
-                    </td>
-                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{a.work_location?.name ?? "—"}</td>
-                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">
-                      {typeof a.distance_meters === "number" ? `${Math.round(a.distance_meters)}m` : "—"}
-                    </td>
-                    <td className="py-3 pr-0 text-right font-bold tabular-nums">{a.is_late ? "₦500" : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <p className="mb-2 text-xs font-semibold text-black/55">Latest record</p>
+            <AttendanceAdminTable rows={att.slice(0, 1)} />
+            {att.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="mt-3 text-xs font-semibold text-black/70 hover:text-black"
+                  onClick={() => setAttHistoryExpanded((v) => !v)}
+                >
+                  {attHistoryExpanded ? "Hide history" : "View more history"}
+                </button>
+                {attHistoryExpanded ? (
+                  <div className="mt-2">
+                    <AttendanceAdminTable rows={att.slice(1)} />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
         )}
       </Card>
@@ -572,13 +581,42 @@ export function MonthlyEmployeeDetailPage() {
             inputMode="decimal"
             disabled={!isAdmin}
           />
-          <Input
-            label="Late penalties (NGN)"
-            value={latePenaltyTotal}
-            onChange={(e) => setLatePenaltyTotal(e.target.value)}
-            inputMode="decimal"
-            disabled={!isAdmin}
-          />
+          <div>
+            <Input
+              label={`Lateness deduction (NGN) — ${detail.salary.lateness_count} record(s)`}
+              value={latenessDeductionTotal}
+              onChange={(e) => setLatenessDeductionTotal(e.target.value)}
+              inputMode="decimal"
+              disabled={!isAdmin}
+            />
+            {computed?.latenessAdjusted ? (
+              <p className="mt-1 text-xs font-semibold text-amber-900">
+                Adjusted from calculated {formatMoney(computed.latenessAuto)}. Attendance records are unchanged.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-black/55">
+                Calculated at ₦500 per late record ({formatMoney(computed?.latenessAuto ?? 0)}).
+              </p>
+            )}
+          </div>
+          <div>
+            <Input
+              label={`Absence deduction (NGN) — ${detail.salary.absence_count ?? 0} record(s)`}
+              value={absenceDeductionTotal}
+              onChange={(e) => setAbsenceDeductionTotal(e.target.value)}
+              inputMode="decimal"
+              disabled={!isAdmin}
+            />
+            {computed?.absenceAdjusted ? (
+              <p className="mt-1 text-xs font-semibold text-amber-900">
+                Adjusted from calculated {formatMoney(computed.absenceAuto)}. Absence records are unchanged.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-black/55">
+                Calculated at ₦1,000 per absence ({formatMoney(computed?.absenceAuto ?? 0)}).
+              </p>
+            )}
+          </div>
 
           <div className="md:col-span-2">
             <label className="mb-1 block text-xs font-semibold text-black/60">Notes (optional)</label>
@@ -607,27 +645,35 @@ export function MonthlyEmployeeDetailPage() {
 
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">5. Final payable summary ({detail.period.label})</div>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-sm">
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
             <div className="text-xs font-semibold text-black/60">Base</div>
             <div className="mt-1 font-bold tabular-nums">{formatMoney(computed?.baseUsed ?? detail.salary.base_salary)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-emerald-50/50 p-3">
-            <div className="text-xs font-semibold text-emerald-900/70">Bonus</div>
-            <div className="mt-1 font-bold tabular-nums text-emerald-800">+{formatMoney(computed?.bonus ?? 0)}</div>
+            <div className="text-xs font-semibold text-emerald-900/70">Bonuses</div>
+            <div className="mt-1 font-bold tabular-nums text-emerald-800">
+              +{formatMoney((computed?.entriesBonus ?? 0) + (computed?.bonus ?? 0))}
+            </div>
           </div>
           <div className="rounded-xl border border-black/10 bg-red-50/60 p-3">
-            <div className="text-xs font-semibold text-red-900/70">Deductions</div>
-            <div className="mt-1 font-bold tabular-nums text-red-800">−{formatMoney(computed?.deduction ?? 0)}</div>
+            <div className="text-xs font-semibold text-red-900/70">Other deductions</div>
+            <div className="mt-1 font-bold tabular-nums text-red-800">
+              −{formatMoney((computed?.entriesPen ?? 0) + (computed?.deduction ?? 0))}
+            </div>
           </div>
           <div className="rounded-xl border border-black/10 bg-amber-50/60 p-3">
-            <div className="text-xs font-semibold text-amber-900/70">Late penalties</div>
-            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.latePenaltyTotal ?? 0)}</div>
+            <div className="text-xs font-semibold text-amber-900/70">Lateness</div>
+            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.latenessTotal ?? 0)}</div>
+          </div>
+          <div className="rounded-xl border border-black/10 bg-amber-50/60 p-3">
+            <div className="text-xs font-semibold text-amber-900/70">Absence</div>
+            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.absenceTotal ?? 0)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
-            <div className="text-xs font-semibold text-black/60">Existing payroll lines</div>
-            <div className="mt-1 text-xs font-semibold text-black/55">
-              Includes lateness, entry bonuses, and entry penalties (if any).
+            <div className="text-xs font-semibold text-black/60">Total deductions</div>
+            <div className="mt-1 font-bold tabular-nums text-red-800">
+              −{formatMoney(computed?.totalDeductions ?? detail.salary.total_deductions)}
             </div>
           </div>
         </div>

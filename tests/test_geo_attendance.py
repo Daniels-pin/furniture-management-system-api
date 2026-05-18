@@ -12,6 +12,7 @@ import pytest
 
 from app import models
 from app.routes.employees import (
+    ABSENCE_DEDUCTION_NAIRA,
     LATENESS_DEDUCTION_NAIRA,
     _haversine_meters,
     _is_sunday,
@@ -124,8 +125,8 @@ def test_haversine_boundary_inclusive():
 
 def test_late_minutes_threshold():
     tz = LAGOS
-    on_time = datetime(2026, 5, 15, 8, 10, 0, tzinfo=tz)
-    late = datetime(2026, 5, 15, 8, 11, 0, tzinfo=tz)
+    on_time = datetime(2026, 5, 15, 8, 15, 0, tzinfo=tz)
+    late = datetime(2026, 5, 15, 8, 16, 0, tzinfo=tz)
     assert _late_minutes(on_time) == 0
     assert _late_minutes(late) == 1
 
@@ -137,8 +138,52 @@ def test_sunday_detection():
 
 def test_lateness_deduction_500_per_count():
     b = _salary_breakdown(Decimal("100000"), lateness_count=2, penalties_total=Decimal("0"), bonuses_total=Decimal("0"))
+    assert b.lateness_deduction_auto == LATENESS_DEDUCTION_NAIRA * 2
     assert b.lateness_deduction == LATENESS_DEDUCTION_NAIRA * 2
     assert b.lateness_rate_naira == Decimal("500")
+
+
+def test_lateness_deduction_override_reduces_payroll_not_count():
+    b = _salary_breakdown(
+        Decimal("100000"),
+        lateness_count=2,
+        penalties_total=Decimal("0"),
+        bonuses_total=Decimal("0"),
+        lateness_deduction_override=Decimal("500"),
+    )
+    assert b.lateness_count == 2
+    assert b.lateness_deduction_auto == Decimal("1000")
+    assert b.lateness_deduction == Decimal("500")
+    assert b.final_payable == Decimal("99500")
+
+
+def test_absence_deduction_1000_per_count():
+    b = _salary_breakdown(
+        Decimal("100000"),
+        lateness_count=0,
+        penalties_total=Decimal("0"),
+        bonuses_total=Decimal("0"),
+        absence_count=2,
+    )
+    assert b.absence_deduction_auto == ABSENCE_DEDUCTION_NAIRA * 2
+    assert b.absence_deduction == ABSENCE_DEDUCTION_NAIRA * 2
+    assert b.absence_rate_naira == Decimal("1000")
+    assert b.total_deductions == ABSENCE_DEDUCTION_NAIRA * 2
+
+
+def test_absence_deduction_override():
+    b = _salary_breakdown(
+        Decimal("100000"),
+        lateness_count=0,
+        penalties_total=Decimal("0"),
+        bonuses_total=Decimal("0"),
+        absence_count=3,
+        absence_deduction_override=Decimal("1500"),
+    )
+    assert b.absence_count == 3
+    assert b.absence_deduction_auto == Decimal("3000")
+    assert b.absence_deduction == Decimal("1500")
+    assert b.final_payable == Decimal("98500")
 
 
 # --- Integration: geo clock-in API ---
@@ -193,7 +238,7 @@ def test_geo_clock_in_sunday_excluded(client, geo_employee):
 
 
 def test_geo_clock_in_late_creates_lateness_entry(client, geo_employee, db_session):
-    late_morning = datetime(2026, 5, 15, 8, 15, 0, tzinfo=LAGOS)
+    late_morning = datetime(2026, 5, 15, 8, 16, 0, tzinfo=LAGOS)
 
     with patch("app.routes.employees._now_local", return_value=late_morning):
         r = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)

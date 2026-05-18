@@ -455,7 +455,13 @@ class SalaryPeriod(Base):
     label = Column(String(64), nullable=False)
     # Exactly one period should be active: the current editable payroll month.
     is_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Month-level salary completion (all employees paid for the period).
+    month_payment_status = Column(String(32), nullable=False, default="pending_payment", server_default="pending_payment")
+    month_paid_at = Column(DateTime, nullable=True)
+    month_paid_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    month_paid_by = relationship("User", foreign_keys=[month_paid_by_id])
 
     __table_args__ = (UniqueConstraint("year", "month", name="uq_salary_periods_year_month"),)
 
@@ -496,6 +502,12 @@ class Employee(Base):
         cascade="all, delete-orphan",
         order_by="EmployeeLatenessEntry.id",
     )
+    absence_entries = relationship(
+        "EmployeeAbsenceEntry",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeeAbsenceEntry.id",
+    )
     penalties = relationship(
         "EmployeePenalty",
         back_populates="employee",
@@ -533,6 +545,10 @@ class EmployeePeriodPayroll(Base):
     adjustment_bonus = Column(Numeric(14, 2), nullable=False, default=0)
     adjustment_deduction = Column(Numeric(14, 2), nullable=False, default=0)
     adjustment_late_penalty = Column(Numeric(14, 2), nullable=False, default=0)
+    # When set, replace automatic count × rate lateness/absence deductions for payroll only.
+    # Attendance/lateness/absence entry records are unchanged.
+    lateness_deduction_override = Column(Numeric(14, 2), nullable=True)
+    absence_deduction_override = Column(Numeric(14, 2), nullable=True)
     adjustment_note = Column(Text, nullable=True)
     updated_at = Column(DateTime, nullable=True)
     updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -564,6 +580,28 @@ class EmployeeLatenessEntry(Base):
     employee = relationship("Employee", back_populates="lateness_entries")
     period = relationship("SalaryPeriod")
     attendance = relationship("EmployeeAttendanceEntry", back_populates="lateness_entry", foreign_keys=[attendance_id])
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
+
+class EmployeeAbsenceEntry(Base):
+    """One absence instance (no attendance marked on a workday); deduction = count × ₦1,000."""
+
+    __tablename__ = "employee_absence_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    absence_date = Column(Date, nullable=False, index=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
+
+    __table_args__ = (UniqueConstraint("employee_id", "absence_date", name="uq_employee_absence_emp_date"),)
+
+    employee = relationship("Employee", back_populates="absence_entries")
+    period = relationship("SalaryPeriod")
     voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
 

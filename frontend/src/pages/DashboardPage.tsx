@@ -71,7 +71,6 @@ export function DashboardPage() {
           resultFeedback={attendance.resultFeedback}
           onDismissResultFeedback={attendance.dismissResultFeedback}
           showHistory
-          historyLimit={5}
         />
       ) : null}
 

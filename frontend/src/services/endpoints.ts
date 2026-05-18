@@ -864,6 +864,10 @@ export const employeesApi = {
     const { data } = await api.post<PayrollPeriodsNav>("/employees/periods/start-next-month");
     return data;
   },
+  async markMonthPaid(params: EmployeePeriodParams) {
+    const { data } = await api.post<SalaryPeriod>("/employees/periods/mark-month-paid", null, { params });
+    return data;
+  },
   async payrollSummary(params?: EmployeePeriodParams) {
     const { data } = await api.get<PayrollSummary>("/employees/payroll/summary", { params });
     return data;
@@ -1016,6 +1020,8 @@ export const employeesApi = {
       bonus?: string | number | null;
       deduction?: string | number | null;
       late_penalty?: string | number | null;
+      lateness_deduction?: string | number | null;
+      absence_deduction?: string | number | null;
       note?: string | null;
       confirm_financial_edit?: boolean;
     },

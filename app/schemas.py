@@ -1083,10 +1083,32 @@ class EmployeeAttendanceEntryOut(BaseModel):
         from_attributes = True
 
 
+class EmployeeAttendanceHistoryOut(BaseModel):
+    """Unified attendance history row: present, late, or absent (with deduction)."""
+
+    id: int
+    record_type: Literal["attendance", "absence"]
+    employee_id: int
+    period_id: int
+    attendance_date: date
+    status: Literal["present", "late", "absent"]
+    check_in_at: Optional[datetime] = None
+    is_late: bool = False
+    late_minutes: Optional[int] = None
+    deduction_naira: Decimal = Decimal("0")
+    lateness_entry_id: Optional[int] = None
+    absence_entry_id: Optional[int] = None
+    work_location_id: Optional[int] = None
+    employee_latitude: Optional[float] = None
+    employee_longitude: Optional[float] = None
+    distance_meters: Optional[float] = None
+    work_location: Optional[CompanyLocationOut] = None
+
+
 class EmployeeClockInOut(BaseModel):
     status: Literal["present", "late", "already_marked", "sunday"]
     message: Optional[str] = None
-    entry: Optional[EmployeeAttendanceEntryOut] = None
+    entry: Optional[EmployeeAttendanceHistoryOut] = None
 
 
 class EmployeeClockInGeoIn(BaseModel):
@@ -1143,8 +1165,15 @@ class EmployeeSalaryBreakdown(BaseModel):
     # Optional per-period override (when set on EmployeePeriodPayroll).
     period_base_salary: Optional[Decimal] = None
     lateness_count: int
+    lateness_deduction_auto: Decimal
     lateness_deduction: Decimal
+    lateness_deduction_override: Optional[Decimal] = None
     lateness_rate_naira: Decimal
+    absence_count: int = 0
+    absence_deduction_auto: Decimal = Decimal("0")
+    absence_deduction: Decimal = Decimal("0")
+    absence_deduction_override: Optional[Decimal] = None
+    absence_rate_naira: Decimal = Decimal("1000")
     # Entry totals (raw entries, excluding manual adjustments)
     penalties_entries_total: Decimal = Decimal("0")
     bonuses_entries_total: Decimal = Decimal("0")
@@ -1157,6 +1186,7 @@ class EmployeeSalaryBreakdown(BaseModel):
     bonuses_total: Decimal
     total_deductions: Decimal
     final_payable: Decimal
+    adjustment_note: Optional[str] = None
 
 
 class SalaryPeriodOut(BaseModel):
@@ -1165,6 +1195,10 @@ class SalaryPeriodOut(BaseModel):
     month: int
     label: str
     is_active: bool = False
+    month_payment_status: Literal["paid", "pending_payment"] = "pending_payment"
+    paid_employee_count: int = 0
+    total_employee_count: int = 0
+    month_paid_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -1232,7 +1266,21 @@ class EmployeePayrollAdjustmentIn(BaseModel):
     period_base_salary: Optional[Decimal] = Field(None, ge=0)
     bonus: Optional[Decimal] = Field(None, ge=0)
     deduction: Optional[Decimal] = Field(None, ge=0)
-    late_penalty: Optional[Decimal] = Field(None, ge=0)
+    late_penalty: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Legacy: extra amount added to penalties (not lateness bucket). Prefer lateness_deduction.",
+    )
+    lateness_deduction: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Effective lateness deduction for this period (overrides count × rate when different).",
+    )
+    absence_deduction: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Effective absence deduction for this period (overrides count × rate when different).",
+    )
     note: Optional[str] = Field(None, max_length=8000)
     confirm_financial_edit: bool = False
 
@@ -1251,6 +1299,7 @@ class PayrollSummaryOut(BaseModel):
     employee_count: int
     total_base_salary: Decimal
     total_lateness_deductions: Decimal
+    total_absence_deductions: Decimal = Decimal("0")
     total_penalties: Decimal
     total_bonuses: Decimal
     total_deductions: Decimal

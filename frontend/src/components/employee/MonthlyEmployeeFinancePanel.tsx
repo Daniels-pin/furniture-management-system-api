@@ -1,6 +1,7 @@
 import { Card } from "../ui/Card";
 import { formatMoney } from "../../utils/money";
 import type { EmployeeDetail } from "../../types/api";
+import { isAbsenceDeductionAdjusted, isLatenessDeductionAdjusted, latenessDeductionAuto, absenceDeductionAuto } from "../../utils/payroll";
 
 export function MonthlyEmployeeFinancePanel({ emp }: { emp: EmployeeDetail }) {
   const salary = emp.salary;
@@ -35,7 +36,23 @@ export function MonthlyEmployeeFinancePanel({ emp }: { emp: EmployeeDetail }) {
         <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
           <div className="text-xs font-semibold text-black/60">Lateness ({salary.lateness_count}×)</div>
           <div className="mt-1 font-bold tabular-nums text-red-700">−{formatMoney(salary.lateness_deduction)}</div>
+          {isLatenessDeductionAdjusted(salary) ? (
+            <div className="mt-1 text-[10px] font-semibold text-amber-900">
+              Adjusted from {formatMoney(latenessDeductionAuto(salary))}
+            </div>
+          ) : null}
         </div>
+        {(salary.absence_count ?? 0) > 0 || isAbsenceDeductionAdjusted(salary) ? (
+          <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+            <div className="text-xs font-semibold text-black/60">Absence ({salary.absence_count ?? 0}×)</div>
+            <div className="mt-1 font-bold tabular-nums text-red-700">−{formatMoney(salary.absence_deduction ?? 0)}</div>
+            {isAbsenceDeductionAdjusted(salary) ? (
+              <div className="mt-1 text-[10px] font-semibold text-amber-900">
+                Adjusted from {formatMoney(absenceDeductionAuto(salary))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
           <div className="text-xs font-semibold text-black/60">Penalties</div>
           <div className="mt-1 font-bold tabular-nums text-red-700">−{formatMoney(salary.penalties_total)}</div>

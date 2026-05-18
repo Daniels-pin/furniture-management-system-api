@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams, type SetURLSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
@@ -25,6 +25,21 @@ import {
 } from "../utils/contractEmployeeList";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
+import { PayrollMonthsPanel } from "../components/employee/PayrollMonthsPanel";
+
+function patchSearchParams(
+  setSearchParams: SetURLSearchParams,
+  current: URLSearchParams,
+  patch: Record<string, string | null | undefined>,
+  opts?: { replace?: boolean }
+) {
+  const sp = new URLSearchParams(current);
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === undefined) sp.delete(key);
+    else sp.set(key, value);
+  }
+  setSearchParams(sp, opts);
+}
 
 export function EmployeesPage() {
   const auth = useAuth();
@@ -78,6 +93,7 @@ export function EmployeesPage() {
   const [contractRows, setContractRows] = useState<ContractEmployeeListItem[]>([]);
   const [contractLoading, setContractLoading] = useState(false);
   const [contractSearch, setContractSearch] = useState("");
+  const [contractSearchDebounced, setContractSearchDebounced] = useState("");
   const [contractStatusFilter, setContractStatusFilter] = useState<"active" | "inactive">("active");
   const [contractOverpaidOnly, setContractOverpaidOnly] = useState(false);
   const [contractSelectedIds, setContractSelectedIds] = useState<number[]>([]);
@@ -371,32 +387,43 @@ export function EmployeesPage() {
     };
   }, [toast]);
 
-  /** Default URL to active payroll month when missing */
+  /** Default URL to active payroll month when missing (monthly tab only — avoid clobbering contract tab params). */
   useEffect(() => {
     if (auth.role !== "admin") return;
+    if (tab === "contract") return;
     if (!nav?.active_period) return;
     const hasYm = searchParams.get("year") && searchParams.get("month");
     if (!hasYm) {
-      setSearchParams(
+      patchSearchParams(
+        setSearchParams,
+        searchParams,
         { year: String(nav.active_period.year), month: String(nav.active_period.month) },
         { replace: true }
       );
     }
-  }, [nav, searchParams, setSearchParams]);
+  }, [nav, searchParams, setSearchParams, tab, auth.role]);
 
   /** If URL points to a month not in the archive (e.g. stale bookmark), snap to active */
   useEffect(() => {
     if (auth.role !== "admin") return;
+    if (tab === "contract") return;
     if (!nav?.periods.length || !nav.active_period) return;
     if (!Number.isFinite(year) || !Number.isFinite(month)) return;
     const valid = nav.periods.some((p) => p.year === year && p.month === month);
     if (!valid) {
-      setSearchParams(
+      patchSearchParams(
+        setSearchParams,
+        searchParams,
         { year: String(nav.active_period.year), month: String(nav.active_period.month) },
         { replace: true }
       );
     }
-  }, [nav, year, month, setSearchParams]);
+  }, [nav, year, month, setSearchParams, tab, auth.role]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setContractSearchDebounced(contractSearch), 350);
+    return () => window.clearTimeout(t);
+  }, [contractSearch]);
 
   useEffect(() => {
     let alive = true;
@@ -456,11 +483,13 @@ export function EmployeesPage() {
     if (auth.role !== "admin") return;
     if (tab !== "contract") return;
     let alive = true;
-    const load = async () => {
-      setContractLoading(true);
+    let notifDebounceTimer: number | null = null;
+
+    const load = async (opts: { background?: boolean }) => {
+      if (!opts.background) setContractLoading(true);
       try {
         const res = await contractEmployeesApi.list({
-          search: contractSearch.trim() || undefined,
+          search: contractSearchDebounced.trim() || undefined,
           status: contractStatusFilter,
           overpaid: contractOverpaidOnly ? true : undefined
         });
@@ -469,24 +498,30 @@ export function EmployeesPage() {
       } catch (e) {
         toast.push("error", getErrorMessage(e));
       } finally {
-        if (alive) setContractLoading(false);
+        if (alive && !opts.background) setContractLoading(false);
       }
     };
-    void load();
-    const onUpdated = () => void load();
+
+    void load({ background: false });
+
+    const onUpdated = () => {
+      if (notifDebounceTimer !== null) window.clearTimeout(notifDebounceTimer);
+      notifDebounceTimer = window.setTimeout(() => void load({ background: true }), 500);
+    };
     window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
-    const iv = window.setInterval(() => void load(), 15_000);
+    const iv = window.setInterval(() => void load({ background: true }), 15_000);
     return () => {
       alive = false;
+      if (notifDebounceTimer !== null) window.clearTimeout(notifDebounceTimer);
       window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
       window.clearInterval(iv);
     };
-  }, [auth.role, tab, toast, contractSearch, contractStatusFilter, contractOverpaidOnly, refreshToken]);
+  }, [auth.role, tab, toast, contractSearchDebounced, contractStatusFilter, contractOverpaidOnly, refreshToken]);
 
   // Drawer removed.
 
   function setPeriod(nextYear: number, nextMonth: number) {
-    setSearchParams({ year: String(nextYear), month: String(nextMonth) });
+    patchSearchParams(setSearchParams, searchParams, { year: String(nextYear), month: String(nextMonth) });
   }
 
   const currentKey = Number.isFinite(year) && Number.isFinite(month) ? `${year}-${month}` : "";
@@ -503,7 +538,10 @@ export function EmployeesPage() {
       const n = await employeesApi.startNextPayrollMonth();
       setNav(n);
       if (n.active_period) {
-        setSearchParams({ year: String(n.active_period.year), month: String(n.active_period.month) });
+        patchSearchParams(setSearchParams, searchParams, {
+          year: String(n.active_period.year),
+          month: String(n.active_period.month)
+        });
       }
       toast.push("success", `Active payroll month is now ${n.active_period?.label ?? "updated"}.`);
     } catch (e) {
@@ -576,14 +614,7 @@ export function EmployeesPage() {
         </div>
       ) : null}
 
-      {auth.role === "admin" && selectedPeriod && !isViewingActive ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <span className="font-semibold">Viewing archived month.</span> Payroll lines and payments cannot be changed here. Open{" "}
-          <span className="font-semibold">{nav?.active_period?.label ?? "the active month"}</span> to edit.
-        </div>
-      ) : null}
-
-      {auth.role === "admin" && tab === "monthly" && summary ? (
+      {auth.role === "admin" && tab === "monthly" && false ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="!p-4">
             <div className="text-xs font-semibold text-black/55">Period</div>
@@ -853,300 +884,20 @@ export function EmployeesPage() {
         </Card>
       ) : tab === "monthly" ? (
         <>
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <label className="flex flex-1 flex-col text-xs font-semibold text-black/60 sm:min-w-[220px]">
-              Search employee
-              <input
-                className="mt-1 rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                value={monthlySearch}
-                onChange={(e) => setMonthlySearch(e.target.value)}
-                placeholder="Name…"
-              />
-            </label>
-            <label className="flex flex-col text-xs font-semibold text-black/60 sm:min-w-[220px]">
-              Payroll month
-              <select
-                className="mt-1 rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                disabled={!nav?.periods.length}
-                value={nav?.periods.some((p) => p.year === year && p.month === month) ? currentKey : ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v) return;
-                  const [ys, ms] = v.split("-");
-                  setPeriod(Number(ys), Number(ms));
-                }}
-              >
-                {!nav?.periods.length ? (
-                  <option value="">No months yet — start a month below</option>
-                ) : (
-                  nav.periods.map((p) => (
-                    <option key={`${p.year}-${p.month}`} value={`${p.year}-${p.month}`}>
-                      {p.label}
-                      {p.is_active ? " (active)" : ""}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-            <Button
-              variant="secondary"
-              isLoading={startingMonth}
-              disabled={nav === null}
-              onClick={() => void onStartNextMonth()}
-              title="Creates the next calendar month and makes it the active payroll period"
-            >
-              Start new month
-            </Button>
-            <Button
-              variant="secondary"
-              isLoading={exporting}
-              disabled={!periodParams}
-              onClick={async () => {
-                if (!periodParams) return;
-                setExporting(true);
-                try {
-                  await employeesApi.exportCsv(periodParams);
-                  toast.push("success", "Export downloaded.");
-                } catch (e) {
-                  toast.push("error", getErrorMessage(e));
-                } finally {
-                  setExporting(false);
-                }
+          {nav ? (
+            <PayrollMonthsPanel
+              nav={nav}
+              onNavRefresh={async () => {
+                const n = await employeesApi.payrollPeriodsNav();
+                setNav(n);
               }}
-            >
-              Download CSV
-            </Button>
-            <Button
-              variant="secondary"
-              isLoading={bulkSending}
-              disabled={!selectedPeriod?.is_active || monthlySelectedIds.length === 0}
-              onClick={() => {
-                if (!periodParams) return;
-                setBulkSending(true);
-                const payload = {
-                  items: monthlySelectedIds.map((id) => {
-                    const r = rows.find((x) => x.id === id);
-                    return {
-                      employee_kind: "monthly" as const,
-                      employee_id: id,
-                      period_year: periodParams.period_year,
-                      period_month: periodParams.period_month,
-                      amount: r?.salary?.final_payable ?? 0,
-                      note: bulkNote.trim() || null
-                    };
-                  })
-                };
-                void employeePaymentsApi
-                  .bulkSend(payload)
-                  .then((res) => toast.push("success", `Sent ${res.created} payment(s) to Finance.`))
-                  .catch((e) => toast.push("error", getErrorMessage(e)))
-                  .finally(() => setBulkSending(false));
-              }}
-              title="Send selected employees to Finance in bulk"
-            >
-              Bulk Send to Finance
-            </Button>
-            <Link
-              to={
-                periodParams
-                  ? `/employees/new?year=${periodParams.period_year}&month=${periodParams.period_month}`
-                  : "/employees/new"
-              }
-              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
-            >
-              Add employee
-            </Link>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-xs font-semibold text-black/60">
-              Bulk note (optional)
-              <input
-                className="mt-1 w-[min(520px,100%)] rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                value={bulkNote}
-                onChange={(e) => setBulkNote(e.target.value)}
-                placeholder="Note applied to all bulk sends"
-              />
-            </label>
-            <Button
-              variant="ghost"
-              disabled={monthlySelectedIds.length === 0}
-              onClick={() => setMonthlySelectedIds([])}
-            >
-              Clear selection
-            </Button>
-          </div>
-
-          <Card>
-            {!periodParams ? (
-              <div className="space-y-3">
-                <div className="text-sm font-semibold">Select a payroll month</div>
-                <div className="text-sm text-black/60">
-                  This page needs a <span className="font-semibold">year</span> and <span className="font-semibold">month</span> in the URL to load employees.
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {nav?.active_period ? (
-                    <Button
-                      variant="secondary"
-                      onClick={() =>
-                        setSearchParams(
-                          { year: String(nav.active_period!.year), month: String(nav.active_period!.month), tab: "monthly" },
-                          { replace: true }
-                        )
-                      }
-                    >
-                      Go to active month ({nav.active_period.label})
-                    </Button>
-                  ) : (
-                    <div className="text-sm text-black/60">Loading payroll months…</div>
-                  )}
-                </div>
-              </div>
-            ) : loading ? (
-              <div className="text-sm text-black/60">Loading…</div>
-            ) : rows.length === 0 ? (
-              <div className="text-sm text-black/60">No employees yet. Add one to get started.</div>
-            ) : (
-              <>
-                <div className="md:hidden space-y-3">
-                  {rows.map((r) => (
-                    <div
-                      key={r.id}
-                      className="rounded-2xl border border-black/10 bg-white p-4 cursor-pointer hover:bg-black/[0.02]"
-                      role="link"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        if (isInteractiveTarget(e.target)) return;
-                        navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter" && e.key !== " ") return;
-                        if (isInteractiveTarget(e.target)) return;
-                        e.preventDefault();
-                        navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
-                      }}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <label className="flex items-start gap-3">
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${r.full_name}`}
-                            checked={monthlySelectedIds.includes(r.id)}
-                            onChange={(e) => {
-                              setMonthlySelectedIds((prev) =>
-                                e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)
-                              );
-                            }}
-                            className="mt-1 h-4 w-4"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-bold">{r.full_name}</div>
-                            {r.notes ? <div className="mt-1 text-xs text-black/55 line-clamp-2">{r.notes}</div> : null}
-                          </div>
-                        </label>
-                        <div className="text-right" aria-hidden="true">
-                          <div className="text-xs font-semibold text-black/55"> </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <span
-                          className={
-                            r.payment.status === "paid"
-                              ? "rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900"
-                              : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900"
-                          }
-                        >
-                          {r.payment.status === "paid" ? "Paid" : "Unpaid"}
-                        </span>
-                        <Button
-                          variant="secondary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
-                          }}
-                        >
-                          Open
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="hidden md:block min-w-0 overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="text-black/60">
-                    <tr className="border-b border-black/10">
-                      <th className="py-3 pr-4 font-semibold">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all"
-                          checked={monthlySelectedIds.length > 0 && monthlySelectedIds.length === rows.length}
-                          onChange={(e) => {
-                            if (e.target.checked) setMonthlySelectedIds(rows.map((r) => r.id));
-                            else setMonthlySelectedIds([]);
-                          }}
-                        />
-                      </th>
-                      <th className="py-3 pr-4 font-semibold">Name</th>
-                      <th className="py-3 pr-4 font-semibold">Note</th>
-                      <th className="py-3 pr-0 font-semibold">Payment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-b border-black/5 cursor-pointer hover:bg-black/[0.02]"
-                        role="link"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          if (isInteractiveTarget(e.target)) return;
-                          navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key !== "Enter" && e.key !== " ") return;
-                          if (isInteractiveTarget(e.target)) return;
-                          e.preventDefault();
-                          navigate(`/employees/${r.id}/detail?year=${year}&month=${month}`);
-                        }}
-                      >
-                        <td className="py-3 pr-4">
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${r.full_name}`}
-                            checked={monthlySelectedIds.includes(r.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              setMonthlySelectedIds((prev) =>
-                                e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)
-                              );
-                            }}
-                          />
-                        </td>
-                        <td className="py-3 pr-4 font-semibold">{r.full_name}</td>
-                        <td className="py-3 pr-4 text-xs text-black/60">
-                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
-                        </td>
-                        <td className="py-3 pr-0">
-                          <span
-                            className={
-                              r.payment.status === "paid"
-                                ? "rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900"
-                                : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900"
-                            }
-                          >
-                            {r.payment.status === "paid" ? "Paid" : "Unpaid"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              </>
-            )}
-          </Card>
+              onToast={(kind, message) => toast.push(kind, message)}
+            />
+          ) : (
+            <Card>
+              <div className="text-sm text-black/60">Loading payroll months…</div>
+            </Card>
+          )}
         </>
       ) : (
         <>

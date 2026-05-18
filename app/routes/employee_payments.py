@@ -1082,6 +1082,9 @@ def mark_payment_as_paid(
         payroll.payment_date = paid_at
         payroll.updated_at = paid_at
         payroll.updated_by_id = current_user.id
+        from app.routes.employees import _try_auto_mark_period_month_paid
+
+        _try_auto_mark_period_month_paid(db, int(t.period_id), current_user)
 
     log_financial_action(
         db,

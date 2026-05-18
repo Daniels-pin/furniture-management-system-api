@@ -486,8 +486,15 @@ export type EmployeeSalaryBreakdown = {
   base_salary: string | number;
   period_base_salary?: string | number | null;
   lateness_count: number;
+  lateness_deduction_auto?: string | number;
   lateness_deduction: string | number;
+  lateness_deduction_override?: string | number | null;
   lateness_rate_naira: string | number;
+  absence_count?: number;
+  absence_deduction_auto?: string | number;
+  absence_deduction?: string | number;
+  absence_deduction_override?: string | number | null;
+  absence_rate_naira?: string | number;
   penalties_entries_total?: string | number;
   bonuses_entries_total?: string | number;
   adjustment_bonus?: string | number;
@@ -497,6 +504,7 @@ export type EmployeeSalaryBreakdown = {
   bonuses_total: string | number;
   total_deductions: string | number;
   final_payable: string | number;
+  adjustment_note?: string | null;
 };
 
 export type SalaryPeriod = {
@@ -506,6 +514,11 @@ export type SalaryPeriod = {
   label: string;
   /** Only one month is editable; archived months are view-only for payroll. */
   is_active: boolean;
+  /** Month-level completion when all salaries for the period are paid. */
+  month_payment_status: "paid" | "pending_payment";
+  paid_employee_count: number;
+  total_employee_count: number;
+  month_paid_at?: string | null;
 };
 
 export type PayrollPeriodsNav = {
@@ -524,6 +537,7 @@ export type PayrollSummary = {
   employee_count: number;
   total_base_salary: string | number;
   total_lateness_deductions: string | number;
+  total_absence_deductions?: string | number;
   total_penalties: string | number;
   total_bonuses: string | number;
   total_deductions: string | number;
@@ -553,20 +567,29 @@ export type CompanyLocation = {
   created_at: string;
 };
 
-export type EmployeeAttendanceEntry = {
+export type EmployeeAttendanceHistoryItem = {
   id: number;
+  record_type: "attendance" | "absence";
   employee_id: number;
   period_id: number;
   attendance_date: string; // YYYY-MM-DD
-  check_in_at: string;
+  status: "present" | "late" | "absent";
+  check_in_at?: string | null;
   is_late: boolean;
   late_minutes?: number | null;
+  deduction_naira: string | number;
   lateness_entry_id?: number | null;
+  absence_entry_id?: number | null;
   work_location_id?: number | null;
   employee_latitude?: number | null;
   employee_longitude?: number | null;
   distance_meters?: number | null;
   work_location?: CompanyLocation | null;
+};
+
+/** Clock-in responses use attendance rows; history lists use {@link EmployeeAttendanceHistoryItem}. */
+export type EmployeeAttendanceEntry = EmployeeAttendanceHistoryItem & {
+  check_in_at: string;
 };
 
 export type EmployeeClockInResponse = {

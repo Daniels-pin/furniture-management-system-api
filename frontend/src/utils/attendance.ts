@@ -229,7 +229,7 @@ export function getAttendanceSuccessFeedback(res: EmployeeClockInResponse): Atte
     return {
       variant: "success",
       title: "Attendance marked",
-      message: `Attendance marked successfully${timePart}. You were marked late. A ₦500 lateness deduction applies.`
+      message: `Attendance marked successfully${timePart}. You were marked late (after 8:15 AM). A ₦500 lateness deduction applies.`
     };
   }
   return {
@@ -278,5 +278,7 @@ export function findTodayAttendanceEntry(
   date = new Date()
 ): EmployeeAttendanceEntry | null {
   const key = attendanceTodayKey(date);
-  return rows.find((a) => a.attendance_date === key) ?? null;
+  return (
+    rows.find((a) => a.attendance_date === key && a.record_type === "attendance" && a.status !== "absent") ?? null
+  );
 }
