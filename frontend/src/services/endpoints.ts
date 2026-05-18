@@ -850,7 +850,9 @@ export const companyLocationsApi = {
     return data;
   },
   async remove(locationId: number) {
-    const { data } = await api.delete<{ message: string }>(`/company-locations/${locationId}`);
+    const { data } = await api.delete<{ message: string; employees_unassigned?: number }>(
+      `/company-locations/${locationId}`
+    );
     return data;
   }
 };

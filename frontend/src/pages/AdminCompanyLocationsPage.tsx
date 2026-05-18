@@ -340,10 +340,11 @@ export function AdminCompanyLocationsPage() {
           <Input label="Allowed radius (meters)" value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" />
         </div>
 
-        <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
+        <div className="relative z-0 isolate mt-4 overflow-hidden rounded-2xl border border-black/10 [&_.leaflet-container]:z-0">
           <MapContainer
             center={mapCenter}
             zoom={15}
+            className="z-0"
             style={{ height: 420, width: "100%" }}
             whenReady={(e) => {
               mapRef.current = e.target as LeafletMap;

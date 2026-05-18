@@ -292,3 +292,57 @@ def test_geo_clock_in_unconfigured_radius(client, geo_employee, db_session):
     r = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
     assert r.status_code == 409
     assert "radius is not configured" in r.json()["detail"]
+
+
+def test_delete_location_unassigns_employees_and_preserves_attendance(client, geo_employee, admin_token, db_session):
+    loc_id = geo_employee["location_id"]
+    emp_id = geo_employee["employee_id"]
+
+    clock_in = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
+    assert clock_in.status_code == 200, clock_in.text
+    entry_id = clock_in.json()["entry"]["id"]
+
+    r = client.delete(f"/company-locations/{loc_id}", headers=_auth(admin_token))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["message"] == "Location deleted"
+    assert body["employees_unassigned"] == 1
+
+    db_session.expire_all()
+    emp = db_session.query(models.Employee).filter(models.Employee.id == emp_id).first()
+    assert emp.work_location_id is None
+    assert emp.work_location_assigned_at is None
+
+    entry = db_session.query(models.EmployeeAttendanceEntry).filter(models.EmployeeAttendanceEntry.id == entry_id).first()
+    assert entry is not None
+    assert entry.work_location_id is None
+    assert entry.employee_latitude is not None
+    assert entry.distance_meters is not None
+
+    nav = client.get("/employees/periods", headers=_auth(admin_token)).json()
+    ap = nav["active_period"]
+    detail = client.get(
+        f"/employees/{emp_id}",
+        params={"period_year": ap["year"], "period_month": ap["month"]},
+        headers=_auth(admin_token),
+    ).json()
+    salary = detail["salary"]
+    assert salary["attendance_deductions_eligible"] is False
+    assert float(salary["lateness_deduction"]) == 0.0
+    assert float(salary["absence_deduction"]) == 0.0
+
+
+def test_delete_location_with_multiple_assignees(client, admin_token):
+    loc_id = _create_location(client, admin_token)
+    emp_a = _create_monthly_employee(client, admin_token, _create_staff_user(client, admin_token)[1])
+    emp_b = _create_monthly_employee(client, admin_token, _create_staff_user(client, admin_token)[1])
+    _assign_location(client, admin_token, emp_a, loc_id)
+    _assign_location(client, admin_token, emp_b, loc_id)
+
+    r = client.delete(f"/company-locations/{loc_id}", headers=_auth(admin_token))
+    assert r.status_code == 200, r.text
+    assert r.json()["employees_unassigned"] == 2
+
+    list_r = client.get("/company-locations", headers=_auth(admin_token))
+    assert list_r.status_code == 200
+    assert loc_id not in {row["id"] for row in list_r.json()}

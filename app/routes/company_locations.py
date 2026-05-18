@@ -85,19 +85,23 @@ def delete_location(
     if row is None:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    used_by_emp = db.query(models.Employee).filter(models.Employee.work_location_id == location_id).first()
-    if used_by_emp:
-        raise HTTPException(status_code=409, detail="This location is assigned to one or more employees.")
-
-    used_by_att = (
-        db.query(models.EmployeeAttendanceEntry)
-        .filter(models.EmployeeAttendanceEntry.work_location_id == location_id)
-        .first()
+    now = datetime.utcnow()
+    affected = (
+        db.query(models.Employee)
+        .filter(models.Employee.work_location_id == location_id, models.Employee.deleted_at.is_(None))
+        .all()
     )
-    if used_by_att:
-        raise HTTPException(status_code=409, detail="This location is referenced by attendance history and cannot be deleted.")
+    for emp in affected:
+        emp.work_location_id = None
+        emp.work_location_assigned_at = None
+        emp.updated_at = now
+
+    # Keep attendance rows and geo snapshots; drop location FK so history does not reference a deleted row.
+    db.query(models.EmployeeAttendanceEntry).filter(
+        models.EmployeeAttendanceEntry.work_location_id == location_id
+    ).update({models.EmployeeAttendanceEntry.work_location_id: None}, synchronize_session=False)
 
     db.delete(row)
     db.commit()
-    return {"message": "Location deleted"}
+    return {"message": "Location deleted", "employees_unassigned": len(affected)}
 
