@@ -15,6 +15,7 @@ from app.routes.employees import (
     ABSENCE_DEDUCTION_NAIRA,
     LATENESS_DEDUCTION_NAIRA,
     _GEO_VALIDATION_BUFFER_METERS,
+    _MAX_GPS_ACCURACY_CONTRIBUTION_METERS,
     _effective_geo_radius_meters,
     _haversine_meters,
     _is_sunday,
@@ -336,6 +337,24 @@ def test_delete_location_unassigns_employees_and_preserves_attendance(client, ge
 
 def test_effective_geo_radius_includes_gps_buffer():
     assert _effective_geo_radius_meters(100) == 100 + _GEO_VALIDATION_BUFFER_METERS
+
+
+def test_effective_geo_radius_uses_reported_accuracy():
+    assert _effective_geo_radius_meters(100, 50.0) == 150.0
+    assert _effective_geo_radius_meters(100, 5.0) == 100 + _GEO_VALIDATION_BUFFER_METERS
+    capped = _MAX_GPS_ACCURACY_CONTRIBUTION_METERS + 100
+    assert _effective_geo_radius_meters(100, 500.0) == capped
+
+
+def test_geo_clock_in_inside_radius_with_high_gps_uncertainty(client, geo_employee):
+    """When the device reports large horizontal accuracy, validation should allow clock-in within that envelope."""
+    lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, RADIUS_M + 30)
+    r = client.post(
+        "/employees/me/attendance/clock-in-geo",
+        json={"latitude": lat, "longitude": lon, "accuracy_meters": 80},
+        headers=_auth(geo_employee["staff_token"]),
+    )
+    assert r.status_code == 200, r.text
 
 
 def test_geo_clock_in_uses_updated_location_coordinates(client, admin_token):

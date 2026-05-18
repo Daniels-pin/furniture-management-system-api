@@ -906,7 +906,7 @@ export const employeesApi = {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in");
     return data;
   },
-  async clockInAttendanceGeo(body: { latitude: number; longitude: number }) {
+  async clockInAttendanceGeo(body: { latitude: number; longitude: number; accuracy_meters?: number }) {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in-geo", body);
     return data;
   },

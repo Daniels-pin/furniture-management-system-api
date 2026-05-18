@@ -34,6 +34,9 @@ from app.utils.contract_financials import (
 
 router = APIRouter(prefix="/employee-payments", tags=["Employee Payments"])
 
+# Unpaid payment transfers Admin may cancel before Finance confirms (mark-paid).
+_CANCELLABLE_UNPAID_PAYMENT_STATUSES = frozenset({"pending", "sent_to_finance", "approved_by_admin"})
+
 
 def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
@@ -1228,6 +1231,22 @@ def reverse_transaction(
     return EmployeeTransactionOut.model_validate(rev)
 
 
+def _dismiss_finance_queue_notifications(db: Session, transaction_id: int) -> int:
+    """Mark unread finance payment-queue notifications for a cancelled transfer."""
+    now = datetime.utcnow()
+    updated = (
+        db.query(models.Notification)
+        .filter(
+            models.Notification.kind == "payment_sent_to_finance",
+            models.Notification.entity_type == "employee_transaction",
+            models.Notification.entity_id == int(transaction_id),
+            models.Notification.read_at.is_(None),
+        )
+        .update({"read_at": now}, synchronize_session=False)
+    )
+    return int(updated or 0)
+
+
 @router.post("/{transaction_id}/cancel-pending", response_model=EmployeeTransactionOut)
 def cancel_pending_payment(
     transaction_id: int,
@@ -1235,9 +1254,9 @@ def cancel_pending_payment(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
 ):
-    """Admin-only cancellation for pending payment transactions.
+    """Admin-only cancellation for unpaid payment transfers awaiting Finance.
 
-    - Applies ONLY to status=pending and txn_type=payment
+    - Applies to pending / sent_to_finance / approved_by_admin payment rows (not yet paid)
     - Does NOT affect balances (because not yet paid)
     - Preserves history by marking the existing row cancelled
     """
@@ -1248,14 +1267,22 @@ def cancel_pending_payment(
         raise HTTPException(status_code=400, detail="Only payment transactions can be cancelled.")
     if t.status == "cancelled":
         raise HTTPException(status_code=409, detail="Transaction is already cancelled.")
-    if t.status != "pending":
-        raise HTTPException(status_code=409, detail="Only pending transactions can be cancelled.")
+    if t.status == "paid":
+        raise HTTPException(status_code=409, detail="Paid transactions cannot be cancelled.")
+    if t.status not in _CANCELLABLE_UNPAID_PAYMENT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Only unpaid transfers awaiting finance can be cancelled.",
+        )
 
+    prior_status = str(t.status)
     now = datetime.utcnow()
     t.status = "cancelled"
     t.cancelled_at = now
     t.cancelled_by_id = current_user.id
     t.cancelled_reason = (reason or "").strip() or None
+
+    notifications_cleared = _dismiss_finance_queue_notifications(db, int(t.id))
 
     log_financial_action(
         db,
@@ -1265,11 +1292,13 @@ def cancel_pending_payment(
         actor_user=current_user,
         meta={
             "txn_type": t.txn_type,
+            "prior_status": prior_status,
             "employee_id": t.employee_id,
             "contract_employee_id": t.contract_employee_id,
             "period_id": t.period_id,
             "amount": str(_as_decimal(t.amount)),
             "reason": t.cancelled_reason,
+            "notifications_cleared": notifications_cleared,
         },
     )
     db.commit()

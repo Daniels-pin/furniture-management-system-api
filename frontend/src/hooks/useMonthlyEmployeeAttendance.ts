@@ -8,7 +8,7 @@ import {
   getAttendanceBlockedNoLocationFeedback,
   getAttendanceErrorFeedback,
   getAttendanceSuccessFeedback,
-  getGeolocationPosition,
+  getAttendanceGeolocationPosition,
   mergeAttendanceWithClockResponse
 } from "../utils/attendance";
 
@@ -90,10 +90,11 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
         return;
       }
 
-      const pos = await getGeolocationPosition();
+      const pos = await getAttendanceGeolocationPosition();
       const res = await employeesApi.clockInAttendanceGeo({
         latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude
+        longitude: pos.coords.longitude,
+        accuracy_meters: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : undefined
       });
       setClockRes(res);
       if (res.entry) {

@@ -10,6 +10,7 @@ import { useAuth } from "../state/auth";
 import type { ExpenseEntry, ExpenseSummary, PendingEmployeePayments } from "../types/api";
 import { formatMoney } from "../utils/money";
 import { parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
+import { canCancelUnpaidPaymentTransfer, getFinancialActivityStatusLabel } from "../utils/financialActivity";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmployeeAttendanceCard";
 import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
@@ -36,6 +37,12 @@ export function FinanceDashboardPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<null | { id: number; kind: "monthly" | "contract" }>(null);
+  const [cancelTransferTarget, setCancelTransferTarget] = useState<null | {
+    id: number;
+    employeeName: string;
+    amount: string | number;
+  }>(null);
+  const [cancellingTransfer, setCancellingTransfer] = useState(false);
   const [allocOpen, setAllocOpen] = useState(false);
   const [allocLoading, setAllocLoading] = useState(false);
   const [allocTxId, setAllocTxId] = useState<number | null>(null);
@@ -225,6 +232,26 @@ export function FinanceDashboardPage() {
       offset
     });
     setPending(res);
+  }
+
+  async function performCancelTransfer(transactionId: number) {
+    setCancellingTransfer(true);
+    try {
+      await employeePaymentsApi.cancelPending(transactionId);
+      await Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]);
+      window.dispatchEvent(new Event("furniture:notifications-updated"));
+      toast.push("success", "Transfer cancelled.");
+      setCancelTransferTarget(null);
+      if (detailTxnId === transactionId) {
+        setDetailOpen(false);
+        setDetailTxnId(null);
+        setDetail(null);
+      }
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setCancellingTransfer(false);
+    }
   }
 
   async function refreshHistory(next?: { offset?: number }) {
@@ -677,9 +704,13 @@ export function FinanceDashboardPage() {
                       ].join(" ")}
                       role="link"
                       tabIndex={0}
-                      onClick={() => openDetail(it.transaction.id)}
+                      onClick={(e) => {
+                        if (isInteractiveTarget(e.target)) return;
+                        openDetail(it.transaction.id);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter" && e.key !== " ") return;
+                        if (isInteractiveTarget(e.target)) return;
                         e.preventDefault();
                         openDetail(it.transaction.id);
                       }}
@@ -704,6 +735,28 @@ export function FinanceDashboardPage() {
                           <div className="mt-0.5 text-base font-extrabold tabular-nums">{formatMoney(it.transaction.amount)}</div>
                         </div>
                       </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-black/10 pt-3">
+                        <span className="text-xs font-semibold text-black/60">
+                          {getFinancialActivityStatusLabel(it.transaction)}
+                        </span>
+                        {auth.role === "admin" && canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
+                          <Button
+                            variant="danger"
+                            className="shrink-0"
+                            disabled={cancellingTransfer}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCancelTransferTarget({
+                                id: it.transaction.id,
+                                employeeName: it.employee_name,
+                                amount: it.transaction.amount
+                              });
+                            }}
+                          >
+                            Cancel Transfer
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -714,7 +767,9 @@ export function FinanceDashboardPage() {
                       <tr className="border-b border-black/10">
                         <th className="py-3 pr-4 font-semibold">Employee</th>
                         <th className="py-3 pr-4 font-semibold">Date</th>
-                        <th className="py-3 pr-0 text-right font-semibold">Amount to Pay</th>
+                        <th className="py-3 pr-4 font-semibold">Status</th>
+                        <th className="py-3 pr-4 text-right font-semibold">Amount to Pay</th>
+                        {auth.role === "admin" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -753,7 +808,32 @@ export function FinanceDashboardPage() {
                           <td className="py-3 pr-4 text-xs font-semibold text-black/60">
                             {fmtSentToFinanceDate(it as any)}
                           </td>
-                          <td className="py-3 pr-0 text-right font-extrabold tabular-nums">{formatMoney(it.transaction.amount)}</td>
+                          <td className="py-3 pr-4 text-xs font-semibold text-black/60">
+                            {getFinancialActivityStatusLabel(it.transaction)}
+                          </td>
+                          <td className="py-3 pr-4 text-right font-extrabold tabular-nums">{formatMoney(it.transaction.amount)}</td>
+                          {auth.role === "admin" ? (
+                            <td className="py-3 pr-0 text-right">
+                              {canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
+                                <Button
+                                  variant="danger"
+                                  disabled={cancellingTransfer}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCancelTransferTarget({
+                                      id: it.transaction.id,
+                                      employeeName: it.employee_name,
+                                      amount: it.transaction.amount
+                                    });
+                                  }}
+                                >
+                                  Cancel Transfer
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-black/40">—</span>
+                              )}
+                            </td>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -1145,6 +1225,24 @@ export function FinanceDashboardPage() {
 
               <div className="-mx-4 sticky bottom-0 border-t border-black/10 bg-white px-4 py-3 sm:-mx-6 sm:px-6">
                 <div className="flex flex-wrap items-center justify-end gap-2">
+                  {auth.role === "admin" &&
+                  detail.transaction?.id &&
+                  canCancelUnpaidPaymentTransfer(detail.transaction.status) ? (
+                    <Button
+                      variant="danger"
+                      disabled={cancellingTransfer || sendBusy}
+                      onClick={() => {
+                        if (!detail.transaction?.id) return;
+                        setCancelTransferTarget({
+                          id: detail.transaction.id,
+                          employeeName: detail.employee_name,
+                          amount: detail.transaction.amount
+                        });
+                      }}
+                    >
+                      Cancel Transfer
+                    </Button>
+                  ) : null}
                   {auth.role === "admin" ? (
                     <Button
                       variant="secondary"
@@ -1593,6 +1691,35 @@ export function FinanceDashboardPage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={cancelTransferTarget !== null}
+        title="Cancel transfer"
+        onClose={() => (cancellingTransfer ? null : setCancelTransferTarget(null))}
+      >
+        {cancelTransferTarget ? (
+          <div className="space-y-4">
+            <p className="text-sm text-black/70">
+              Are you sure you want to cancel this pending transfer for{" "}
+              <span className="font-semibold">{cancelTransferTarget.employeeName}</span> (
+              {formatMoney(cancelTransferTarget.amount)})? This cannot be undone; Finance will no longer see it as
+              payable.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="ghost" disabled={cancellingTransfer} onClick={() => setCancelTransferTarget(null)}>
+                Keep transfer
+              </Button>
+              <Button
+                variant="danger"
+                isLoading={cancellingTransfer}
+                onClick={() => void performCancelTransfer(cancelTransferTarget.id)}
+              >
+                Cancel transfer
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

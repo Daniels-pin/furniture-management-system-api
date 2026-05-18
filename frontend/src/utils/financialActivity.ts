@@ -41,6 +41,11 @@ export function getFinancialActivityTypeLabel(t: EmployeeTransaction): string {
   return "Payment";
 }
 
+/** Admin may cancel before Finance marks paid (finance queue / awaiting finance). */
+export function canCancelUnpaidPaymentTransfer(status: EmployeeTransaction["status"]): boolean {
+  return status === "pending" || status === "sent_to_finance" || status === "approved_by_admin";
+}
+
 export function getFinancialActivityStatusLabel(t: EmployeeTransaction): string {
   // Employee-facing labels
   if (t.status === "requested") return "Awaiting admin approval";

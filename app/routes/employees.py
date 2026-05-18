@@ -630,16 +630,24 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
 
 # Modest buffer for consumer GPS drift (indoor/outdoor); applied on top of configured radius only.
 _GEO_VALIDATION_BUFFER_METERS = 15.0
+# Cap client-reported accuracy so a spoofed payload cannot bypass geo checks entirely.
+_MAX_GPS_ACCURACY_CONTRIBUTION_METERS = 100.0
 
 
-def _effective_geo_radius_meters(allowed: int) -> float:
-    return float(allowed) + _GEO_VALIDATION_BUFFER_METERS
+def _effective_geo_radius_meters(allowed: int, gps_accuracy_meters: float | None = None) -> float:
+    """Allowed distance from site center (configured radius + drift / reported GPS uncertainty)."""
+    effective = float(allowed) + _GEO_VALIDATION_BUFFER_METERS
+    if gps_accuracy_meters is not None and gps_accuracy_meters > 0:
+        acc = min(float(gps_accuracy_meters), _MAX_GPS_ACCURACY_CONTRIBUTION_METERS)
+        effective = max(effective, float(allowed) + acc)
+    return effective
 
 
 def _validate_geo_clock_in_distance(
     employee_lat: float,
     employee_lon: float,
     loc: models.CompanyLocation,
+    gps_accuracy_meters: float | None = None,
 ) -> tuple[float, int]:
     """Return (distance_meters, configured_radius_meters); raise 403/409 when not allowed."""
     allowed = int(loc.allowed_radius_meters or 0)
@@ -654,12 +662,17 @@ def _validate_geo_clock_in_distance(
         float(loc.latitude),
         float(loc.longitude),
     )
-    if distance > _effective_geo_radius_meters(allowed):
+    effective = _effective_geo_radius_meters(allowed, gps_accuracy_meters)
+    if distance > effective:
+        extra = ""
+        if gps_accuracy_meters is not None and gps_accuracy_meters > 0:
+            extra = f" GPS accuracy was about {int(round(gps_accuracy_meters))}m."
         raise HTTPException(
             status_code=403,
             detail=(
                 "You must be within your assigned work location to mark attendance. "
-                f"(About {int(round(distance))}m from the site center; allowed {allowed}m.)"
+                f"(About {int(round(distance))}m from the site center; allowed {allowed}m"
+                f" plus location tolerance, up to {int(round(effective))}m.{extra})"
             ),
         )
     return distance, allowed
@@ -1555,10 +1568,12 @@ def clock_in_my_attendance_geo(
             entry=out,
         )
 
+    gps_accuracy = float(body.accuracy_meters) if body.accuracy_meters is not None else None
     distance, allowed = _validate_geo_clock_in_distance(
         float(body.latitude),
         float(body.longitude),
         loc,
+        gps_accuracy_meters=gps_accuracy,
     )
 
     ensure_payroll_periods_current(db)
@@ -1625,6 +1640,8 @@ def clock_in_my_attendance_geo(
             "distance_meters": float(distance),
             "allowed_radius_meters": allowed,
             "geo_validation_buffer_meters": _GEO_VALIDATION_BUFFER_METERS,
+            "gps_accuracy_meters": gps_accuracy,
+            "effective_radius_meters": _effective_geo_radius_meters(allowed, gps_accuracy),
         },
     )
     db.commit()

@@ -17,6 +17,7 @@ import {
   sortJobsByAttention
 } from "../utils/jobNotifications";
 import {
+  canCancelUnpaidPaymentTransfer,
   getFinancialActivityClasses,
   getFinancialActivityColor,
   getFinancialActivityStatusLabel,
@@ -1099,12 +1100,7 @@ export function ContractEmployeeDetailPage() {
                       ) : null}
                       {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
                       <div className="mt-2 flex justify-end gap-2">
-                        {auth.role === "admin" &&
-                        (t.status === "requested" ||
-                          t.status === "approved_by_admin" ||
-                          t.status === "sent_to_finance" ||
-                          t.status === "pending") &&
-                        t.txn_type === "payment" ? (
+                        {auth.role === "admin" && t.txn_type === "payment" && canCancelUnpaidPaymentTransfer(t.status) ? (
                           <Button variant="danger" onClick={() => setCancelTargetId(t.id)}>
                             Cancel
                           </Button>
@@ -1124,12 +1120,12 @@ export function ContractEmployeeDetailPage() {
 
           <Modal
             open={cancelTargetId !== null}
-            title="Cancel pending payment"
+            title="Cancel transfer"
             onClose={() => (cancelling ? null : setCancelTargetId(null))}
           >
             {cancelTargetId !== null ? (
               <div className="space-y-4">
-                <div className="text-sm text-black/70">Are you sure you want to cancel this pending payment?</div>
+                <div className="text-sm text-black/70">Are you sure you want to cancel this pending transfer? This cannot be undone; Finance will no longer see it as payable.</div>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="danger"
@@ -1141,7 +1137,10 @@ export function ContractEmployeeDetailPage() {
                         .cancelPending(cancelTargetId)
                         .then(() => contractEmployeesApi.get(detail.id))
                         .then((d) => setDetail(d))
-                        .then(() => toast.push("success", "Cancelled."))
+                        .then(() => {
+                          window.dispatchEvent(new Event("furniture:notifications-updated"));
+                          toast.push("success", "Transfer cancelled.");
+                        })
                         .then(() => setCancelTargetId(null))
                         .catch((e) => toast.push("error", getErrorMessage(e)))
                         .finally(() => setCancelling(false));

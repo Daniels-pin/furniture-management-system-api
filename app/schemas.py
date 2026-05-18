@@ -1114,6 +1114,8 @@ class EmployeeClockInOut(BaseModel):
 class EmployeeClockInGeoIn(BaseModel):
     latitude: float
     longitude: float
+    # Browser-reported horizontal accuracy (meters); expands allowed radius for GPS uncertainty.
+    accuracy_meters: Optional[float] = Field(None, ge=0, le=500)
 
 
 class EmployeeWorkLocationAssignIn(BaseModel):

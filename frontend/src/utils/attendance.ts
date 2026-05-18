@@ -46,6 +46,8 @@ export type GeolocationReadOptions = {
   enableHighAccuracy?: boolean;
   timeoutMs?: number;
   maximumAgeMs?: number;
+  /** When true, never reuse a cached position (required for geo-attendance clock-in). */
+  requireFresh?: boolean;
   maxAttempts?: number;
   retryDelayMs?: number;
   /** Hard cap for the entire read (all attempts). Prevents endless spinners on mobile Safari. */
@@ -101,32 +103,57 @@ function readPositionOnce(opts: AttemptOptions): Promise<GeolocationPosition> {
  * Each attempt is guarded by an explicit timeout so callbacks cannot hang forever.
  */
 export async function getGeolocationPosition(options?: GeolocationReadOptions): Promise<GeolocationPosition> {
+  const requireFresh = options?.requireFresh ?? false;
   const maxAttempts = options?.maxAttempts ?? 3;
   const retryDelayMs = options?.retryDelayMs ?? 1_200;
   const maxTotalMs = options?.maxTotalMs ?? 38_000;
   const startedAt = Date.now();
+  const baseMaxAge = requireFresh ? 0 : (options?.maximumAgeMs ?? 0);
 
   if (!("geolocation" in navigator)) {
     throw new Error("Geolocation is not supported on this device.");
   }
 
-  const attempts: AttemptOptions[] = [
-    {
-      enableHighAccuracy: options?.enableHighAccuracy ?? true,
-      timeoutMs: options?.timeoutMs ?? 12_000,
-      maximumAgeMs: options?.maximumAgeMs ?? 0
-    },
-    {
-      enableHighAccuracy: false,
-      timeoutMs: 10_000,
-      maximumAgeMs: Math.max(options?.maximumAgeMs ?? 0, 60_000)
-    },
-    {
-      enableHighAccuracy: false,
-      timeoutMs: 8_000,
-      maximumAgeMs: Math.max(options?.maximumAgeMs ?? 0, 300_000)
-    }
-  ];
+  const attempts: AttemptOptions[] = requireFresh
+    ? [
+        {
+          enableHighAccuracy: options?.enableHighAccuracy ?? true,
+          timeoutMs: options?.timeoutMs ?? 15_000,
+          maximumAgeMs: 0
+        },
+        {
+          enableHighAccuracy: true,
+          timeoutMs: 12_000,
+          maximumAgeMs: 0
+        },
+        {
+          enableHighAccuracy: false,
+          timeoutMs: 10_000,
+          maximumAgeMs: 0
+        },
+        {
+          enableHighAccuracy: false,
+          timeoutMs: 8_000,
+          maximumAgeMs: 0
+        }
+      ]
+    : [
+        {
+          enableHighAccuracy: options?.enableHighAccuracy ?? true,
+          timeoutMs: options?.timeoutMs ?? 12_000,
+          maximumAgeMs: baseMaxAge
+        },
+        {
+          enableHighAccuracy: false,
+          timeoutMs: 10_000,
+          maximumAgeMs: Math.max(baseMaxAge, 60_000)
+        },
+        {
+          enableHighAccuracy: false,
+          timeoutMs: 8_000,
+          maximumAgeMs: Math.max(baseMaxAge, 300_000)
+        }
+      ];
 
   let lastError: GeolocationPositionError | Error | null = null;
 
@@ -175,6 +202,16 @@ export async function getGeolocationPosition(options?: GeolocationReadOptions): 
   }
 
   throw lastError ?? new Error("Could not determine your location.");
+}
+
+/** Fresh device coordinates for geo-attendance (no stale cached positions). */
+export function getAttendanceGeolocationPosition(): Promise<GeolocationPosition> {
+  return getGeolocationPosition({
+    requireFresh: true,
+    enableHighAccuracy: true,
+    maxAttempts: 4,
+    maxTotalMs: 45_000
+  });
 }
 
 /** User-facing message for browser geolocation failures (maps, attendance, etc.). */
