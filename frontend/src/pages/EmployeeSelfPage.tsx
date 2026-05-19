@@ -7,7 +7,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import type { EmployeeAttendanceEntry, EmployeeAttendanceHistoryItem, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import { AttendanceHistoryList } from "../components/employee/AttendanceHistoryList";
-import { formatLagosDateTime } from "../utils/datetime";
+import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import {
   attendanceGeoAccuracyMeters,
@@ -112,7 +112,7 @@ export function EmployeeSelfPage() {
       } else {
         await refreshAttendance();
       }
-      setResultFeedback(getAttendanceSuccessFeedback(res));
+      setResultFeedback(getAttendanceSuccessFeedback(res, formatLateAttendanceTime(me.work_location?.late_attendance_time)));
     } catch (e) {
       setResultFeedback(getAttendanceErrorFeedback(e));
     } finally {
@@ -203,6 +203,7 @@ export function EmployeeSelfPage() {
   }
 
   const todayEntry = findTodayAttendanceEntry(attendance);
+  const lateTimeLabel = formatLateAttendanceTime(emp?.work_location?.late_attendance_time);
 
   return (
     <div className="space-y-6">
@@ -217,11 +218,12 @@ export function EmployeeSelfPage() {
           <div>
             <div className="text-sm font-semibold text-black">Attendance</div>
             <p className="mt-1 text-xs text-black/55">
-              Mark attendance by 8:15 AM. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
+              Mark attendance by {lateTimeLabel}. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
             </p>
             {emp.work_location ? (
               <p className="mt-1 text-xs font-semibold text-black/60">
-                Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m)
+                Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m) · Late after{" "}
+                {lateTimeLabel}
               </p>
             ) : (
               <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>

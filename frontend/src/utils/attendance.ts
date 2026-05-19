@@ -379,7 +379,10 @@ export function getAttendanceBlockedNoLocationFeedback(): AttendanceResultFeedba
   };
 }
 
-export function getAttendanceSuccessFeedback(res: EmployeeClockInResponse): AttendanceResultFeedback {
+export function getAttendanceSuccessFeedback(
+  res: EmployeeClockInResponse,
+  lateTimeLabel = "8:15 AM"
+): AttendanceResultFeedback {
   if (res.status === "already_marked") {
     return {
       variant: "info",
@@ -400,7 +403,7 @@ export function getAttendanceSuccessFeedback(res: EmployeeClockInResponse): Atte
     return {
       variant: "success",
       title: "Attendance marked",
-      message: `Attendance marked successfully${timePart}. You were marked late (after 8:15 AM). A ₦500 lateness deduction applies.`
+      message: `Attendance marked successfully${timePart}. You were marked late (after ${lateTimeLabel}). A ₦500 lateness deduction applies.`
     };
   }
   return {

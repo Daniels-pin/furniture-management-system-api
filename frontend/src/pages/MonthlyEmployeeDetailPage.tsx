@@ -10,7 +10,7 @@ import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { CompanyLocation, EmployeeAttendanceHistoryItem, EmployeeDetail, EmployeeTransaction } from "../types/api";
-import { formatLagosDateTime } from "../utils/datetime";
+import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
@@ -492,7 +492,7 @@ export function MonthlyEmployeeDetailPage() {
               <option value="none">None</option>
               {locs.map((l) => (
                 <option key={l.id} value={String(l.id)}>
-                  {l.name} ({l.allowed_radius_meters}m)
+                  {l.name} ({l.allowed_radius_meters}m · late {formatLateAttendanceTime(l.late_attendance_time)})
                 </option>
               ))}
             </select>
@@ -503,7 +503,8 @@ export function MonthlyEmployeeDetailPage() {
         </div>
         {detail.work_location ? (
           <div className="mt-2 text-xs font-semibold text-black/55">
-            Current: {detail.work_location.name} · Radius {detail.work_location.allowed_radius_meters}m
+            Current: {detail.work_location.name} · Radius {detail.work_location.allowed_radius_meters}m · Late after{" "}
+            {formatLateAttendanceTime(detail.work_location.late_attendance_time)}
           </div>
         ) : (
           <div className="mt-2 text-xs font-semibold text-amber-900">No location assigned yet. Attendance marking will be blocked.</div>
@@ -513,7 +514,8 @@ export function MonthlyEmployeeDetailPage() {
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
         <p className="mt-1 text-xs text-black/55">
-          Late after 8:15 AM attracts ₦500; unmarked workdays attract ₦1,000 absence penalty (Sundays excluded).
+          Late after the assigned location&apos;s cutoff attracts ₦500; unmarked workdays attract ₦1,000 absence penalty (Sundays
+          excluded).
           Assign a work location before attendance deductions apply to payroll.
         </p>
         {detail.salary.attendance_deductions_eligible === false ? (

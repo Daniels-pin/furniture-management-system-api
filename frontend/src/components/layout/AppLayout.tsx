@@ -255,7 +255,7 @@ export function AppLayout() {
           if (!Number.isFinite(t)) continue;
           newest = Math.max(newest, t);
           if (t <= baseline) continue;
-          toast.push("success", n.title + (n.message ? ` — ${n.message}` : ""));
+          toast.pushLive("success", n.title + (n.message ? ` — ${n.message}` : ""));
         }
         if (newest > baseline) localStorage.setItem(key, new Date(newest).toISOString());
       } catch {

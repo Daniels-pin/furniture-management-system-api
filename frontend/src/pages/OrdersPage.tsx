@@ -11,11 +11,11 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Select } from "../components/ui/Select";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
-import { consumeDraftRecoveryIntent } from "../state/drafts";
+import { resolveDraftRestoreIntent } from "../state/drafts";
 
 function daysRemaining(dueDateIso?: string | null) {
   if (!dueDateIso) return null;
@@ -184,6 +184,9 @@ export function OrdersPage() {
   const auth = useAuth();
   const toast = useToast();
   const nav = useNavigate();
+  const location = useLocation();
+  const recoveryHandledKey = useRef<string | null>(null);
+  const draftRestoredRef = useRef(false);
 
   usePageHeader({
     title: "Orders",
@@ -294,17 +297,39 @@ export function OrdersPage() {
 
   // Prompt on module entry if a draft exists.
   useEffect(() => {
-    const intent = consumeDraftRecoveryIntent();
+    if (recoveryHandledKey.current === location.key) return;
+    recoveryHandledKey.current = location.key;
+
+    const trigger = resolveDraftRestoreIntent(location.state);
+    if (trigger?.module === "order") {
+      draftRestoredRef.current = true;
+      if (location.state && typeof location.state === "object" && "restoreDraft" in location.state) {
+        nav(location.pathname, { replace: true, state: {} });
+      }
+      const prefetched =
+        trigger.data && typeof trigger.data === "object" && !Array.isArray(trigger.data) ? trigger.data : null;
+      if (prefetched) {
+        setInitialDraft(prefetched);
+        setCreateOpen(true);
+        return;
+      }
+      void (async () => {
+        const d = await loadDraft();
+        if (d) {
+          setInitialDraft(d);
+          setCreateOpen(true);
+        }
+      })();
+      return;
+    }
+
+    if (draftRestoredRef.current) return;
+
     let alive = true;
     (async () => {
       const d = await loadDraft();
       if (!alive) return;
       if (!d) return;
-      if (intent === "order") {
-        setInitialDraft(d);
-        setCreateOpen(true);
-        return;
-      }
       setInitialDraft(d);
       setDraftPromptOpen(true);
     })();
@@ -312,7 +337,7 @@ export function OrdersPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.key, location.state]);
 
   async function doDelete(orderId: number) {
     // IMPORTANT: NEVER send undefined or null order_id

@@ -565,6 +565,7 @@ export type CompanyLocation = {
   latitude: number;
   longitude: number;
   allowed_radius_meters: number;
+  late_attendance_time: string;
   created_at: string;
 };
 

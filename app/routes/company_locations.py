@@ -16,7 +16,7 @@ router = APIRouter(prefix="/company-locations", tags=["CompanyLocations"])
 @router.get("", response_model=list[CompanyLocationOut])
 def list_locations(
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin", "factory"])),
+    current_user=Depends(require_role(["admin"])),
     search: str = Query("", max_length=200),
 ):
     q = db.query(models.CompanyLocation)
@@ -41,6 +41,7 @@ def create_location(
         latitude=float(body.latitude),
         longitude=float(body.longitude),
         allowed_radius_meters=int(body.allowed_radius_meters),
+        late_attendance_time=body.late_attendance_time,
         created_at=datetime.utcnow(),
     )
     db.add(row)

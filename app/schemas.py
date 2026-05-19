@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from pydantic import BaseModel, EmailStr, Field, computed_field, field_serializer, field_validator, model_validator
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import List, Literal, Optional
 from enum import Enum
 
@@ -1031,10 +1031,32 @@ class CompanyLocationOut(BaseModel):
     latitude: float
     longitude: float
     allowed_radius_meters: int
+    late_attendance_time: time
     created_at: datetime
+
+    @field_serializer("late_attendance_time")
+    @classmethod
+    def _serialize_late_time(cls, v: time) -> str:
+        return v.strftime("%H:%M")
 
     class Config:
         from_attributes = True
+
+
+def _parse_late_attendance_time(v: object) -> object:
+    if v is None or isinstance(v, time):
+        return v
+    s = str(v).strip()
+    if not s:
+        raise ValueError("Invalid late attendance time")
+    parts = s.split(":")
+    if len(parts) < 2:
+        raise ValueError("Invalid late attendance time")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError("Invalid late attendance time")
+    return time(hour, minute)
 
 
 class CompanyLocationCreate(BaseModel):
@@ -1042,6 +1064,7 @@ class CompanyLocationCreate(BaseModel):
     latitude: float
     longitude: float
     allowed_radius_meters: int = Field(..., ge=1, le=200_000)
+    late_attendance_time: time = Field(default=time(8, 15))
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1050,12 +1073,18 @@ class CompanyLocationCreate(BaseModel):
             return v
         return str(v).strip()
 
+    @field_validator("late_attendance_time", mode="before")
+    @classmethod
+    def _parse_late_time_create(cls, v: object) -> object:
+        return _parse_late_attendance_time(v)
+
 
 class CompanyLocationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     allowed_radius_meters: Optional[int] = Field(None, ge=1, le=200_000)
+    late_attendance_time: Optional[time] = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1064,6 +1093,13 @@ class CompanyLocationUpdate(BaseModel):
             return None
         s = str(v).strip()
         return s or None
+
+    @field_validator("late_attendance_time", mode="before")
+    @classmethod
+    def _parse_late_time_update(cls, v: object) -> object:
+        if v is None:
+            return None
+        return _parse_late_attendance_time(v)
 
 
 class EmployeeAttendanceEntryOut(BaseModel):

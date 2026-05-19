@@ -841,11 +841,26 @@ export const companyLocationsApi = {
     const { data } = await api.get<CompanyLocation[]>("/company-locations", { params });
     return data;
   },
-  async create(body: { name: string; latitude: number; longitude: number; allowed_radius_meters: number }) {
+  async create(body: {
+    name: string;
+    latitude: number;
+    longitude: number;
+    allowed_radius_meters: number;
+    late_attendance_time?: string;
+  }) {
     const { data } = await api.post<CompanyLocation>("/company-locations", body);
     return data;
   },
-  async update(locationId: number, patch: Partial<{ name: string; latitude: number; longitude: number; allowed_radius_meters: number }>) {
+  async update(
+    locationId: number,
+    patch: Partial<{
+      name: string;
+      latitude: number;
+      longitude: number;
+      allowed_radius_meters: number;
+      late_attendance_time: string;
+    }>
+  ) {
     const { data } = await api.patch<CompanyLocation>(`/company-locations/${locationId}`, patch);
     return data;
   },

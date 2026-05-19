@@ -3,6 +3,7 @@ import { employeesApi } from "../services/endpoints";
 import { useAuth } from "../state/auth";
 import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
 import type { AttendanceResultFeedback } from "../utils/attendance";
+import { formatLateAttendanceTime } from "../utils/datetime";
 import {
   attendanceGeoAccuracyMeters,
   findTodayAttendanceEntry,
@@ -103,7 +104,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       } else {
         await refreshAttendance();
       }
-      setResultFeedback(getAttendanceSuccessFeedback(res));
+      setResultFeedback(getAttendanceSuccessFeedback(res, formatLateAttendanceTime(me.work_location?.late_attendance_time)));
     } catch (e) {
       setResultFeedback(getAttendanceErrorFeedback(e));
     } finally {

@@ -61,3 +61,28 @@ export function lagosDateKey(iso: string | Date | null | undefined): string {
     day: "2-digit"
   }).format(d);
 }
+
+/** Display HH:MM or HH:MM:SS as a friendly time (e.g. "8:15 AM"). */
+export function formatLateAttendanceTime(value: string | null | undefined): string {
+  const raw = (value || "").trim();
+  if (!raw) return "8:15 AM";
+  const parts = raw.split(":");
+  const hour = Number(parts[0]);
+  const minute = Number(parts[1] ?? "0");
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return raw;
+  const d = new Date(Date.UTC(2000, 0, 1, hour, minute));
+  return d
+    .toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" })
+    .replace(/^0(\d)/, "$1");
+}
+
+/** Normalize API/user input to HTML time input value (HH:MM). */
+export function toTimeInputValue(value: string | null | undefined, fallback = "08:15"): string {
+  const raw = (value || "").trim();
+  if (!raw) return fallback;
+  const parts = raw.split(":");
+  if (parts.length < 2) return fallback;
+  const hour = parts[0].padStart(2, "0");
+  const minute = parts[1].padStart(2, "0");
+  return `${hour}:${minute}`;
+}

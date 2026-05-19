@@ -11,6 +11,11 @@ import { formatLagosDateTime } from "../utils/datetime";
 
 const RECOVERY_KEY = "furniture_draft_recover_v1";
 
+export type DraftRestoreLocationState = {
+  restoreDraft?: DraftModule;
+  draftData?: unknown;
+};
+
 export function consumeDraftRecoveryIntent(): DraftModule | null {
   try {
     const raw = sessionStorage.getItem(RECOVERY_KEY);
@@ -24,6 +29,28 @@ export function consumeDraftRecoveryIntent(): DraftModule | null {
     sessionStorage.removeItem(RECOVERY_KEY);
     return null;
   }
+}
+
+export function readDraftRestoreTrigger(
+  locationState: unknown
+): { module: DraftModule; data: unknown | undefined } | null {
+  const st = locationState as DraftRestoreLocationState | null;
+  const module = st?.restoreDraft;
+  if (module === "quotation" || module === "order" || module === "proforma") {
+    return { module, data: st?.draftData };
+  }
+  return null;
+}
+
+export function resolveDraftRestoreIntent(
+  locationState: unknown
+): { module: DraftModule; data: unknown | undefined } | null {
+  const sessionModule = consumeDraftRecoveryIntent();
+  if (sessionModule) {
+    const nav = readDraftRestoreTrigger(locationState);
+    return { module: sessionModule, data: nav?.module === sessionModule ? nav.data : undefined };
+  }
+  return readDraftRestoreTrigger(locationState);
 }
 
 function setDraftRecoveryIntent(module: DraftModule) {
@@ -146,11 +173,27 @@ export function DraftRecoveryGate({ children }: { children: React.ReactNode }) {
             <Button
               isLoading={isLoading}
               disabled={!draft}
-              onClick={() => {
+              onClick={async () => {
                 if (!draft) return;
-                setDraftRecoveryIntent(draft.module);
-                setOpen(false);
-                nav(moduleRoute(draft.module), { replace: true });
+                setIsLoading(true);
+                try {
+                  let draftData: unknown;
+                  try {
+                    const res = await draftsApi.get(draft.module);
+                    draftData = res.data;
+                  } catch {
+                    draftData = undefined;
+                  }
+                  setDraftRecoveryIntent(draft.module);
+                  setOpen(false);
+                  setDraft(null);
+                  nav(moduleRoute(draft.module), {
+                    replace: true,
+                    state: { restoreDraft: draft.module, draftData } satisfies DraftRestoreLocationState
+                  });
+                } finally {
+                  setIsLoading(false);
+                }
               }}
             >
               Continue
@@ -161,4 +204,3 @@ export function DraftRecoveryGate({ children }: { children: React.ReactNode }) {
     </>
   );
 }
-

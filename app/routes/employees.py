@@ -4,11 +4,10 @@ import csv
 import io
 import logging
 import uuid
-from datetime import datetime
 import math
 from decimal import Decimal
 from typing import Optional
-from datetime import date as date_type, timedelta
+from datetime import date as date_type, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -23,6 +22,7 @@ from app.utils.financial_audit import log_financial_action
 from app.utils.timezone import (
     lagos_date_of,
     lagos_today,
+    LATE_CUTOFF_TIME,
     late_minutes_after_cutoff,
     now_lagos,
     now_utc_naive,
@@ -325,9 +325,24 @@ def _is_sunday(d: date_type) -> bool:
     return d.weekday() == 6
 
 
-def _late_minutes(check_in_at: datetime) -> int:
-    """Minutes after 08:15 Lagos; works for naive UTC rows from DB and aware clock-in times."""
-    return late_minutes_after_cutoff(check_in_at)
+def _late_minutes(check_in_at: datetime, *, cutoff: time | None = None) -> int:
+    """Minutes after the location cutoff on the Lagos calendar day of check-in."""
+    return late_minutes_after_cutoff(check_in_at, cutoff=cutoff or LATE_CUTOFF_TIME)
+
+
+def _late_cutoff_for_location(loc: models.CompanyLocation | None) -> time:
+    if loc is None:
+        return LATE_CUTOFF_TIME
+    configured = getattr(loc, "late_attendance_time", None)
+    return configured if configured is not None else LATE_CUTOFF_TIME
+
+
+def _late_cutoff_for_employee(db: Session, emp: models.Employee) -> time:
+    loc_id = getattr(emp, "work_location_id", None)
+    if loc_id is None:
+        return LATE_CUTOFF_TIME
+    loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+    return _late_cutoff_for_location(loc)
 
 
 def _last_day_of_month(year: int, month: int) -> date_type:
@@ -1503,7 +1518,8 @@ def clock_in_my_attendance(
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
-    mins = _late_minutes(now)
+    cutoff = _late_cutoff_for_employee(db, emp)
+    mins = _late_minutes(now, cutoff=cutoff)
     is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
@@ -1632,7 +1648,8 @@ def clock_in_my_attendance_geo(
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
-    mins = _late_minutes(now)
+    cutoff = _late_cutoff_for_location(loc)
+    mins = _late_minutes(now, cutoff=cutoff)
     is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
@@ -1746,7 +1763,7 @@ def assign_employee_work_location(
 @router.get("/location-assignments", response_model=list[EmployeeLocationAssignmentItemOut])
 def list_employee_location_assignments(
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin", "factory"])),
+    current_user=Depends(require_role(["admin"])),
     search: str = Query("", max_length=200),
 ):
     q = db.query(models.Employee).filter(models.Employee.deleted_at.is_(None))
@@ -1770,7 +1787,7 @@ def patch_employee_location_assignment(
     employee_id: int,
     body: EmployeeWorkLocationAssignIn,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin", "factory"])),
+    current_user=Depends(require_role(["admin"])),
 ):
     emp = (
         db.query(models.Employee)

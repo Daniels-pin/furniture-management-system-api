@@ -64,7 +64,7 @@ def _create_monthly_employee(client, admin_token: str, user_id: int) -> int:
     return r.json()["id"]
 
 
-def _create_location(client, admin_token: str) -> int:
+def _create_location(client, admin_token: str, *, late_attendance_time: str = "08:15") -> int:
     r = client.post(
         "/company-locations",
         json={
@@ -72,6 +72,7 @@ def _create_location(client, admin_token: str) -> int:
             "latitude": OFFICE_LAT,
             "longitude": OFFICE_LON,
             "allowed_radius_meters": RADIUS_M,
+            "late_attendance_time": late_attendance_time,
         },
         headers=_auth(admin_token),
     )
@@ -463,7 +464,7 @@ def test_geo_clock_in_after_reassign_to_second_location(client, admin_token):
 
 
 def test_geo_clock_in_factory_location_assignment_endpoint(client, admin_token, factory_token):
-    """Factory role uses /location-assignment; geo validation must honor that assignment."""
+    """Only Admin may assign locations; factory role is denied."""
     staff_token, user_id = _create_staff_user(client, admin_token)
     emp_id = _create_monthly_employee(client, admin_token, user_id)
     loc_id = _create_location(client, admin_token)
@@ -473,12 +474,55 @@ def test_geo_clock_in_factory_location_assignment_endpoint(client, admin_token, 
         json={"location_id": loc_id},
         headers=_auth(factory_token),
     )
-    assert assign.status_code == 200, assign.text
-    assert assign.json()["work_location_id"] == loc_id
+    assert assign.status_code == 403, assign.text
+
+    admin_assign = client.patch(
+        f"/employees/{emp_id}/location-assignment",
+        json={"location_id": loc_id},
+        headers=_auth(admin_token),
+    )
+    assert admin_assign.status_code == 200, admin_assign.text
+    assert admin_assign.json()["work_location_id"] == loc_id
 
     lat, lon = _offset_north_meters(OFFICE_LAT, OFFICE_LON, 10)
     r = _geo_clock_in(client, staff_token, lat, lon)
     assert r.status_code == 200, r.text
+
+
+def test_geo_clock_in_uses_location_late_time(client, admin_token):
+    """Lateness threshold follows the assigned location's configured late time."""
+    staff_token, user_id = _create_staff_user(client, admin_token)
+    emp_id = _create_monthly_employee(client, admin_token, user_id)
+    loc_id = _create_location(client, admin_token, late_attendance_time="09:00")
+
+    assign = client.patch(
+        f"/employees/{emp_id}/location-assignment",
+        json={"location_id": loc_id},
+        headers=_auth(admin_token),
+    )
+    assert assign.status_code == 200, assign.text
+
+    on_time = datetime(2026, 5, 15, 8, 45, 0, tzinfo=LAGOS)
+    with patch("app.routes.employees.now_lagos", return_value=on_time):
+        r = _geo_clock_in(client, staff_token, OFFICE_LAT, OFFICE_LON)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "present"
+    assert r.json()["entry"]["is_late"] is False
+
+    late = datetime(2026, 5, 15, 9, 1, 0, tzinfo=LAGOS)
+    staff_token2, user_id2 = _create_staff_user(client, admin_token)
+    emp_id2 = _create_monthly_employee(client, admin_token, user_id2)
+    client.patch(
+        f"/employees/{emp_id2}/location-assignment",
+        json={"location_id": loc_id},
+        headers=_auth(admin_token),
+    )
+    with patch("app.routes.employees.now_lagos", return_value=late):
+        r2 = _geo_clock_in(client, staff_token2, OFFICE_LAT, OFFICE_LON)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "late"
+    assert r2.json()["entry"]["is_late"] is True
+    assert r2.json()["entry"]["late_minutes"] == 1
 
 
 def test_delete_location_with_multiple_assignees(client, admin_token):

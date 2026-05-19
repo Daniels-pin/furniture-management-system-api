@@ -9,7 +9,7 @@ import type {
 } from "../../types/api";
 import type { AttendanceResultFeedback } from "../../utils/attendance";
 import { AttendanceHistoryList } from "./AttendanceHistoryList";
-import { formatLagosDateTime, formatLagosTime } from "../../utils/datetime";
+import { formatLagosDateTime, formatLagosTime, formatLateAttendanceTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
 
 type Props = {
@@ -70,6 +70,8 @@ export function MonthlyEmployeeAttendanceCard({
     );
   }
 
+  const lateTimeLabel = formatLateAttendanceTime(emp?.work_location?.late_attendance_time);
+
   const statusLine = (() => {
     if (clockRes?.status === "sunday") return clockRes.message ?? "Sundays are excluded.";
     if (todayEntry) return `Attendance Marked – ${formatLagosTime(todayEntry.check_in_at)}`;
@@ -85,11 +87,12 @@ export function MonthlyEmployeeAttendanceCard({
           <p className="text-sm font-semibold text-black">Attendance</p>
           {compact ? <p className="mt-2 text-sm text-black/80">{statusLine}</p> : null}
           <p className={compact ? "mt-3 text-xs leading-relaxed text-black/55" : "mt-1 text-xs text-black/55"}>
-            Mark attendance by 8:15 AM. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
+            Mark attendance by {lateTimeLabel}. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
           </p>
           {emp.work_location ? (
             <p className="mt-1 text-xs font-semibold text-black/60">
-              Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m)
+              Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m) · Late after{" "}
+              {lateTimeLabel}
             </p>
           ) : (
             <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>

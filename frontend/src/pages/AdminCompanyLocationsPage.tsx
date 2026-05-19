@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePageHeader } from "../components/layout/pageHeader";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -8,7 +9,7 @@ import { getErrorMessage } from "../services/api";
 import { companyLocationsApi } from "../services/endpoints";
 import { getGeolocationPosition, getGeolocationUserMessage } from "../utils/attendance";
 import type { CompanyLocation } from "../types/api";
-import { usePageHeader } from "../components/layout/pageHeader";
+import { formatLateAttendanceTime, toTimeInputValue } from "../utils/datetime";
 
 import { Circle, MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
 import L from "leaflet";
@@ -61,6 +62,7 @@ export function AdminCompanyLocationsPage() {
 
   const [name, setName] = useState("");
   const [radius, setRadius] = useState("150");
+  const [lateTime, setLateTime] = useState("08:15");
   const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
@@ -113,6 +115,7 @@ export function AdminCompanyLocationsPage() {
     if (!selected) return;
     setName(selected.name ?? "");
     setRadius(String(selected.allowed_radius_meters ?? 0));
+    setLateTime(toTimeInputValue(selected.late_attendance_time));
     setPin({ lat: selected.latitude, lng: selected.longitude });
   }, [selectedId]); // intentionally not depending on selected object identity
 
@@ -120,6 +123,7 @@ export function AdminCompanyLocationsPage() {
     setSelectedId(null);
     setName("");
     setRadius("150");
+    setLateTime("08:15");
     setPin(null);
     setSearchQuery("");
   }
@@ -210,13 +214,15 @@ export function AdminCompanyLocationsPage() {
           name: n,
           latitude: pin.lat,
           longitude: pin.lng,
-          allowed_radius_meters: r
+          allowed_radius_meters: r,
+          late_attendance_time: lateTime
         });
         const rows = await refresh();
         setSelectedId(updated.id);
         const synced = rows.find((x) => x.id === updated.id) ?? updated;
         setName(synced.name ?? "");
         setRadius(String(synced.allowed_radius_meters ?? 0));
+        setLateTime(toTimeInputValue(synced.late_attendance_time));
         setPin({ lat: synced.latitude, lng: synced.longitude });
         toast.push("success", "Location updated.");
       } else {
@@ -224,7 +230,8 @@ export function AdminCompanyLocationsPage() {
           name: n,
           latitude: pin.lat,
           longitude: pin.lng,
-          allowed_radius_meters: r
+          allowed_radius_meters: r,
+          late_attendance_time: lateTime
         });
         await refresh();
         toast.push("success", "Location created.");
@@ -296,7 +303,7 @@ export function AdminCompanyLocationsPage() {
                   >
                     <div className="text-sm font-semibold">{x.name}</div>
                     <div className={["mt-0.5 text-xs", x.id === selectedId ? "text-white/75" : "text-black/55"].join(" ")}>
-                      Radius: {x.allowed_radius_meters}m
+                      Radius: {x.allowed_radius_meters}m · Late: {formatLateAttendanceTime(x.late_attendance_time)}
                     </div>
                   </button>
                 </li>
@@ -339,9 +346,19 @@ export function AdminCompanyLocationsPage() {
           </Button>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           <Input label="Location name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main Factory" />
           <Input label="Allowed radius (meters)" value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" />
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-black/60">Late attendance time</label>
+            <input
+              type="time"
+              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
+              value={lateTime}
+              onChange={(e) => setLateTime(e.target.value)}
+            />
+            <div className="mt-1 text-xs text-black/50">Clock-ins after this time (Lagos) count as late.</div>
+          </div>
         </div>
 
         <div className="relative z-0 isolate mt-4 overflow-hidden rounded-2xl border border-black/10 [&_.leaflet-container]:z-0">

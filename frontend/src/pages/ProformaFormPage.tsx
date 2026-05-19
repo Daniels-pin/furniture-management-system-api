@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { proformaApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
@@ -9,7 +9,7 @@ import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import type { ProformaPayload } from "../types/api";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
-import { consumeDraftRecoveryIntent } from "../state/drafts";
+import { resolveDraftRestoreIntent } from "../state/drafts";
 import { draftsApi } from "../services/endpoints";
 
 type Line = {
@@ -41,9 +41,11 @@ export function ProformaFormPage() {
   const editId = proformaId ? Number(proformaId) : NaN;
   const isEdit = Number.isFinite(editId);
   const nav = useNavigate();
+  const location = useLocation();
   const toast = useToast();
 
   const [loading, setLoading] = useState(isEdit);
+  const [autosaveEnabled, setAutosaveEnabled] = useState(isEdit);
   const [customerName, setCustomerName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -58,66 +60,64 @@ export function ProformaFormPage() {
   const [recoverLoading, setRecoverLoading] = useState(false);
 
   const localKey = "draft_v1:proforma";
+  const recoveryHandledKey = useRef<string | null>(null);
+  const draftRestoredRef = useRef(false);
 
-  async function restoreDraft() {
+  function applyDraftData(d: any) {
+    setCustomerName(String(d.customerName ?? ""));
+    setPhone(String(d.phone ?? ""));
+    setAddress(String(d.address ?? ""));
+    setEmail(String(d.email ?? ""));
+    setDueDate(String(d.dueDate ?? ""));
+    const dt = d.discountType;
+    setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
+    setDiscountValue(String(d.discountValue ?? ""));
+    setTax(String(d.tax ?? ""));
+    if (Array.isArray(d.lines) && d.lines.length) {
+      setLines(
+        d.lines.map((it: any) => ({
+          key: crypto.randomUUID(),
+          line_type: it?.line_type === "subheading" ? "subheading" : "item",
+          item_name: String(it?.item_name ?? ""),
+          description: String(it?.description ?? ""),
+          quantity: String(it?.quantity ?? "1"),
+          amount: String(it?.amount ?? "")
+        }))
+      );
+    }
+  }
+
+  async function restoreDraft(prefetched?: unknown) {
     setRecoverLoading(true);
     try {
+      const prefetchedData =
+        prefetched && typeof prefetched === "object" && !Array.isArray(prefetched) ? prefetched : null;
+      if (prefetchedData) {
+        applyDraftData(prefetchedData);
+        try {
+          localStorage.setItem(localKey, JSON.stringify(prefetchedData));
+        } catch {
+          // ignore
+        }
+        toast.push("success", "Draft restored", { buttonLabel: "Continue" });
+        return;
+      }
       const res = await draftsApi.get<any>("proforma");
       const d = res?.data || {};
-      setCustomerName(String(d.customerName ?? ""));
-      setPhone(String(d.phone ?? ""));
-      setAddress(String(d.address ?? ""));
-      setEmail(String(d.email ?? ""));
-      setDueDate(String(d.dueDate ?? ""));
-      const dt = d.discountType;
-      setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
-      setDiscountValue(String(d.discountValue ?? ""));
-      setTax(String(d.tax ?? ""));
-      if (Array.isArray(d.lines) && d.lines.length) {
-        setLines(
-          d.lines.map((it: any) => ({
-            key: crypto.randomUUID(),
-            line_type: it?.line_type === "subheading" ? "subheading" : "item",
-            item_name: String(it?.item_name ?? ""),
-            description: String(it?.description ?? ""),
-            quantity: String(it?.quantity ?? "1"),
-            amount: String(it?.amount ?? "")
-          }))
-        );
-      }
+      applyDraftData(d);
       try {
         localStorage.setItem(localKey, JSON.stringify(d));
       } catch {
         // ignore
       }
-      toast.push("success", "Draft restored");
+      toast.push("success", "Draft restored", { buttonLabel: "Continue" });
     } catch (e) {
       try {
         const raw = localStorage.getItem(localKey);
         const d = raw ? JSON.parse(raw) : null;
         if (d) {
-          setCustomerName(String(d.customerName ?? ""));
-          setPhone(String(d.phone ?? ""));
-          setAddress(String(d.address ?? ""));
-          setEmail(String(d.email ?? ""));
-          setDueDate(String(d.dueDate ?? ""));
-          const dt = d.discountType;
-          setDiscountType(dt === "fixed" || dt === "percentage" ? dt : "");
-          setDiscountValue(String(d.discountValue ?? ""));
-          setTax(String(d.tax ?? ""));
-          if (Array.isArray(d.lines) && d.lines.length) {
-            setLines(
-              d.lines.map((it: any) => ({
-                key: crypto.randomUUID(),
-                line_type: it?.line_type === "subheading" ? "subheading" : "item",
-                item_name: String(it?.item_name ?? ""),
-                description: String(it?.description ?? ""),
-                quantity: String(it?.quantity ?? "1"),
-                amount: String(it?.amount ?? "")
-              }))
-            );
-          }
-          toast.push("success", "Draft restored");
+          applyDraftData(d);
+          toast.push("success", "Draft restored", { buttonLabel: "Continue" });
         } else {
           throw e;
         }
@@ -147,34 +147,53 @@ export function ProformaFormPage() {
 
   useEffect(() => {
     if (isEdit) return;
-    const intent = consumeDraftRecoveryIntent();
-    if (intent === "proforma") {
-      void restoreDraft();
+    if (recoveryHandledKey.current === location.key) return;
+    recoveryHandledKey.current = location.key;
+
+    const trigger = resolveDraftRestoreIntent(location.state);
+    if (trigger?.module === "proforma") {
+      draftRestoredRef.current = true;
+      if (location.state && typeof location.state === "object" && "restoreDraft" in location.state) {
+        nav(location.pathname, { replace: true, state: {} });
+      }
+      void restoreDraft(trigger.data).finally(() => setAutosaveEnabled(true));
       return;
     }
+
+    if (draftRestoredRef.current) return;
+
     let alive = true;
     (async () => {
       try {
         const res = await draftsApi.get("proforma");
         if (!alive) return;
-        if (res?.data) setRecoverOpen(true);
+        if (res?.data) {
+          setRecoverOpen(true);
+          return;
+        }
+        setAutosaveEnabled(true);
       } catch {
         try {
           const raw = localStorage.getItem(localKey);
-          if (raw) setRecoverOpen(true);
+          if (!alive) return;
+          if (raw) {
+            setRecoverOpen(true);
+            return;
+          }
         } catch {
           // ignore
         }
+        if (alive) setAutosaveEnabled(true);
       }
     })();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEdit]);
+  }, [isEdit, location.key, location.state]);
 
   useEffect(() => {
-    if (isEdit) return;
+    if (isEdit || !autosaveEnabled) return;
     const payload = {
       customerName,
       phone,
@@ -196,7 +215,7 @@ export function ProformaFormPage() {
     }, 1200);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEdit, customerName, phone, address, email, dueDate, discountType, discountValue, tax, lines]);
+  }, [isEdit, autosaveEnabled, customerName, phone, address, email, dueDate, discountType, discountValue, tax, lines]);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -390,6 +409,7 @@ export function ProformaFormPage() {
               onClick={async () => {
                 await discardDraft();
                 setRecoverOpen(false);
+                setAutosaveEnabled(true);
               }}
             >
               Discard
@@ -399,6 +419,7 @@ export function ProformaFormPage() {
               onClick={async () => {
                 await restoreDraft();
                 setRecoverOpen(false);
+                setAutosaveEnabled(true);
               }}
             >
               Continue

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Float, Numeric, Text, UniqueConstraint, Date
+from sqlalchemy import Boolean, Column, Integer, String, Float, Numeric, Text, UniqueConstraint, Date, Time
 from app.db.base_class import Base
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy.orm import relationship, backref
@@ -441,6 +441,7 @@ class CompanyLocation(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     allowed_radius_meters = Column(Integer, nullable=False, default=0, server_default="0")
+    late_attendance_time = Column(Time, nullable=False, server_default="08:15:00")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
