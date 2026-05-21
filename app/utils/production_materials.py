@@ -52,6 +52,37 @@ def signed_quantity_expr():
     )
 
 
+def _material_total_key(material_type_id: object | None, material_name: object | None) -> str:
+    if material_type_id is not None:
+        return f"id:{material_type_id}"
+    return f"name:{material_name or ''}"
+
+
+def _merge_material_total_rows(rows: list[tuple]) -> list[dict[str, object]]:
+    """Merge split SQL groups into one total per material (by type id, else name)."""
+    merged: dict[str, dict[str, object]] = {}
+    for material_type_id, material_name, unit, total_quantity in rows:
+        total = _as_dec(total_quantity)
+        if total == 0:
+            continue
+        key = _material_total_key(material_type_id, material_name)
+        entry = merged.get(key)
+        if entry is None:
+            merged[key] = {
+                "material_type_id": material_type_id,
+                "material_name": material_name,
+                "unit": unit,
+                "total_quantity": total,
+            }
+            continue
+        entry["total_quantity"] = _as_dec(entry["total_quantity"]) + total
+        if not entry.get("unit") and unit:
+            entry["unit"] = unit
+    out = list(merged.values())
+    out.sort(key=lambda row: str(row.get("material_name") or ""))
+    return out
+
+
 def compute_employee_material_totals(
     db: Session,
     *,
@@ -79,21 +110,7 @@ def compute_employee_material_totals(
         )
         .all()
     )
-    out: list[dict[str, object]] = []
-    for material_type_id, material_name, unit, total_quantity in rows:
-        total = _as_dec(total_quantity)
-        if total == 0:
-            continue
-        out.append(
-            {
-                "material_type_id": material_type_id,
-                "material_name": material_name,
-                "unit": unit,
-                "total_quantity": total,
-            }
-        )
-    out.sort(key=lambda row: str(row.get("material_name") or ""))
-    return out
+    return _merge_material_total_rows(rows)
 
 
 def compute_section_material_totals(
@@ -121,21 +138,7 @@ def compute_section_material_totals(
         )
         .all()
     )
-    out: list[dict[str, object]] = []
-    for material_type_id, material_name, unit, total_quantity in rows:
-        total = _as_dec(total_quantity)
-        if total == 0:
-            continue
-        out.append(
-            {
-                "material_type_id": material_type_id,
-                "material_name": material_name,
-                "unit": unit,
-                "total_quantity": total,
-            }
-        )
-    out.sort(key=lambda row: str(row.get("material_name") or ""))
-    return out
+    return _merge_material_total_rows(rows)
 
 
 def build_display_material_columns(

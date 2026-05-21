@@ -114,6 +114,145 @@ def test_production_material_tracking_flow(client, admin_token, factory_token):
     assert len(history.json()) >= 3
 
 
+def test_production_material_cumulative_allocations(client, admin_token, factory_token):
+    """Repeated allocations of the same material should accumulate totals."""
+    section = "painters_dept"
+    employee_id = _create_contract_employee(client, admin_token, name="Sandpaper Worker")
+    sandpaper_id = _material_type_id(client, admin_token, section, "Sandpaper")
+
+    client.post(
+        f"/production-materials/sections/{section}/assignments",
+        json={"contract_employee_id": employee_id},
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+
+    txn_at = datetime.utcnow().isoformat()
+    first = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={
+            "material_type_id": sandpaper_id,
+            "quantity": "1",
+            "transaction_at": txn_at,
+        },
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={
+            "material_type_id": sandpaper_id,
+            "quantity": "1",
+            "transaction_at": txn_at,
+        },
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert second.status_code == 200, second.text
+
+    overview = client.get(
+        f"/production-materials/sections/{section}/overview",
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert overview.status_code == 200, overview.text
+    body = overview.json()
+    employee_totals = body["employees"][0]["material_totals"]
+    assert len(employee_totals) == 1
+    assert employee_totals[0]["total_quantity"] in ("2", "2.0000", 2, 2.0)
+
+    section_totals = body["section_totals"]
+    sandpaper_total = next(t for t in section_totals if t["material_name"] == "Sandpaper")
+    assert sandpaper_total["total_quantity"] in ("2", "2.0000", 2, 2.0)
+
+
+def test_production_material_cumulative_allocations_with_reversal(client, admin_token, factory_token):
+    section = "painters_dept"
+    employee_id = _create_contract_employee(client, admin_token, name="Reversal Worker")
+    sandpaper_id = _material_type_id(client, admin_token, section, "Sandpaper")
+
+    client.post(
+        f"/production-materials/sections/{section}/assignments",
+        json={"contract_employee_id": employee_id},
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+
+    txn_at = datetime.utcnow().isoformat()
+    first = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={"material_type_id": sandpaper_id, "quantity": "1", "transaction_at": txn_at},
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={"material_type_id": sandpaper_id, "quantity": "1", "transaction_at": txn_at},
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert second.status_code == 200, second.text
+    second_txn_id = int(second.json()["id"])
+
+    reverse = client.post(
+        f"/production-materials/transactions/{second_txn_id}/reverse",
+        json={"quantity": "1"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert reverse.status_code == 200, reverse.text
+
+    overview = client.get(
+        f"/production-materials/sections/{section}/overview",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert overview.status_code == 200
+    totals = overview.json()["employees"][0]["material_totals"]
+    assert totals[0]["total_quantity"] in ("1", "1.0000", 1, 1.0)
+
+
+def test_production_material_split_unit_rows_merge(client, admin_token, factory_token):
+    """Allocations with different stored units should still sum under one material total."""
+    section = "painters_dept"
+    employee_id = _create_contract_employee(client, admin_token, name="Unit Split Worker")
+    paint_id = _material_type_id(client, admin_token, section, "White Paint")
+
+    client.post(
+        f"/production-materials/sections/{section}/assignments",
+        json={"contract_employee_id": employee_id},
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+
+    txn_at = datetime.utcnow().isoformat()
+    first = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={
+            "material_type_id": paint_id,
+            "quantity": "5",
+            "unit": None,
+            "transaction_at": txn_at,
+        },
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        f"/production-materials/sections/{section}/employees/{employee_id}/transactions",
+        json={
+            "material_type_id": paint_id,
+            "quantity": "3",
+            "unit": "litres",
+            "transaction_at": txn_at,
+        },
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert second.status_code == 200, second.text
+
+    overview = client.get(
+        f"/production-materials/sections/{section}/overview",
+        headers={"Authorization": f"Bearer {factory_token}"},
+    )
+    assert overview.status_code == 200, overview.text
+    totals = overview.json()["employees"][0]["material_totals"]
+    assert len(totals) == 1
+    assert totals[0]["total_quantity"] in ("8", "8.0000", 8, 8.0)
+
+
 def test_production_material_tracking_forbidden_for_showroom(client, showroom_token):
     res = client.get(
         "/production-materials/sections/painters_dept/overview",

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { productionMaterialsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
@@ -41,13 +41,59 @@ function fmtQty(value: string | number | null | undefined) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
 }
 
+function matchesMaterialColumn(
+  total: ProductionMaterialEmployeeRow["material_totals"][number],
+  column: ProductionMaterialDisplayColumn
+) {
+  return column.material_type_id != null
+    ? total.material_type_id === column.material_type_id
+    : total.material_name === column.material_name;
+}
+
+function sumTotalsForColumn(
+  totals: ProductionMaterialEmployeeRow["material_totals"],
+  column: ProductionMaterialDisplayColumn
+) {
+  return totals
+    .filter((t) => matchesMaterialColumn(t, column))
+    .reduce((sum, t) => sum + Number(t.total_quantity), 0);
+}
+
 function totalForColumn(row: ProductionMaterialEmployeeRow, column: ProductionMaterialDisplayColumn) {
-  const hit = row.material_totals.find((t) =>
-    column.material_type_id != null
-      ? t.material_type_id === column.material_type_id
-      : t.material_name === column.material_name
-  );
-  return hit ? fmtQty(hit.total_quantity) : "0";
+  return fmtQty(sumTotalsForColumn(row.material_totals, column));
+}
+
+function mergedSectionTotals(totals: ProductionMaterialSectionOverview["section_totals"]) {
+  const merged = new Map<string, (typeof totals)[number]>();
+  for (const total of totals) {
+    const key =
+      total.material_type_id != null ? `id:${total.material_type_id}` : `name:${total.material_name}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...total });
+      continue;
+    }
+    merged.set(key, {
+      ...existing,
+      total_quantity: String(Number(existing.total_quantity) + Number(total.total_quantity)),
+      unit: existing.unit || total.unit
+    });
+  }
+  return Array.from(merged.values()).sort((a, b) => a.material_name.localeCompare(b.material_name));
+}
+
+function employeeMaterialSummary(row: ProductionMaterialEmployeeRow) {
+  const active = row.material_totals.filter((t) => Number(t.total_quantity) !== 0);
+  if (active.length === 0) return "No materials recorded";
+  return active
+    .slice(0, 4)
+    .map((t) => `${t.material_name} · ${fmtQty(t.total_quantity)}${t.unit ? ` ${t.unit}` : ""}`)
+    .join(", ");
+}
+
+function employeeMaterialOverflowCount(row: ProductionMaterialEmployeeRow) {
+  const active = row.material_totals.filter((t) => Number(t.total_quantity) !== 0);
+  return Math.max(0, active.length - 4);
 }
 
 function columnKey(column: ProductionMaterialDisplayColumn) {
@@ -67,6 +113,7 @@ export function ProductionMaterialTrackingPage() {
   const section = (searchParams.get("section") || "painters_dept") as ProductionMaterialSection;
 
   const [overview, setOverview] = useState<ProductionMaterialSectionOverview | null>(null);
+  const hasOverviewRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<number | null>(null);
   const [history, setHistory] = useState<ProductionMaterialTransaction[]>([]);
@@ -122,7 +169,11 @@ export function ProductionMaterialTrackingPage() {
   const materialTypes = overview?.material_types ?? [];
   const displayColumns = overview?.display_columns ?? [];
   const employees = overview?.employees ?? [];
-  const sectionTotals = overview?.section_totals ?? [];
+  const sectionTotals = useMemo(
+    () => mergedSectionTotals(overview?.section_totals ?? []),
+    [overview?.section_totals]
+  );
+  const [refreshing, setRefreshing] = useState(false);
 
   const editMaterialOptions = useMemo(() => {
     if (!editTxn) return materialTypes;
@@ -147,17 +198,24 @@ export function ProductionMaterialTrackingPage() {
     setSearchParams(sp);
     setExpandedEmployeeId(null);
     setHistory([]);
+    hasOverviewRef.current = false;
   };
 
   const refreshOverview = useCallback(async () => {
-    setLoading(true);
+    if (hasOverviewRef.current) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const data = await productionMaterialsApi.getOverview(section);
       setOverview(data);
+      hasOverviewRef.current = true;
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [section, toast]);
 
@@ -417,10 +475,16 @@ export function ProductionMaterialTrackingPage() {
 
       {sectionTotals.length > 0 ? (
         <Card className="p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-black/50">Section totals</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-black/50">Section totals</div>
+            {refreshing ? <div className="text-xs text-black/45">Updating totals…</div> : null}
+          </div>
           <div className="mt-2 flex flex-wrap gap-3">
             {sectionTotals.map((t) => (
-              <div key={`${t.material_type_id}-${t.material_name}`} className="rounded-xl border border-black/10 px-3 py-2 text-sm">
+              <div
+                key={t.material_type_id != null ? `id:${t.material_type_id}` : `name:${t.material_name}`}
+                className="rounded-xl border border-black/10 px-3 py-2 text-sm"
+              >
                 <span className="font-semibold">{t.material_name}</span>
                 <span className="text-black/60"> · {fmtQty(t.total_quantity)}</span>
                 {t.unit ? <span className="text-black/50"> {t.unit}</span> : null}
@@ -443,116 +507,198 @@ export function ProductionMaterialTrackingPage() {
               <thead className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
                 <tr>
                   <th className="px-4 py-3">Employee</th>
-                  {displayColumns.map((col) => (
-                    <th key={columnKey(col)} className="px-4 py-3 whitespace-nowrap">
-                      {col.material_name}
-                      {!col.is_selectable ? (
-                        <span className="ml-1 text-[10px] font-normal uppercase text-black/40">archived</span>
-                      ) : null}
-                    </th>
-                  ))}
+                  <th className="px-4 py-3">Material summary</th>
                   <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {employees.map((row) => (
-                  <Fragment key={row.contract_employee_id}>
-                    <tr className="border-b border-black/5 hover:bg-black/[0.02]">
-                      <td className="px-4 py-3 font-semibold">
-                        <button
-                          type="button"
-                          className="text-left underline-offset-2 hover:underline"
-                          onClick={() => toggleExpand(row.contract_employee_id)}
-                        >
-                          {row.full_name}
-                        </button>
-                      </td>
-                      {displayColumns.map((col) => (
-                        <td key={columnKey(col)} className="px-4 py-3 tabular-nums">
-                          {totalForColumn(row, col)}
+                {employees.map((row) => {
+                  const expanded = expandedEmployeeId === row.contract_employee_id;
+                  const overflowCount = employeeMaterialOverflowCount(row);
+                  return (
+                    <Fragment key={row.contract_employee_id}>
+                      <tr
+                        className={[
+                          "border-b border-black/5 transition-colors",
+                          expanded ? "bg-black/[0.03]" : "hover:bg-black/[0.02]"
+                        ].join(" ")}
+                      >
+                        <td className="px-4 py-3 font-semibold">
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            className="inline-flex items-center gap-2 text-left underline-offset-2 hover:underline"
+                            onClick={() => toggleExpand(row.contract_employee_id)}
+                          >
+                            <span
+                              className={[
+                                "inline-block text-xs text-black/45 transition-transform",
+                                expanded ? "rotate-0" : "-rotate-90"
+                              ].join(" ")}
+                              aria-hidden
+                            >
+                              ▾
+                            </span>
+                            {row.full_name}
+                          </button>
                         </td>
-                      ))}
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button className="min-h-9 px-3 py-1.5 text-xs" variant="secondary" onClick={() => openAllocModal(row)}>
-                            Add material
-                          </Button>
-                          <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => toggleExpand(row.contract_employee_id)}>
-                            {expandedEmployeeId === row.contract_employee_id ? "Hide history" : "History"}
-                          </Button>
-                          <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => setUnassignTarget(row)}>
-                            Remove
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                    {expandedEmployeeId === row.contract_employee_id ? (
-                      <tr className="bg-black/[0.02]">
-                        <td colSpan={displayColumns.length + 2} className="px-4 py-4">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-black/50">Material ledger</div>
-                          {historyLoading ? (
-                            <div className="mt-2 text-sm text-black/60">Loading history…</div>
-                          ) : history.length === 0 ? (
-                            <div className="mt-2 text-sm text-black/60">No material entries yet.</div>
-                          ) : (
-                            <div className="mt-3 overflow-x-auto">
-                              <table className="min-w-full text-sm">
-                                <thead>
-                                  <tr className="text-left text-xs uppercase tracking-wide text-black/50">
-                                    <th className="pb-2 pr-4">Date</th>
-                                    <th className="pb-2 pr-4">Material</th>
-                                    <th className="pb-2 pr-4">Qty</th>
-                                    <th className="pb-2 pr-4">Given by</th>
-                                    <th className="pb-2 pr-4">Status</th>
-                                    <th className="pb-2 pr-4">Notes</th>
-                                    <th className="pb-2">Actions</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {history.map((txn) => (
-                                    <tr key={txn.id} className="border-t border-black/5">
-                                      <td className="py-2 pr-4 whitespace-nowrap">{formatLagosDateTime(txn.transaction_at)}</td>
-                                      <td className="py-2 pr-4">{txn.material_name}</td>
-                                      <td className="py-2 pr-4 tabular-nums">
-                                        {txn.txn_type === "reversal" ? "-" : ""}
-                                        {fmtQty(txn.quantity)}
-                                        {txn.unit ? ` ${txn.unit}` : ""}
-                                      </td>
-                                      <td className="py-2 pr-4">{txn.given_by ?? "—"}</td>
-                                      <td className="py-2 pr-4">{statusLabel(txn.status, txn.txn_type)}</td>
-                                      <td className="py-2 pr-4 max-w-xs truncate">{txn.notes || "—"}</td>
-                                      <td className="py-2">
-                                        {txn.status === "active" && txn.txn_type === "allocation" ? (
-                                          <div className="flex flex-wrap gap-1">
-                                            <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => openEditModal(txn)}>
-                                              Edit
-                                            </Button>
-                                            <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => openReverseModal(txn)}>
-                                              Reverse
-                                            </Button>
-                                            <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => setVoidTxn(txn)}>
-                                              Void
-                                            </Button>
-                                          </div>
-                                        ) : txn.status === "active" && txn.txn_type === "reversal" ? (
-                                          <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => setVoidTxn(txn)}>
-                                            Void
-                                          </Button>
-                                        ) : (
-                                          <span className="text-black/40">—</span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            className="block w-full text-left text-black/75"
+                            onClick={() => toggleExpand(row.contract_employee_id)}
+                          >
+                            <span>{employeeMaterialSummary(row)}</span>
+                            {overflowCount > 0 ? (
+                              <span className="ml-1 text-xs font-semibold text-black/45">+{overflowCount} more</span>
+                            ) : null}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="secondary" onClick={() => openAllocModal(row)}>
+                              Add material
+                            </Button>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => toggleExpand(row.contract_employee_id)}>
+                              {expanded ? "Hide details" : "View details"}
+                            </Button>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => setUnassignTarget(row)}>
+                              Remove
+                            </Button>
+                          </div>
                         </td>
                       </tr>
-                    ) : null}
-                  </Fragment>
-                ))}
+                      {expanded ? (
+                        <tr className="border-b border-black/10 bg-black/[0.02]">
+                          <td colSpan={3} className="px-4 py-5">
+                            <div className="space-y-5">
+                              <div>
+                                <div className="text-xs font-semibold uppercase tracking-wide text-black/50">
+                                  Current material totals
+                                </div>
+                                {row.material_totals.length === 0 ? (
+                                  <div className="mt-2 text-sm text-black/60">No materials recorded yet.</div>
+                                ) : (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {row.material_totals.map((t) => (
+                                      <div
+                                        key={`${t.material_type_id ?? "name"}-${t.material_name}`}
+                                        className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                                      >
+                                        <span className="font-semibold">{t.material_name}</span>
+                                        <span className="text-black/60"> · {fmtQty(t.total_quantity)}</span>
+                                        {t.unit ? <span className="text-black/50"> {t.unit}</span> : null}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {displayColumns.length > 0 ? (
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-wide text-black/50">
+                                    Material breakdown
+                                  </div>
+                                  <div className="mt-3 overflow-x-auto rounded-xl border border-black/10 bg-white">
+                                    <table className="min-w-full text-sm">
+                                      <thead className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
+                                        <tr>
+                                          {displayColumns.map((col) => (
+                                            <th key={columnKey(col)} className="px-4 py-3 whitespace-nowrap">
+                                              {col.material_name}
+                                              {!col.is_selectable ? (
+                                                <span className="ml-1 text-[10px] font-normal uppercase text-black/40">archived</span>
+                                              ) : null}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        <tr>
+                                          {displayColumns.map((col) => (
+                                            <td key={columnKey(col)} className="px-4 py-3 tabular-nums">
+                                              {totalForColumn(row, col)}
+                                            </td>
+                                          ))}
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="text-xs font-semibold uppercase tracking-wide text-black/50">Material ledger</div>
+                                  {historyLoading ? <div className="text-xs text-black/45">Loading history…</div> : null}
+                                </div>
+                                {historyLoading ? (
+                                  <div className="mt-2 text-sm text-black/60">Loading transaction history…</div>
+                                ) : history.length === 0 ? (
+                                  <div className="mt-2 text-sm text-black/60">No material entries yet.</div>
+                                ) : (
+                                  <div className="mt-3 overflow-x-auto rounded-xl border border-black/10 bg-white">
+                                    <table className="min-w-full text-sm">
+                                      <thead>
+                                        <tr className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
+                                          <th className="px-4 py-3">Date</th>
+                                          <th className="px-4 py-3">Material</th>
+                                          <th className="px-4 py-3">Qty</th>
+                                          <th className="px-4 py-3">Given by</th>
+                                          <th className="px-4 py-3">Status</th>
+                                          <th className="px-4 py-3">Notes</th>
+                                          <th className="px-4 py-3">Actions</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {history.map((txn) => (
+                                          <tr key={txn.id} className="border-t border-black/5">
+                                            <td className="px-4 py-3 whitespace-nowrap">{formatLagosDateTime(txn.transaction_at)}</td>
+                                            <td className="px-4 py-3">{txn.material_name}</td>
+                                            <td className="px-4 py-3 tabular-nums">
+                                              {txn.txn_type === "reversal" ? "-" : ""}
+                                              {fmtQty(txn.quantity)}
+                                              {txn.unit ? ` ${txn.unit}` : ""}
+                                            </td>
+                                            <td className="px-4 py-3">{txn.given_by ?? "—"}</td>
+                                            <td className="px-4 py-3">{statusLabel(txn.status, txn.txn_type)}</td>
+                                            <td className="px-4 py-3 max-w-xs">{txn.notes || "—"}</td>
+                                            <td className="px-4 py-3">
+                                              {txn.status === "active" && txn.txn_type === "allocation" ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                  <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => openEditModal(txn)}>
+                                                    Edit
+                                                  </Button>
+                                                  <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => openReverseModal(txn)}>
+                                                    Reverse
+                                                  </Button>
+                                                  <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => setVoidTxn(txn)}>
+                                                    Void
+                                                  </Button>
+                                                </div>
+                                              ) : txn.status === "active" && txn.txn_type === "reversal" ? (
+                                                <Button className="min-h-8 px-2 py-1 text-xs" variant="ghost" onClick={() => setVoidTxn(txn)}>
+                                                  Void
+                                                </Button>
+                                              ) : (
+                                                <span className="text-black/40">—</span>
+                                              )}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
