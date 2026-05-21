@@ -16,6 +16,7 @@ import { TrashPage } from "./pages/TrashPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { InventoryMaterialDetailPage } from "./pages/InventoryMaterialDetailPage";
 import { EquipmentPage } from "./pages/EquipmentPage";
+import { ProductionMaterialTrackingPage } from "./pages/ProductionMaterialTrackingPage";
 import { ToolDetailPage } from "./pages/ToolDetailPage";
 import { MachineDetailPage } from "./pages/MachineDetailPage";
 import { AccountPage } from "./pages/AccountPage";
@@ -260,6 +261,14 @@ export default function App() {
           element={
             <RequireAuth roles={["admin", "factory"]}>
               <EquipmentPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="production/materials"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <ProductionMaterialTrackingPage />
             </RequireAuth>
           }
         />

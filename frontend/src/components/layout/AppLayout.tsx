@@ -97,6 +97,7 @@ const NAV_GROUPS: NavGroupModel[] = [
     label: "Production",
     items: [
       { key: "inventory", label: "Inventory", to: "/inventory", roles: ["admin", "factory"] },
+      { key: "production-materials", label: "Material Tracking", to: "/production/materials", roles: ["admin", "factory"] },
       { key: "equipment", label: "Equipment", to: "/equipment", roles: ["admin", "factory"] }
     ]
   },

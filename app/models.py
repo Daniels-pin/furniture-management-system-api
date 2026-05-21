@@ -955,3 +955,115 @@ class ExpenseEntry(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     processed_by_user = relationship("User", foreign_keys=[processed_by_id])
+
+
+# --- Production material tracking (contract employee raw materials) ---
+
+
+class ProductionMaterialType(Base):
+    """Reusable material names per production section."""
+
+    __tablename__ = "production_material_types"
+
+    id = Column(Integer, primary_key=True, index=True)
+    section = Column(String, nullable=False, index=True)  # painters_dept | mdf_section
+    name = Column(String, nullable=False)
+    default_unit = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    deleted_by_user = relationship("User", foreign_keys=[deleted_by_id])
+
+    __table_args__ = (
+        UniqueConstraint("section", "name", name="uq_production_material_types_section_name"),
+    )
+
+
+class ProductionMaterialSectionAssignment(Base):
+    """Contract employee assigned to a production material section."""
+
+    __tablename__ = "production_material_section_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    section = Column(String, nullable=False, index=True)
+    contract_employee_id = Column(
+        Integer, ForeignKey("contract_employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    removed_at = Column(DateTime, nullable=True, index=True)
+    removed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    contract_employee = relationship("ContractEmployee")
+    assigned_by_user = relationship("User", foreign_keys=[assigned_by_id])
+    removed_by_user = relationship("User", foreign_keys=[removed_by_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "section",
+            "contract_employee_id",
+            name="uq_production_material_section_assignments_section_employee",
+        ),
+    )
+
+
+class ProductionMaterialTransaction(Base):
+    """Append-only ledger for raw materials handed to contract employees."""
+
+    __tablename__ = "production_material_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    section = Column(String, nullable=False, index=True)
+    contract_employee_id = Column(
+        Integer, ForeignKey("contract_employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    material_type_id = Column(
+        Integer, ForeignKey("production_material_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    material_name = Column(String, nullable=False)
+    quantity = Column(Numeric(14, 4), nullable=False)
+    unit = Column(String, nullable=True)
+    txn_type = Column(String, nullable=False, default="allocation")  # allocation | reversal
+    notes = Column(String, nullable=True)
+    given_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    transaction_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    reversal_of_id = Column(
+        Integer,
+        ForeignKey("production_material_transactions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    supersedes_id = Column(
+        Integer,
+        ForeignKey("production_material_transactions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    superseded_at = Column(DateTime, nullable=True, index=True)
+    superseded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String(4000), nullable=True)
+
+    contract_employee = relationship("ContractEmployee")
+    material_type = relationship("ProductionMaterialType")
+    given_by_user = relationship("User", foreign_keys=[given_by_user_id])
+    superseded_by_user = relationship("User", foreign_keys=[superseded_by_id])
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+    reversal_of = relationship(
+        "ProductionMaterialTransaction",
+        remote_side=[id],
+        foreign_keys=[reversal_of_id],
+    )
+    supersedes = relationship(
+        "ProductionMaterialTransaction",
+        remote_side=[id],
+        foreign_keys=[supersedes_id],
+    )

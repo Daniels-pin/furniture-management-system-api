@@ -38,4 +38,7 @@ from app.models import (
     FinancialAuditLog,
     ExpenseEntry,
     CompanyLocation,
+    ProductionMaterialType,
+    ProductionMaterialSectionAssignment,
+    ProductionMaterialTransaction,
 )

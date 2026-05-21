@@ -71,7 +71,13 @@ import type {
   NotificationsPage,
   ExpenseEntriesPage,
   CompanyLocation,
-  EmployeeLocationAssignmentItem
+  EmployeeLocationAssignmentItem,
+  ProductionMaterialSection,
+  ProductionMaterialSectionOverview,
+  ProductionMaterialType,
+  ProductionMaterialTransaction,
+  ProductionMaterialContractEmployeeOption,
+  ProductionMaterialSectionOption
 } from "../types/api";
 
 export const authApi = {
@@ -1414,6 +1420,113 @@ export const expensesApi = {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+};
+
+export const productionMaterialsApi = {
+  async listSections() {
+    const { data } = await api.get<ProductionMaterialSectionOption[]>("/production-materials/sections");
+    return data;
+  },
+  async getOverview(section: ProductionMaterialSection) {
+    const { data } = await api.get<ProductionMaterialSectionOverview>(`/production-materials/sections/${section}/overview`);
+    return data;
+  },
+  async listMaterialTypes(section: ProductionMaterialSection, params?: { include_inactive?: boolean }) {
+    const { data } = await api.get<ProductionMaterialType[]>(`/production-materials/sections/${section}/material-types`, {
+      params
+    });
+    return data;
+  },
+  async createMaterialType(section: ProductionMaterialSection, body: { name: string; default_unit?: string | null }) {
+    const { data } = await api.post<ProductionMaterialType>(`/production-materials/sections/${section}/material-types`, body);
+    return data;
+  },
+  async updateMaterialType(
+    materialTypeId: number,
+    body: { name?: string; default_unit?: string | null; is_active?: boolean }
+  ) {
+    const { data } = await api.put<ProductionMaterialType>(`/production-materials/material-types/${materialTypeId}`, body);
+    return data;
+  },
+  async deleteMaterialType(materialTypeId: number) {
+    const { data } = await api.delete<ProductionMaterialType>(`/production-materials/material-types/${materialTypeId}`);
+    return data;
+  },
+  async listContractEmployeeOptions(section: ProductionMaterialSection, params?: { search?: string }) {
+    const { data } = await api.get<ProductionMaterialContractEmployeeOption[]>(
+      `/production-materials/sections/${section}/contract-employees`,
+      { params }
+    );
+    return data;
+  },
+  async assignEmployee(section: ProductionMaterialSection, body: { contract_employee_id: number }) {
+    const { data } = await api.post(`/production-materials/sections/${section}/assignments`, body);
+    return data;
+  },
+  async unassignEmployee(section: ProductionMaterialSection, assignmentId: number) {
+    const { data } = await api.delete<{ ok: boolean }>(
+      `/production-materials/sections/${section}/assignments/${assignmentId}`
+    );
+    return data;
+  },
+  async listEmployeeTransactions(
+    section: ProductionMaterialSection,
+    contractEmployeeId: number,
+    params?: { include_inactive?: boolean }
+  ) {
+    const { data } = await api.get<ProductionMaterialTransaction[]>(
+      `/production-materials/sections/${section}/employees/${contractEmployeeId}/transactions`,
+      { params }
+    );
+    return data;
+  },
+  async createAllocation(
+    section: ProductionMaterialSection,
+    contractEmployeeId: number,
+    body: {
+      material_type_id: number;
+      quantity: string | number;
+      unit?: string | null;
+      transaction_at: string;
+      notes?: string | null;
+    }
+  ) {
+    const { data } = await api.post<ProductionMaterialTransaction>(
+      `/production-materials/sections/${section}/employees/${contractEmployeeId}/transactions`,
+      body
+    );
+    return data;
+  },
+  async updateTransaction(
+    transactionId: number,
+    body: {
+      material_type_id?: number;
+      quantity?: string | number;
+      unit?: string | null;
+      transaction_at?: string;
+      notes?: string | null;
+    }
+  ) {
+    const { data } = await api.put<ProductionMaterialTransaction>(`/production-materials/transactions/${transactionId}`, body);
+    return data;
+  },
+  async reverseTransaction(
+    transactionId: number,
+    body?: { quantity?: string | number; notes?: string | null; transaction_at?: string }
+  ) {
+    const { data } = await api.post<ProductionMaterialTransaction>(
+      `/production-materials/transactions/${transactionId}/reverse`,
+      body ?? {}
+    );
+    return data;
+  },
+  async voidTransaction(transactionId: number, body?: { reason?: string | null }) {
+    const { data } = await api.post<ProductionMaterialTransaction>(
+      `/production-materials/transactions/${transactionId}/void`,
+      body ?? {}
+    );
+    return data;
   }
 };
 

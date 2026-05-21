@@ -928,3 +928,81 @@ export type ExpenseSummary = {
   today_total: string | number;
 };
 
+// --- Production material tracking ---
+
+export type ProductionMaterialSection = "painters_dept" | "mdf_section";
+export type ProductionMaterialTxnType = "allocation" | "reversal";
+export type ProductionMaterialTxnStatus = "active" | "voided" | "superseded";
+
+export type ProductionMaterialType = {
+  id: number;
+  section: ProductionMaterialSection;
+  name: string;
+  default_unit?: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ProductionMaterialTotal = {
+  material_type_id?: number | null;
+  material_name: string;
+  unit?: string | null;
+  total_quantity: string | number;
+};
+
+export type ProductionMaterialDisplayColumn = {
+  material_type_id?: number | null;
+  material_name: string;
+  unit?: string | null;
+  is_selectable: boolean;
+};
+
+export type ProductionMaterialEmployeeRow = {
+  assignment_id: number;
+  contract_employee_id: number;
+  full_name: string;
+  material_totals: ProductionMaterialTotal[];
+};
+
+export type ProductionMaterialSectionOverview = {
+  section: ProductionMaterialSection;
+  section_label: string;
+  material_types: ProductionMaterialType[];
+  display_columns: ProductionMaterialDisplayColumn[];
+  employees: ProductionMaterialEmployeeRow[];
+  section_totals: ProductionMaterialTotal[];
+};
+
+export type ProductionMaterialTransaction = {
+  id: number;
+  section: ProductionMaterialSection;
+  contract_employee_id: number;
+  material_type_id?: number | null;
+  material_name: string;
+  quantity: string | number;
+  unit?: string | null;
+  txn_type: ProductionMaterialTxnType;
+  notes?: string | null;
+  given_by?: string | null;
+  transaction_at: string;
+  created_at: string;
+  status: ProductionMaterialTxnStatus;
+  effective_quantity: string | number;
+  reversal_of_id?: number | null;
+  supersedes_id?: number | null;
+  superseded_by_id?: number | null;
+  void_reason?: string | null;
+};
+
+export type ProductionMaterialContractEmployeeOption = {
+  id: number;
+  full_name: string;
+  status: string;
+  assigned_to_section: boolean;
+};
+
+export type ProductionMaterialSectionOption = {
+  key: ProductionMaterialSection;
+  label: string;
+};
+

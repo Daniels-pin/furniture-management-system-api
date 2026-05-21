@@ -2011,3 +2011,149 @@ class ExpenseEntriesPageOut(BaseModel):
     total: int = 0
     limit: int = 20
     offset: int = 0
+
+
+# --- Production material tracking ---
+
+
+ProductionMaterialSection = Literal["painters_dept", "mdf_section"]
+ProductionMaterialTxnType = Literal["allocation", "reversal"]
+ProductionMaterialTxnStatus = Literal["active", "voided", "superseded"]
+
+
+class ProductionMaterialTypeCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    default_unit: Optional[str] = Field(None, max_length=50)
+
+
+class ProductionMaterialTypeUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    default_unit: Optional[str] = Field(None, max_length=50)
+    is_active: Optional[bool] = None
+
+
+class ProductionMaterialTypeOut(BaseModel):
+    id: int
+    section: ProductionMaterialSection
+    name: str
+    default_unit: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
+
+class ProductionMaterialAssignmentCreate(BaseModel):
+    contract_employee_id: int = Field(..., gt=0)
+
+
+class ProductionMaterialAssignmentOut(BaseModel):
+    id: int
+    section: ProductionMaterialSection
+    contract_employee_id: int
+    full_name: str
+    assigned_at: datetime
+    assigned_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("assigned_at")
+    def _ser_assigned_at(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
+
+class ProductionMaterialTotalOut(BaseModel):
+    material_type_id: Optional[int] = None
+    material_name: str
+    unit: Optional[str] = None
+    total_quantity: Decimal
+
+
+class ProductionMaterialDisplayColumnOut(BaseModel):
+    material_type_id: Optional[int] = None
+    material_name: str
+    unit: Optional[str] = None
+    is_selectable: bool = True
+
+
+class ProductionMaterialEmployeeRowOut(BaseModel):
+    assignment_id: int
+    contract_employee_id: int
+    full_name: str
+    material_totals: List[ProductionMaterialTotalOut]
+
+
+class ProductionMaterialSectionOverviewOut(BaseModel):
+    section: ProductionMaterialSection
+    section_label: str
+    material_types: List[ProductionMaterialTypeOut]
+    display_columns: List[ProductionMaterialDisplayColumnOut]
+    employees: List[ProductionMaterialEmployeeRowOut]
+    section_totals: List[ProductionMaterialTotalOut]
+
+
+class ProductionMaterialTransactionCreate(BaseModel):
+    material_type_id: int = Field(..., gt=0)
+    quantity: Decimal = Field(..., gt=0)
+    unit: Optional[str] = Field(None, max_length=50)
+    transaction_at: datetime
+    notes: Optional[str] = Field(None, max_length=4000)
+
+
+class ProductionMaterialTransactionUpdate(BaseModel):
+    material_type_id: Optional[int] = Field(None, gt=0)
+    quantity: Optional[Decimal] = Field(None, gt=0)
+    unit: Optional[str] = Field(None, max_length=50)
+    transaction_at: Optional[datetime] = None
+    notes: Optional[str] = Field(None, max_length=4000)
+
+
+class ProductionMaterialTransactionReverse(BaseModel):
+    quantity: Optional[Decimal] = Field(None, gt=0)
+    notes: Optional[str] = Field(None, max_length=4000)
+    transaction_at: Optional[datetime] = None
+
+
+class ProductionMaterialTransactionVoid(BaseModel):
+    reason: Optional[str] = Field(None, max_length=4000)
+
+
+class ProductionMaterialTransactionOut(BaseModel):
+    id: int
+    section: ProductionMaterialSection
+    contract_employee_id: int
+    material_type_id: Optional[int] = None
+    material_name: str
+    quantity: Decimal
+    unit: Optional[str] = None
+    txn_type: ProductionMaterialTxnType
+    notes: Optional[str] = None
+    given_by: Optional[str] = None
+    transaction_at: datetime
+    created_at: datetime
+    status: ProductionMaterialTxnStatus
+    effective_quantity: Decimal
+    reversal_of_id: Optional[int] = None
+    supersedes_id: Optional[int] = None
+    superseded_by_id: Optional[int] = None
+    void_reason: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("transaction_at", "created_at")
+    def _ser_dt(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
+
+class ProductionMaterialContractEmployeeOption(BaseModel):
+    id: int
+    full_name: str
+    status: str
+    assigned_to_section: bool = False
