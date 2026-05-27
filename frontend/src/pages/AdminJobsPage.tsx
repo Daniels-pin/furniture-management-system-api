@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { Modal } from "../components/ui/Modal";
 import { Input } from "../components/ui/Input";
 import { contractEmployeesApi, contractJobsApi, notificationsApi } from "../services/endpoints";
@@ -220,15 +221,85 @@ function getRowVisual(j: ContractJob) {
   return { row: "hover:bg-black/[0.02]", negotiatingBadge: false };
 }
 
+function getAdminNegotiationPermissions(job: ContractJob) {
+  const isLocked = Boolean(job.price_accepted_at) || job.final_price != null;
+  const adminAccepted = Boolean(job.admin_accepted_at);
+  const needsBoth = Boolean(job.negotiation_occurred);
+  const lastBy = job.last_offer_by_role ?? null;
+  const canAdminAccept =
+    !isLocked &&
+    job.status === "pending" &&
+    job.price_offer != null &&
+    (needsBoth ? !adminAccepted : lastBy === "contract_employee" && !adminAccepted);
+  const canRenegotiate = !isLocked && job.status !== "cancelled";
+  return { canAdminAccept, canRenegotiate };
+}
+
+function AdminJobQuickActions({
+  job,
+  onView,
+  onAcceptOffer,
+  onRenegotiate,
+  onCancel,
+  layout
+}: {
+  job: ContractJob;
+  onView(): void;
+  onAcceptOffer(): void;
+  onRenegotiate(): void;
+  onCancel(): void;
+  layout: "card" | "row";
+}) {
+  const { canAdminAccept, canRenegotiate } = getAdminNegotiationPermissions(job);
+  const stop = (e: MouseEvent, fn: () => void) => {
+    e.stopPropagation();
+    fn();
+  };
+  const btnClass = layout === "card" ? "min-w-[calc(50%-0.25rem)] flex-1" : undefined;
+
+  return (
+    <div className={layout === "card" ? "mt-4 flex flex-wrap gap-2" : "inline-flex max-w-full flex-wrap justify-end gap-2"}>
+      <Button variant="secondary" className={btnClass} onClick={(e) => stop(e, onView)}>
+        View
+      </Button>
+      {canAdminAccept ? (
+        <Button className={btnClass} onClick={(e) => stop(e, onAcceptOffer)}>
+          Accept Offer
+        </Button>
+      ) : null}
+      {canRenegotiate ? (
+        <Button variant="secondary" className={btnClass} onClick={(e) => stop(e, onRenegotiate)}>
+          Renegotiate
+        </Button>
+      ) : null}
+      {job.status !== "cancelled" ? (
+        <Button variant="danger" className={btnClass} onClick={(e) => stop(e, onCancel)}>
+          Cancel
+        </Button>
+      ) : layout === "card" ? (
+        <div className="flex min-h-11 min-w-[calc(50%-0.25rem)] flex-1 items-center justify-center rounded-xl border border-black/10 bg-black/[0.02] text-xs font-semibold text-black/45">
+          Cancelled
+        </div>
+      ) : (
+        <span className="text-xs font-semibold text-black/45">—</span>
+      )}
+    </div>
+  );
+}
+
 function AdminJobCard({
   job,
   onOpen,
+  onAcceptOffer,
+  onRenegotiate,
   onCancel,
   alertLabel,
   rowClass
 }: {
   job: ContractJob;
   onOpen(): void;
+  onAcceptOffer(): void;
+  onRenegotiate(): void;
   onCancel(): void;
   alertLabel: string | null;
   rowClass?: string;
@@ -239,67 +310,53 @@ function AdminJobCard({
   const ui = getNegotiationUi(job);
   const showNegotiation = !isLocked && Boolean(job.price_offer != null) && needsBoth;
   return (
-    <button
-      type="button"
+    <div
       className={[
         "w-full rounded-2xl border border-black/10 bg-white p-4 text-left shadow-soft transition",
-        "active:scale-[0.99]",
         rowClass ?? vis.row
       ].join(" ")}
-      onClick={onOpen}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-bold">Job #{job.id}</div>
-            <JobStatusBadge status={job.status} />
-            <PaidFlagBadge paid={Boolean(job.paid_flag)} />
-            <NegotiationBadge state={showNegotiation || vis.negotiatingBadge ? ui.state : "none"} />
-            <AcceptanceIndicator label={ui.acceptanceLabel} />
-            <JobAlertBadge label={alertLabel} />
-            <JobAttachmentBadge show={jobHasAttachment(job)} />
+      <button type="button" className="w-full text-left active:scale-[0.99]" onClick={onOpen}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-bold">Job #{job.id}</div>
+              <JobStatusBadge status={job.status} />
+              <PaidFlagBadge paid={Boolean(job.paid_flag)} />
+              <NegotiationBadge state={showNegotiation || vis.negotiatingBadge ? ui.state : "none"} />
+              <AcceptanceIndicator label={ui.acceptanceLabel} />
+              <JobAlertBadge label={alertLabel} />
+              <JobAttachmentBadge show={jobHasAttachment(job)} />
+            </div>
+            <div className="mt-1 text-xs font-semibold text-black/60">
+              {job.contract_employee_name || `Employee #${job.contract_employee_id}`}
+            </div>
           </div>
-          <div className="mt-1 text-xs font-semibold text-black/60">
-            {job.contract_employee_name || `Employee #${job.contract_employee_id}`}
+          <div className="shrink-0 text-right">
+            <div className="text-xs font-semibold text-black/50">Price</div>
+            <div className="text-sm font-bold tabular-nums">
+              {job.final_price != null ? formatMoney(job.final_price) : job.price_offer != null ? formatMoney(job.price_offer) : "—"}
+            </div>
+            {job.final_price == null && job.price_offer != null && ui.lastPriceByLabel ? (
+              <div className="mt-0.5 text-[11px] font-semibold text-black/50">Last updated by {ui.lastPriceByLabel}</div>
+            ) : null}
           </div>
         </div>
-        <div className="shrink-0 text-right">
-          <div className="text-xs font-semibold text-black/50">Price</div>
-          <div className="text-sm font-bold tabular-nums">
-            {job.final_price != null ? formatMoney(job.final_price) : job.price_offer != null ? formatMoney(job.price_offer) : "—"}
-          </div>
-          {job.final_price == null && job.price_offer != null && ui.lastPriceByLabel ? (
-            <div className="mt-0.5 text-[11px] font-semibold text-black/50">Last updated by {ui.lastPriceByLabel}</div>
-          ) : null}
+
+        <div className="mt-3 text-sm text-black/70">
+          <div className="line-clamp-3">{(job.description || "").trim() || "—"}</div>
         </div>
-      </div>
+      </button>
 
-      <div className="mt-3 text-sm text-black/70">
-        <div className="line-clamp-3">{(job.description || "").trim() || "—"}</div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <Button variant="secondary" className="w-full" onClick={(e) => (e.stopPropagation(), onOpen())}>
-          View
-        </Button>
-        {job.status !== "cancelled" ? (
-          <Button
-            variant="danger"
-            className="w-full"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCancel();
-            }}
-          >
-            Cancel
-          </Button>
-        ) : (
-          <div className="flex min-h-11 items-center justify-center rounded-xl border border-black/10 bg-black/[0.02] text-xs font-semibold text-black/45">
-            Cancelled
-          </div>
-        )}
-      </div>
-    </button>
+      <AdminJobQuickActions
+        job={job}
+        layout="card"
+        onView={onOpen}
+        onAcceptOffer={onAcceptOffer}
+        onRenegotiate={onRenegotiate}
+        onCancel={onCancel}
+      />
+    </div>
   );
 }
 
@@ -327,6 +384,14 @@ export function AdminJobsPage() {
   const [cancelTarget, setCancelTarget] = useState<ContractJob | null>(null);
   const [cancelNote, setCancelNote] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [acceptConfirmOpen, setAcceptConfirmOpen] = useState(false);
+  const [acceptTarget, setAcceptTarget] = useState<ContractJob | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  const [renegotiateOpen, setRenegotiateOpen] = useState(false);
+  const [renegotiateTarget, setRenegotiateTarget] = useState<ContractJob | null>(null);
+  const [renegotiatePrice, setRenegotiatePrice] = useState("");
+  const [renegotiateNote, setRenegotiateNote] = useState("");
+  const [renegotiating, setRenegotiating] = useState(false);
   const [expandedEmp, setExpandedEmp] = useState<Record<string, boolean>>({});
   const [jobSearchQuery, setJobSearchQuery] = useState("");
 
@@ -373,6 +438,54 @@ export function AdminJobsPage() {
     setSummary(s);
     setJobs(Array.isArray(j) ? j : []);
     setUnreadNotifs(Array.isArray(n?.items) ? (n.items as NotificationItem[]) : []);
+  }
+
+  function updateJobInList(updated: ContractJob) {
+    setJobs((prev) => prev.map((j) => (Number(j.id) === Number(updated.id) ? updated : j)));
+  }
+
+  async function syncAfterNegotiation(updatedJob: ContractJob) {
+    updateJobInList(updatedJob);
+    setJobAttentionSnapshots((prev) => {
+      if (!prev[updatedJob.id]) return prev;
+      const next = { ...prev };
+      delete next[updatedJob.id];
+      return next;
+    });
+    try {
+      await notificationsApi.markContractJobRead(updatedJob.id);
+    } catch {
+      // ignore (non-critical)
+    }
+    try {
+      const [s, n] = await Promise.all([
+        contractJobsApi.summaryAdmin(),
+        notificationsApi.my({ unread_only: true, limit: 200 })
+      ]);
+      setSummary(s);
+      setUnreadNotifs(Array.isArray(n?.items) ? (n.items as NotificationItem[]) : []);
+      window.dispatchEvent(new Event("furniture:notifications-updated"));
+    } catch {
+      // ignore (non-critical)
+    }
+  }
+
+  function openAcceptConfirm(job: ContractJob) {
+    setAcceptTarget(job);
+    setAcceptConfirmOpen(true);
+  }
+
+  function openRenegotiate(job: ContractJob) {
+    setRenegotiateTarget(job);
+    setRenegotiatePrice("");
+    setRenegotiateNote("");
+    setRenegotiateOpen(true);
+  }
+
+  function openCancel(job: ContractJob) {
+    setCancelTarget(job);
+    setCancelNote("");
+    setCancelOpen(true);
   }
 
   useEffect(() => {
@@ -714,11 +827,9 @@ export function AdminJobsPage() {
                               alertLabel={jobAlertLabel(j.id)}
                               rowClass={rowClass}
                               onOpen={() => openJob(j.id)}
-                              onCancel={() => {
-                                setCancelTarget(j);
-                                setCancelNote("");
-                                setCancelOpen(true);
-                              }}
+                              onAcceptOffer={() => openAcceptConfirm(j)}
+                              onRenegotiate={() => openRenegotiate(j)}
+                              onCancel={() => openCancel(j)}
                             />
                           );
                         })}
@@ -731,7 +842,7 @@ export function AdminJobsPage() {
 
             {/* Desktop: grouped by employee */}
             <div className="hidden overflow-x-touch md:block">
-              <table className="w-full min-w-[980px] text-left text-sm">
+              <table className="w-full min-w-[1100px] text-left text-sm">
                 <thead className="bg-black/[0.02] text-xs font-semibold text-black/60">
                   <tr>
                     <th className="px-4 py-3">Job</th>
@@ -829,23 +940,14 @@ export function AdminJobsPage() {
                                     <PaidFlagBadge paid={Boolean(j.paid_flag)} />
                                   </td>
                                   <td className="px-4 py-3 text-right">
-                                    <div className="inline-flex justify-end gap-2">
-                                      {j.status !== "cancelled" ? (
-                                        <Button
-                                          variant="danger"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setCancelTarget(j);
-                                            setCancelNote("");
-                                            setCancelOpen(true);
-                                          }}
-                                        >
-                                          Cancel
-                                        </Button>
-                                      ) : (
-                                        <span className="text-xs font-semibold text-black/45">—</span>
-                                      )}
-                                    </div>
+                                    <AdminJobQuickActions
+                                      job={j}
+                                      layout="row"
+                                      onView={() => openJob(j.id)}
+                                      onAcceptOffer={() => openAcceptConfirm(j)}
+                                      onRenegotiate={() => openRenegotiate(j)}
+                                      onCancel={() => openCancel(j)}
+                                    />
                                   </td>
                                 </tr>
                               );
@@ -994,6 +1096,87 @@ export function AdminJobsPage() {
               }}
             >
               Assign
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={acceptConfirmOpen}
+        title={acceptTarget ? `Accept offer (Job #${acceptTarget.id})` : "Accept offer"}
+        message={
+          acceptTarget?.price_offer != null
+            ? `Accept the current offer of ${formatMoney(acceptTarget.price_offer)} for Job #${acceptTarget.id}? The employee will be notified.`
+            : "Accept the current offer for this job? The employee will be notified."
+        }
+        confirmLabel="Accept offer"
+        confirmVariant="primary"
+        busy={accepting}
+        onClose={() => (accepting ? null : setAcceptConfirmOpen(false))}
+        onConfirm={() => {
+          if (!acceptTarget) return;
+          setAccepting(true);
+          void contractJobsApi
+            .adminAcceptOffer(acceptTarget.id)
+            .then((updated) => syncAfterNegotiation(updated))
+            .then(() => toast.push("success", "Offer accepted."))
+            .then(() => setAcceptConfirmOpen(false))
+            .catch((e) => toast.push("error", getErrorMessage(e)))
+            .finally(() => setAccepting(false));
+        }}
+      />
+
+      <Modal
+        open={renegotiateOpen}
+        title={renegotiateTarget ? `Renegotiate price (Job #${renegotiateTarget.id})` : "Renegotiate price"}
+        onClose={() => (renegotiating ? null : setRenegotiateOpen(false))}
+      >
+        <div className="space-y-3">
+          <div className="text-sm text-black/70">Enter a new offer price. Optional notes are logged in negotiation history.</div>
+          <Input
+            label="New offer (NGN)"
+            value={renegotiatePrice}
+            onChange={(e) => setRenegotiatePrice(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+          />
+          <Input
+            label="Note (optional)"
+            value={renegotiateNote}
+            onChange={(e) => setRenegotiateNote(e.target.value)}
+            placeholder="Add a short note (optional)…"
+          />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" disabled={renegotiating} onClick={() => setRenegotiateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={renegotiating}
+              onClick={() => {
+                if (!renegotiateTarget) return;
+                if (renegotiatePrice.trim() && !isValidThousandsCommaNumber(renegotiatePrice)) {
+                  toast.push("error", "Fix comma formatting in amount.");
+                  return;
+                }
+                const amt = parseMoneyInput(renegotiatePrice);
+                if (amt === null || Number.isNaN(amt) || amt <= 0) {
+                  toast.push("error", "Enter a valid amount (> 0).");
+                  return;
+                }
+                setRenegotiating(true);
+                void contractJobsApi
+                  .adminSetOffer(renegotiateTarget.id, {
+                    price_offer: amt,
+                    note: renegotiateNote.trim() ? renegotiateNote.trim() : undefined
+                  })
+                  .then((updated) => syncAfterNegotiation(updated))
+                  .then(() => toast.push("success", "Offer updated."))
+                  .then(() => setRenegotiateOpen(false))
+                  .catch((e) => toast.push("error", getErrorMessage(e)))
+                  .finally(() => setRenegotiating(false));
+              }}
+            >
+              Submit
             </Button>
           </div>
         </div>

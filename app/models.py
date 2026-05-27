@@ -442,6 +442,7 @@ class CompanyLocation(Base):
     longitude = Column(Float, nullable=False)
     allowed_radius_meters = Column(Integer, nullable=False, default=0, server_default="0")
     late_attendance_time = Column(Time, nullable=False, server_default="08:15:00")
+    check_out_time = Column(Time, nullable=False, server_default="17:00:00")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -609,7 +610,7 @@ class EmployeeAbsenceEntry(Base):
 
 
 class EmployeeAttendanceEntry(Base):
-    """Monthly employee attendance (manual clock-in; one row per employee per date; Sundays excluded by API rules)."""
+    """Monthly employee attendance (check-in/check-out; one row per employee per date; Sundays excluded by API rules)."""
 
     __tablename__ = "employee_attendance_entries"
 
@@ -619,14 +620,22 @@ class EmployeeAttendanceEntry(Base):
 
     attendance_date = Column(Date, nullable=False, index=True)
     check_in_at = Column(DateTime, nullable=False, index=True)
+    check_out_at = Column(DateTime, nullable=True, index=True)
     is_late = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
     late_minutes = Column(Integer, nullable=True)
+    is_early_check_out = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    early_check_out_minutes = Column(Integer, nullable=True)
+    expected_check_out_time = Column(Time, nullable=True)
 
     # Geo-attendance snapshot captured at clock-in (no manual entry).
     work_location_id = Column(Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True, index=True)
     employee_latitude = Column(Float, nullable=True)
     employee_longitude = Column(Float, nullable=True)
     distance_meters = Column(Float, nullable=True)
+    # Geo snapshot captured at clock-out.
+    check_out_latitude = Column(Float, nullable=True)
+    check_out_longitude = Column(Float, nullable=True)
+    check_out_distance_meters = Column(Float, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 

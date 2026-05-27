@@ -403,8 +403,13 @@ export function FinanceDashboardPage() {
           attendance={monthlyAttendance.attendance}
           attBusy={monthlyAttendance.attBusy}
           clockRes={monthlyAttendance.clockRes}
+          clockOutRes={monthlyAttendance.clockOutRes}
           todayEntry={monthlyAttendance.todayEntry}
+          checkInAllowed={monthlyAttendance.checkInAllowed}
+          checkOutAllowed={monthlyAttendance.checkOutAllowed}
+          dayCompleted={monthlyAttendance.dayCompleted}
           onMarkAttendance={monthlyAttendance.markAttendance}
+          onSignOutAttendance={monthlyAttendance.signOutAttendance}
           resultFeedback={monthlyAttendance.resultFeedback}
           onDismissResultFeedback={monthlyAttendance.dismissResultFeedback}
           showHistory

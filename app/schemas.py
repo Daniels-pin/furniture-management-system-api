@@ -1032,31 +1032,36 @@ class CompanyLocationOut(BaseModel):
     longitude: float
     allowed_radius_meters: int
     late_attendance_time: time
+    check_out_time: time
     created_at: datetime
 
-    @field_serializer("late_attendance_time")
+    @field_serializer("late_attendance_time", "check_out_time")
     @classmethod
-    def _serialize_late_time(cls, v: time) -> str:
+    def _serialize_location_time(cls, v: time) -> str:
         return v.strftime("%H:%M")
 
     class Config:
         from_attributes = True
 
 
-def _parse_late_attendance_time(v: object) -> object:
+def _parse_attendance_time(v: object) -> object:
     if v is None or isinstance(v, time):
         return v
     s = str(v).strip()
     if not s:
-        raise ValueError("Invalid late attendance time")
+        raise ValueError("Invalid attendance time")
     parts = s.split(":")
     if len(parts) < 2:
-        raise ValueError("Invalid late attendance time")
+        raise ValueError("Invalid attendance time")
     hour = int(parts[0])
     minute = int(parts[1])
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        raise ValueError("Invalid late attendance time")
+        raise ValueError("Invalid attendance time")
     return time(hour, minute)
+
+
+def _parse_late_attendance_time(v: object) -> object:
+    return _parse_attendance_time(v)
 
 
 class CompanyLocationCreate(BaseModel):
@@ -1065,6 +1070,7 @@ class CompanyLocationCreate(BaseModel):
     longitude: float
     allowed_radius_meters: int = Field(..., ge=1, le=200_000)
     late_attendance_time: time = Field(default=time(8, 15))
+    check_out_time: time = Field(default=time(17, 0))
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1073,10 +1079,10 @@ class CompanyLocationCreate(BaseModel):
             return v
         return str(v).strip()
 
-    @field_validator("late_attendance_time", mode="before")
+    @field_validator("late_attendance_time", "check_out_time", mode="before")
     @classmethod
-    def _parse_late_time_create(cls, v: object) -> object:
-        return _parse_late_attendance_time(v)
+    def _parse_location_time_create(cls, v: object) -> object:
+        return _parse_attendance_time(v)
 
 
 class CompanyLocationUpdate(BaseModel):
@@ -1085,6 +1091,7 @@ class CompanyLocationUpdate(BaseModel):
     longitude: Optional[float] = None
     allowed_radius_meters: Optional[int] = Field(None, ge=1, le=200_000)
     late_attendance_time: Optional[time] = None
+    check_out_time: Optional[time] = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1094,12 +1101,12 @@ class CompanyLocationUpdate(BaseModel):
         s = str(v).strip()
         return s or None
 
-    @field_validator("late_attendance_time", mode="before")
+    @field_validator("late_attendance_time", "check_out_time", mode="before")
     @classmethod
-    def _parse_late_time_update(cls, v: object) -> object:
+    def _parse_location_time_update(cls, v: object) -> object:
         if v is None:
             return None
-        return _parse_late_attendance_time(v)
+        return _parse_attendance_time(v)
 
 
 class EmployeeAttendanceEntryOut(BaseModel):
@@ -1108,35 +1115,60 @@ class EmployeeAttendanceEntryOut(BaseModel):
     period_id: int
     attendance_date: date
     check_in_at: datetime
+    check_out_at: Optional[datetime] = None
     is_late: bool = False
     late_minutes: Optional[int] = None
+    is_early_check_out: bool = False
+    early_check_out_minutes: Optional[int] = None
+    expected_check_out_time: Optional[time] = None
     lateness_entry_id: Optional[int] = None
     work_location_id: Optional[int] = None
     employee_latitude: Optional[float] = None
     employee_longitude: Optional[float] = None
     distance_meters: Optional[float] = None
+    check_out_latitude: Optional[float] = None
+    check_out_longitude: Optional[float] = None
+    check_out_distance_meters: Optional[float] = None
     work_location: Optional[CompanyLocationOut] = None
 
-    @field_serializer("check_in_at")
-    def _serialize_check_in_at(self, v: datetime) -> datetime:
-        return datetime_for_api(v)
+    @field_serializer("check_in_at", "check_out_at")
+    def _serialize_attendance_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
+
+    @field_serializer("expected_check_out_time")
+    def _serialize_expected_check_out_time(self, v: Optional[time]) -> Optional[str]:
+        return v.strftime("%H:%M") if v is not None else None
 
     class Config:
         from_attributes = True
 
 
 class EmployeeAttendanceHistoryOut(BaseModel):
-    """Unified attendance history row: present, late, or absent (with deduction)."""
+    """Unified attendance history row: present, late, absent, incomplete, or checked in (today)."""
 
     id: int
     record_type: Literal["attendance", "absence"]
     employee_id: int
     period_id: int
     attendance_date: date
-    status: Literal["present", "late", "absent"]
+    status: Literal[
+        "present",
+        "late",
+        "absent",
+        "incomplete_day",
+        "checked_in",
+        "early_check_out",
+        "late_early_check_out",
+        "short_session",
+    ]
     check_in_at: Optional[datetime] = None
+    check_out_at: Optional[datetime] = None
     is_late: bool = False
     late_minutes: Optional[int] = None
+    is_early_check_out: bool = False
+    early_check_out_minutes: Optional[int] = None
+    expected_check_out_time: Optional[time] = None
+    attendance_duration_minutes: Optional[int] = None
     deduction_naira: Decimal = Decimal("0")
     lateness_entry_id: Optional[int] = None
     absence_entry_id: Optional[int] = None
@@ -1144,15 +1176,28 @@ class EmployeeAttendanceHistoryOut(BaseModel):
     employee_latitude: Optional[float] = None
     employee_longitude: Optional[float] = None
     distance_meters: Optional[float] = None
+    check_out_latitude: Optional[float] = None
+    check_out_longitude: Optional[float] = None
+    check_out_distance_meters: Optional[float] = None
     work_location: Optional[CompanyLocationOut] = None
 
-    @field_serializer("check_in_at")
-    def _serialize_check_in_at(self, v: Optional[datetime]) -> Optional[datetime]:
+    @field_serializer("check_in_at", "check_out_at")
+    def _serialize_check_times(self, v: Optional[datetime]) -> Optional[datetime]:
         return datetime_for_api(v) if v is not None else None
+
+    @field_serializer("expected_check_out_time")
+    def _serialize_expected_check_out_time(self, v: Optional[time]) -> Optional[str]:
+        return v.strftime("%H:%M") if v is not None else None
 
 
 class EmployeeClockInOut(BaseModel):
-    status: Literal["present", "late", "already_marked", "sunday"]
+    status: Literal["present", "late", "already_checked_in", "already_checked_out", "sunday"]
+    message: Optional[str] = None
+    entry: Optional[EmployeeAttendanceHistoryOut] = None
+
+
+class EmployeeClockOutOut(BaseModel):
+    status: Literal["checked_out", "not_checked_in", "already_checked_out", "sunday"]
     message: Optional[str] = None
     entry: Optional[EmployeeAttendanceHistoryOut] = None
 

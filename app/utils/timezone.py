@@ -21,7 +21,8 @@ except ZoneInfoNotFoundError:
     BUSINESS_TZ = timezone(timedelta(hours=1))
 
 UTC = timezone.utc
-LATE_CUTOFF_TIME = time(8, 15)  # 08:15 WAT
+LATE_CUTOFF_TIME = time(8, 15)  # 08:15 WAT — global fallback when location has no late time
+CHECK_OUT_TIME = time(17, 0)  # 17:00 WAT — global fallback when location has no sign-out time
 
 
 def now_lagos() -> datetime:
@@ -85,6 +86,23 @@ def late_minutes_after_cutoff(
 
 def is_late_check_in(check_in_at: datetime, *, cutoff: time = LATE_CUTOFF_TIME) -> bool:
     return late_minutes_after_cutoff(check_in_at, cutoff=cutoff) > 0
+
+
+def early_minutes_before_cutoff(
+    check_out_at: datetime,
+    *,
+    cutoff: time = CHECK_OUT_TIME,
+) -> int:
+    """Minutes before cutoff on the Lagos calendar day of check-out; 0 if on time or after."""
+    local = to_lagos(check_out_at)
+    threshold = local.replace(hour=cutoff.hour, minute=cutoff.minute, second=0, microsecond=0)
+    if local >= threshold:
+        return 0
+    return int((threshold - local).total_seconds() // 60)
+
+
+def is_early_check_out(check_out_at: datetime, *, cutoff: time = CHECK_OUT_TIME) -> bool:
+    return early_minutes_before_cutoff(check_out_at, cutoff=cutoff) > 0
 
 
 def lagos_date_of(dt: datetime) -> date:

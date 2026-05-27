@@ -566,6 +566,7 @@ export type CompanyLocation = {
   longitude: number;
   allowed_radius_meters: number;
   late_attendance_time: string;
+  check_out_time: string;
   created_at: string;
 };
 
@@ -575,10 +576,15 @@ export type EmployeeAttendanceHistoryItem = {
   employee_id: number;
   period_id: number;
   attendance_date: string; // YYYY-MM-DD
-  status: "present" | "late" | "absent";
+  status: "present" | "late" | "absent" | "incomplete_day" | "checked_in" | "early_check_out" | "late_early_check_out" | "short_session";
   check_in_at?: string | null;
+  check_out_at?: string | null;
   is_late: boolean;
   late_minutes?: number | null;
+  is_early_check_out?: boolean;
+  early_check_out_minutes?: number | null;
+  expected_check_out_time?: string | null;
+  attendance_duration_minutes?: number | null;
   deduction_naira: string | number;
   lateness_entry_id?: number | null;
   absence_entry_id?: number | null;
@@ -586,6 +592,9 @@ export type EmployeeAttendanceHistoryItem = {
   employee_latitude?: number | null;
   employee_longitude?: number | null;
   distance_meters?: number | null;
+  check_out_latitude?: number | null;
+  check_out_longitude?: number | null;
+  check_out_distance_meters?: number | null;
   work_location?: CompanyLocation | null;
 };
 
@@ -595,7 +604,13 @@ export type EmployeeAttendanceEntry = EmployeeAttendanceHistoryItem & {
 };
 
 export type EmployeeClockInResponse = {
-  status: "present" | "late" | "already_marked" | "sunday";
+  status: "present" | "late" | "already_checked_in" | "already_checked_out" | "sunday";
+  message?: string | null;
+  entry?: EmployeeAttendanceEntry | null;
+};
+
+export type EmployeeClockOutResponse = {
+  status: "checked_out" | "not_checked_in" | "already_checked_out" | "sunday";
   message?: string | null;
   entry?: EmployeeAttendanceEntry | null;
 };

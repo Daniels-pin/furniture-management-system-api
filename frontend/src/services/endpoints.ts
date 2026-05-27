@@ -47,6 +47,7 @@ import type {
   EmployeeListItem,
   EmployeeAttendanceEntry,
   EmployeeClockInResponse,
+  EmployeeClockOutResponse,
   EmployeeAdminUpdatePayload,
   EmployeeSelfUpdatePayload,
   PayrollPeriodsNav,
@@ -853,6 +854,7 @@ export const companyLocationsApi = {
     longitude: number;
     allowed_radius_meters: number;
     late_attendance_time?: string;
+    check_out_time?: string;
   }) {
     const { data } = await api.post<CompanyLocation>("/company-locations", body);
     return data;
@@ -865,6 +867,7 @@ export const companyLocationsApi = {
       longitude: number;
       allowed_radius_meters: number;
       late_attendance_time: string;
+      check_out_time: string;
     }>
   ) {
     const { data } = await api.patch<CompanyLocation>(`/company-locations/${locationId}`, patch);
@@ -929,6 +932,10 @@ export const employeesApi = {
   },
   async clockInAttendanceGeo(body: { latitude: number; longitude: number; accuracy_meters?: number }) {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in-geo", body);
+    return data;
+  },
+  async clockOutAttendanceGeo(body: { latitude: number; longitude: number; accuracy_meters?: number }) {
+    const { data } = await api.post<EmployeeClockOutResponse>("/employees/me/attendance/clock-out-geo", body);
     return data;
   },
   async myAttendance(params?: { limit?: number; offset?: number }) {

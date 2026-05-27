@@ -1,7 +1,12 @@
 import axios from "axios";
 import { getErrorMessage } from "../services/api";
-import type { EmployeeAttendanceEntry, EmployeeClockInResponse } from "../types/api";
-import { BUSINESS_TIMEZONE, formatLagosTime, lagosDateKey } from "./datetime";
+import type {
+  EmployeeAttendanceEntry,
+  EmployeeAttendanceHistoryItem,
+  EmployeeClockInResponse,
+  EmployeeClockOutResponse
+} from "../types/api";
+import { BUSINESS_TIMEZONE, formatAttendanceDuration, formatLagosTime, lagosDateKey } from "./datetime";
 
 const ATTENDANCE_TIMEZONE = BUSINESS_TIMEZONE;
 
@@ -383,11 +388,11 @@ export function getAttendanceSuccessFeedback(
   res: EmployeeClockInResponse,
   lateTimeLabel = "8:15 AM"
 ): AttendanceResultFeedback {
-  if (res.status === "already_marked") {
+  if (res.status === "already_checked_in" || res.status === "already_checked_out") {
     return {
       variant: "info",
-      title: "Attendance already marked",
-      message: res.message || "You have already marked attendance for today."
+      title: res.status === "already_checked_out" ? "Attendance completed" : "Already checked in",
+      message: res.message || "You have already checked in for today."
     };
   }
   if (res.status === "sunday") {
@@ -402,14 +407,60 @@ export function getAttendanceSuccessFeedback(
   if (res.status === "late") {
     return {
       variant: "success",
-      title: "Attendance marked",
-      message: `Attendance marked successfully${timePart}. You were marked late (after ${lateTimeLabel}). A ₦500 lateness deduction applies.`
+      title: "Checked in",
+      message: `Check-in recorded${timePart}. You were marked late (after ${lateTimeLabel}). A ₦500 lateness deduction applies.`
     };
   }
   return {
     variant: "success",
-    title: "Attendance marked",
-    message: `Attendance marked successfully${timePart}.`
+    title: "Checked in",
+    message: `Check-in recorded${timePart}.`
+  };
+}
+
+export function getAttendanceClockOutSuccessFeedback(res: EmployeeClockOutResponse): AttendanceResultFeedback {
+  if (res.status === "already_checked_out") {
+    return {
+      variant: "info",
+      title: "Already signed out",
+      message: res.message || "You have already signed out for today."
+    };
+  }
+  if (res.status === "not_checked_in") {
+    return {
+      variant: "info",
+      title: "Check in first",
+      message: res.message || "Check in before signing out."
+    };
+  }
+  if (res.status === "sunday") {
+    return {
+      variant: "info",
+      title: "No attendance required",
+      message: res.message || "Sundays are excluded. No attendance is required today."
+    };
+  }
+  const time = formatAttendanceClockInTime(res.entry?.check_out_at);
+  const timePart = time ? ` at ${time}` : "";
+  if (res.entry?.is_early_check_out) {
+    return {
+      variant: "success",
+      title: "Signed out",
+      message: `Check-out recorded${timePart}. You signed out before your location's closing time.`
+    };
+  }
+  return {
+    variant: "success",
+    title: "Signed out",
+    message: `Check-out recorded${timePart}.`
+  };
+}
+
+export function getAttendanceClockOutErrorFeedback(err: unknown): AttendanceResultFeedback {
+  return {
+    variant: "error",
+    title: "Sign-out failed",
+    message: getAttendanceMarkErrorMessage(err)
   };
 }
 
@@ -443,7 +494,7 @@ export function getAttendanceMarkErrorMessage(err: unknown): string {
 
 export function mergeAttendanceWithClockResponse(
   rows: EmployeeAttendanceEntry[],
-  res: EmployeeClockInResponse
+  res: EmployeeClockInResponse | EmployeeClockOutResponse
 ): EmployeeAttendanceEntry[] {
   if (!res.entry) return rows;
   const rest = rows.filter((r) => r.attendance_date !== res.entry!.attendance_date);
@@ -457,5 +508,110 @@ export function findTodayAttendanceEntry(
   const key = attendanceTodayKey(date);
   return (
     rows.find((a) => a.attendance_date === key && a.record_type === "attendance" && a.status !== "absent") ?? null
+  );
+}
+
+export function hasCompletedTodayAttendance(entry: EmployeeAttendanceEntry | null): boolean {
+  return Boolean(entry?.check_out_at);
+}
+
+export function canCheckInToday(entry: EmployeeAttendanceEntry | null): boolean {
+  return !entry || entry.status === "absent";
+}
+
+export function canCheckOutToday(entry: EmployeeAttendanceEntry | null): boolean {
+  return Boolean(entry?.check_in_at && !entry.check_out_at);
+}
+
+export function attendanceHistoryStatusLabel(item: EmployeeAttendanceHistoryItem): string {
+  switch (item.status) {
+    case "late_early_check_out":
+      return "Late · Early check-out";
+    case "early_check_out":
+      return "Checked out before closing time";
+    case "short_session":
+      return "Short session";
+    case "late":
+      return "Late";
+    case "absent":
+      return "Absent";
+    case "incomplete_day":
+      return "Incomplete Day";
+    case "checked_in":
+      return "Checked in";
+    case "present":
+      return "Present";
+    default:
+      if (item.is_early_check_out) return "Checked out before closing time";
+      return "Present";
+  }
+}
+
+export function attendanceHistoryStatusBadgeClass(item: EmployeeAttendanceHistoryItem): string {
+  switch (item.status) {
+    case "late_early_check_out":
+      return "bg-orange-100 text-orange-900";
+    case "early_check_out":
+      return "bg-orange-100 text-orange-900";
+    case "short_session":
+      return "bg-yellow-100 text-yellow-900";
+    case "late":
+      return "bg-amber-100 text-amber-900";
+    case "absent":
+      return "bg-red-100 text-red-900";
+    case "incomplete_day":
+      return "bg-orange-100 text-orange-900";
+    case "checked_in":
+      return "bg-sky-100 text-sky-900";
+    case "present":
+      return "bg-emerald-100 text-emerald-900";
+    default:
+      if (item.is_early_check_out) return "bg-orange-100 text-orange-900";
+      return "bg-emerald-100 text-emerald-900";
+  }
+}
+
+export function attendanceHistoryDetailSuffix(item: EmployeeAttendanceHistoryItem): string {
+  const parts: string[] = [];
+  if (item.is_late && typeof item.late_minutes === "number") {
+    parts.push(`${item.late_minutes} min late`);
+  }
+  if (item.is_early_check_out && typeof item.early_check_out_minutes === "number") {
+    parts.push(`${item.early_check_out_minutes} min before closing`);
+  }
+  if (typeof item.attendance_duration_minutes === "number") {
+    parts.push(`Duration: ${formatAttendanceDuration(item.attendance_duration_minutes)}`);
+  }
+  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+}
+
+export function attendanceTodayStatusLabel(
+  entry: EmployeeAttendanceEntry | null,
+  dayCompleted?: boolean
+): string {
+  if (!entry) return "Not checked in";
+  if (dayCompleted || entry.check_out_at) {
+    return attendanceHistoryStatusLabel(entry);
+  }
+  return entry.is_late ? "Checked in · Late" : "Checked in";
+}
+
+export function attendanceTodayStatusBadgeClass(
+  entry: EmployeeAttendanceEntry | null,
+  dayCompleted?: boolean
+): string {
+  if (!entry) return "bg-black/10 text-black/70";
+  if (dayCompleted || entry.check_out_at) {
+    return attendanceHistoryStatusBadgeClass(entry);
+  }
+  return entry.is_late ? "bg-amber-100 text-amber-900" : "bg-sky-100 text-sky-900";
+}
+
+export function attendanceHistoryRowHighlight(item: EmployeeAttendanceHistoryItem): boolean {
+  return (
+    item.status === "early_check_out" ||
+    item.status === "late_early_check_out" ||
+    item.status === "short_session" ||
+    Boolean(item.is_early_check_out)
   );
 }

@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { employeesApi } from "../services/endpoints";
 import { useAuth } from "../state/auth";
-import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
+import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeClockOutResponse, EmployeeDetail } from "../types/api";
 import type { AttendanceResultFeedback } from "../utils/attendance";
-import { formatLateAttendanceTime } from "../utils/datetime";
+import { formatCheckOutTime, formatLateAttendanceTime } from "../utils/datetime";
 import {
   attendanceGeoAccuracyMeters,
+  canCheckInToday,
+  canCheckOutToday,
   findTodayAttendanceEntry,
   getAttendanceBlockedNoLocationFeedback,
+  getAttendanceClockOutErrorFeedback,
+  getAttendanceClockOutSuccessFeedback,
   getAttendanceErrorFeedback,
   getAttendanceSuccessFeedback,
   getAttendanceGeolocationPosition,
+  hasCompletedTodayAttendance,
   mergeAttendanceWithClockResponse
 } from "../utils/attendance";
 
@@ -27,6 +32,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
   const [attBusy, setAttBusy] = useState(false);
   const [attendance, setAttendance] = useState<EmployeeAttendanceEntry[]>([]);
   const [clockRes, setClockRes] = useState<EmployeeClockInResponse | null>(null);
+  const [clockOutRes, setClockOutRes] = useState<EmployeeClockOutResponse | null>(null);
   const [resultFeedback, setResultFeedback] = useState<AttendanceResultFeedback | null>(null);
 
   const dismissResultFeedback = useCallback(() => {
@@ -47,6 +53,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       setEmp(null);
       setAttendance([]);
       setClockRes(null);
+      setClockOutRes(null);
       setResultFeedback(null);
       setEmpLoading(false);
       return;
@@ -58,6 +65,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       setEmp(null);
       setAttendance([]);
       setClockRes(null);
+      setClockOutRes(null);
       setResultFeedback(null);
       try {
         const me = await employeesApi.getMe();
@@ -99,6 +107,7 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
         accuracy_meters: attendanceGeoAccuracyMeters(pos)
       });
       setClockRes(res);
+      setClockOutRes(null);
       if (res.entry) {
         setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
       } else {
@@ -112,7 +121,41 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
     }
   }, [refreshAttendance]);
 
+  const signOutAttendance = useCallback(async () => {
+    setAttBusy(true);
+    try {
+      const me = await employeesApi.getMe();
+      setEmp(me);
+      if (!me.work_location) {
+        setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+        return;
+      }
+
+      const pos = await getAttendanceGeolocationPosition();
+      const res = await employeesApi.clockOutAttendanceGeo({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy_meters: attendanceGeoAccuracyMeters(pos)
+      });
+      setClockOutRes(res);
+      setClockRes(null);
+      if (res.entry) {
+        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+      } else {
+        await refreshAttendance();
+      }
+      setResultFeedback(getAttendanceClockOutSuccessFeedback(res));
+    } catch (e) {
+      setResultFeedback(getAttendanceClockOutErrorFeedback(e));
+    } finally {
+      setAttBusy(false);
+    }
+  }, [refreshAttendance]);
+
   const todayEntry = findTodayAttendanceEntry(attendance);
+  const checkInAllowed = canCheckInToday(todayEntry);
+  const checkOutAllowed = canCheckOutToday(todayEntry);
+  const dayCompleted = hasCompletedTodayAttendance(todayEntry);
 
   return {
     empLoading,
@@ -120,10 +163,17 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
     attendance,
     attBusy,
     clockRes,
+    clockOutRes,
     todayEntry,
+    checkInAllowed,
+    checkOutAllowed,
+    dayCompleted,
     markAttendance,
+    signOutAttendance,
     refreshAttendance,
     resultFeedback,
-    dismissResultFeedback
+    dismissResultFeedback,
+    lateTimeLabel: formatLateAttendanceTime(emp?.work_location?.late_attendance_time),
+    checkOutTimeLabel: formatCheckOutTime(emp?.work_location?.check_out_time)
   };
 }

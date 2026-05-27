@@ -9,7 +9,7 @@ import { getErrorMessage } from "../services/api";
 import { companyLocationsApi } from "../services/endpoints";
 import { getGeolocationPosition, getGeolocationUserMessage } from "../utils/attendance";
 import type { CompanyLocation } from "../types/api";
-import { formatLateAttendanceTime, toTimeInputValue } from "../utils/datetime";
+import { formatCheckOutTime, formatLateAttendanceTime, toTimeInputValue } from "../utils/datetime";
 
 import { Circle, MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
 import L from "leaflet";
@@ -63,6 +63,7 @@ export function AdminCompanyLocationsPage() {
   const [name, setName] = useState("");
   const [radius, setRadius] = useState("150");
   const [lateTime, setLateTime] = useState("08:15");
+  const [checkOutTime, setCheckOutTime] = useState("17:00");
   const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
@@ -116,6 +117,7 @@ export function AdminCompanyLocationsPage() {
     setName(selected.name ?? "");
     setRadius(String(selected.allowed_radius_meters ?? 0));
     setLateTime(toTimeInputValue(selected.late_attendance_time));
+    setCheckOutTime(toTimeInputValue(selected.check_out_time, "17:00"));
     setPin({ lat: selected.latitude, lng: selected.longitude });
   }, [selectedId]); // intentionally not depending on selected object identity
 
@@ -124,6 +126,7 @@ export function AdminCompanyLocationsPage() {
     setName("");
     setRadius("150");
     setLateTime("08:15");
+    setCheckOutTime("17:00");
     setPin(null);
     setSearchQuery("");
   }
@@ -215,7 +218,8 @@ export function AdminCompanyLocationsPage() {
           latitude: pin.lat,
           longitude: pin.lng,
           allowed_radius_meters: r,
-          late_attendance_time: lateTime
+          late_attendance_time: lateTime,
+          check_out_time: checkOutTime
         });
         const rows = await refresh();
         setSelectedId(updated.id);
@@ -223,6 +227,7 @@ export function AdminCompanyLocationsPage() {
         setName(synced.name ?? "");
         setRadius(String(synced.allowed_radius_meters ?? 0));
         setLateTime(toTimeInputValue(synced.late_attendance_time));
+        setCheckOutTime(toTimeInputValue(synced.check_out_time, "17:00"));
         setPin({ lat: synced.latitude, lng: synced.longitude });
         toast.push("success", "Location updated.");
       } else {
@@ -231,7 +236,8 @@ export function AdminCompanyLocationsPage() {
           latitude: pin.lat,
           longitude: pin.lng,
           allowed_radius_meters: r,
-          late_attendance_time: lateTime
+          late_attendance_time: lateTime,
+          check_out_time: checkOutTime
         });
         await refresh();
         toast.push("success", "Location created.");
@@ -303,7 +309,8 @@ export function AdminCompanyLocationsPage() {
                   >
                     <div className="text-sm font-semibold">{x.name}</div>
                     <div className={["mt-0.5 text-xs", x.id === selectedId ? "text-white/75" : "text-black/55"].join(" ")}>
-                      Radius: {x.allowed_radius_meters}m · Late: {formatLateAttendanceTime(x.late_attendance_time)}
+                      Radius: {x.allowed_radius_meters}m · Late: {formatLateAttendanceTime(x.late_attendance_time)} · Out:{" "}
+                      {formatCheckOutTime(x.check_out_time)}
                     </div>
                   </button>
                 </li>
@@ -346,7 +353,7 @@ export function AdminCompanyLocationsPage() {
           </Button>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <Input label="Location name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main Factory" />
           <Input label="Allowed radius (meters)" value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" />
           <div>
@@ -358,6 +365,16 @@ export function AdminCompanyLocationsPage() {
               onChange={(e) => setLateTime(e.target.value)}
             />
             <div className="mt-1 text-xs text-black/50">Clock-ins after this time (Lagos) count as late.</div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-black/60">Check-out time</label>
+            <input
+              type="time"
+              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
+              value={checkOutTime}
+              onChange={(e) => setCheckOutTime(e.target.value)}
+            />
+            <div className="mt-1 text-xs text-black/50">Expected sign-out time shown to employees at this location.</div>
           </div>
         </div>
 

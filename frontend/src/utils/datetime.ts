@@ -76,6 +76,24 @@ export function formatLateAttendanceTime(value: string | null | undefined): stri
     .replace(/^0(\d)/, "$1");
 }
 
+/** Display configured sign-out time (e.g. "5:00 PM"). */
+export function formatCheckOutTime(value: string | null | undefined): string {
+  const raw = (value || "").trim();
+  if (!raw) return "5:00 PM";
+  return formatLateAttendanceTime(raw);
+}
+
+/** Human-readable attendance session length (e.g. "8h 12m", "1m"). */
+export function formatAttendanceDuration(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes < 0) return "—";
+  if (minutes < 1) return "<1m";
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours <= 0) return `${mins}m`;
+  if (mins <= 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+}
+
 /** Normalize API/user input to HTML time input value (HH:MM). */
 export function toTimeInputValue(value: string | null | undefined, fallback = "08:15"): string {
   const raw = (value || "").trim();

@@ -42,6 +42,7 @@ def create_location(
         longitude=float(body.longitude),
         allowed_radius_meters=int(body.allowed_radius_meters),
         late_attendance_time=body.late_attendance_time,
+        check_out_time=body.check_out_time,
         created_at=datetime.utcnow(),
     )
     db.add(row)

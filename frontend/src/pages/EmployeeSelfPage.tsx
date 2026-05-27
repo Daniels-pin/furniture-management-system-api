@@ -5,20 +5,26 @@ import { Input } from "../components/ui/Input";
 import { employeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import type { EmployeeAttendanceEntry, EmployeeAttendanceHistoryItem, EmployeeClockInResponse, EmployeeDetail } from "../types/api";
+import type { EmployeeAttendanceEntry, EmployeeAttendanceHistoryItem, EmployeeClockInResponse, EmployeeClockOutResponse, EmployeeDetail } from "../types/api";
 import { AttendanceHistoryList } from "../components/employee/AttendanceHistoryList";
-import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
-import { formatMoney } from "../utils/money";
 import {
   attendanceGeoAccuracyMeters,
+  attendanceTodayStatusBadgeClass,
+  attendanceTodayStatusLabel,
+  canCheckInToday,
+  canCheckOutToday,
   findTodayAttendanceEntry,
   getAttendanceBlockedNoLocationFeedback,
+  getAttendanceClockOutErrorFeedback,
+  getAttendanceClockOutSuccessFeedback,
   getAttendanceErrorFeedback,
   getAttendanceSuccessFeedback,
   getAttendanceGeolocationPosition,
+  hasCompletedTodayAttendance,
   mergeAttendanceWithClockResponse,
   type AttendanceResultFeedback
 } from "../utils/attendance";
+import { formatAttendanceDuration, formatCheckOutTime, formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { AttendanceResultModal } from "../components/employee/AttendanceResultModal";
 import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmployeeFinancePanel";
 
@@ -40,6 +46,7 @@ export function EmployeeSelfPage() {
   const [attBusy, setAttBusy] = useState(false);
   const [attendance, setAttendance] = useState<EmployeeAttendanceHistoryItem[]>([]);
   const [clockRes, setClockRes] = useState<EmployeeClockInResponse | null>(null);
+  const [clockOutRes, setClockOutRes] = useState<EmployeeClockOutResponse | null>(null);
   const [resultFeedback, setResultFeedback] = useState<AttendanceResultFeedback | null>(null);
 
   useEffect(() => {
@@ -107,6 +114,7 @@ export function EmployeeSelfPage() {
         accuracy_meters: attendanceGeoAccuracyMeters(pos)
       });
       setClockRes(res);
+      setClockOutRes(null);
       if (res.entry) {
         setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
       } else {
@@ -115,6 +123,37 @@ export function EmployeeSelfPage() {
       setResultFeedback(getAttendanceSuccessFeedback(res, formatLateAttendanceTime(me.work_location?.late_attendance_time)));
     } catch (e) {
       setResultFeedback(getAttendanceErrorFeedback(e));
+    } finally {
+      setAttBusy(false);
+    }
+  }
+
+  async function clockOut() {
+    setAttBusy(true);
+    try {
+      const me = await employeesApi.getMe();
+      setEmp(me);
+      if (!me.work_location) {
+        setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+        return;
+      }
+
+      const pos = await getAttendanceGeolocationPosition();
+      const res = await employeesApi.clockOutAttendanceGeo({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy_meters: attendanceGeoAccuracyMeters(pos)
+      });
+      setClockOutRes(res);
+      setClockRes(null);
+      if (res.entry) {
+        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+      } else {
+        await refreshAttendance();
+      }
+      setResultFeedback(getAttendanceClockOutSuccessFeedback(res));
+    } catch (e) {
+      setResultFeedback(getAttendanceClockOutErrorFeedback(e));
     } finally {
       setAttBusy(false);
     }
@@ -204,6 +243,10 @@ export function EmployeeSelfPage() {
 
   const todayEntry = findTodayAttendanceEntry(attendance);
   const lateTimeLabel = formatLateAttendanceTime(emp?.work_location?.late_attendance_time);
+  const checkOutTimeLabel = formatCheckOutTime(emp?.work_location?.check_out_time);
+  const checkInAllowed = canCheckInToday(todayEntry);
+  const checkOutAllowed = canCheckOutToday(todayEntry);
+  const dayCompleted = hasCompletedTodayAttendance(todayEntry);
 
   return (
     <div className="space-y-6">
@@ -214,48 +257,65 @@ export function EmployeeSelfPage() {
       </div>
 
       <Card>
-        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
           <div>
             <div className="text-sm font-semibold text-black">Attendance</div>
             <p className="mt-1 text-xs text-black/55">
-              Mark attendance by {lateTimeLabel}. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
+              Check in on arrival and sign out when you leave. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
             </p>
             {emp.work_location ? (
               <p className="mt-1 text-xs font-semibold text-black/60">
                 Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m) · Late after{" "}
-                {lateTimeLabel}
+                {lateTimeLabel} · Sign out by {checkOutTimeLabel}
               </p>
             ) : (
               <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>
             )}
           </div>
-          <Button
-            isLoading={attBusy}
-            loadingLabel="Checking location…"
-            disabled={attBusy || Boolean(todayEntry)}
-            onClick={() => void clockIn()}
-          >
-            {todayEntry ? "Attendance already marked" : attBusy ? "Checking location…" : "Mark Attendance"}
-          </Button>
+          <div className="flex flex-col gap-2 sm:items-end">
+            <Button
+              isLoading={attBusy && checkInAllowed}
+              loadingLabel="Checking location…"
+              disabled={attBusy || !checkInAllowed || !emp.work_location}
+              onClick={() => void clockIn()}
+            >
+              {dayCompleted ? "Checked in" : checkInAllowed ? (attBusy ? "Checking location…" : "Check In") : "Checked in"}
+            </Button>
+            <Button
+              variant="secondary"
+              isLoading={attBusy && checkOutAllowed}
+              loadingLabel="Checking location…"
+              disabled={attBusy || !checkOutAllowed || !emp.work_location}
+              onClick={() => void clockOut()}
+            >
+              {dayCompleted ? "Signed out" : checkOutAllowed ? (attBusy ? "Checking location…" : "Check Out") : "Check Out"}
+            </Button>
+          </div>
         </div>
 
         {todayEntry ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
             <span
-              className={[
-                "rounded-full px-2 py-0.5 font-semibold",
-                todayEntry.is_late ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
-              ].join(" ")}
+              className={["rounded-full px-2 py-0.5 font-semibold", attendanceTodayStatusBadgeClass(todayEntry, dayCompleted)].join(" ")}
             >
-              {todayEntry.is_late ? "Late" : "Present"}
+              {attendanceTodayStatusLabel(todayEntry, dayCompleted)}
             </span>
             <span className="text-black/60">
-              {formatLagosDateTime(todayEntry.check_in_at)}
+              In: {formatLagosDateTime(todayEntry.check_in_at)}
+              {todayEntry.check_out_at ? ` · Out: ${formatLagosDateTime(todayEntry.check_out_at)}` : ""}
               {todayEntry.is_late && typeof todayEntry.late_minutes === "number" ? ` · ${todayEntry.late_minutes} min late` : ""}
+              {todayEntry.is_early_check_out && typeof todayEntry.early_check_out_minutes === "number"
+                ? ` · ${todayEntry.early_check_out_minutes} min before closing`
+                : ""}
+              {typeof todayEntry.attendance_duration_minutes === "number"
+                ? ` · Duration: ${formatAttendanceDuration(todayEntry.attendance_duration_minutes)}`
+                : ""}
             </span>
           </div>
-        ) : clockRes?.status === "sunday" ? (
-          <div className="mt-3 text-sm font-semibold text-black/70">{clockRes.message ?? "Sundays are excluded."}</div>
+        ) : clockRes?.status === "sunday" || clockOutRes?.status === "sunday" ? (
+          <div className="mt-3 text-sm font-semibold text-black/70">
+            {clockRes?.message ?? clockOutRes?.message ?? "Sundays are excluded."}
+          </div>
         ) : null}
 
         <AttendanceHistoryList items={attendance} />

@@ -20,6 +20,8 @@ from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 from app.utils.timezone import (
+    CHECK_OUT_TIME,
+    early_minutes_before_cutoff,
     lagos_date_of,
     lagos_today,
     LATE_CUTOFF_TIME,
@@ -56,6 +58,7 @@ from app.schemas import (
     EmployeeAttendanceHistoryOut,
     EmployeeClockInOut,
     EmployeeClockInGeoIn,
+    EmployeeClockOutOut,
     EmployeeWorkLocationAssignIn,
     PayrollPeriodsNavOut,
     PayrollSummaryOut,
@@ -66,6 +69,8 @@ router = APIRouter(prefix="/employees", tags=["Employees"])
 
 LATENESS_DEDUCTION_NAIRA = Decimal("500")
 ABSENCE_DEDUCTION_NAIRA = Decimal("1000")
+# Completed sessions shorter than this are flagged as short_session (unless early check-out already applies).
+MIN_ATTENDANCE_SESSION_MINUTES = 30
 
 _MONTH_NAMES = (
     "",
@@ -330,6 +335,11 @@ def _late_minutes(check_in_at: datetime, *, cutoff: time | None = None) -> int:
     return late_minutes_after_cutoff(check_in_at, cutoff=cutoff or LATE_CUTOFF_TIME)
 
 
+def _early_check_out_minutes(check_out_at: datetime, *, cutoff: time | None = None) -> int:
+    """Minutes before the location closing time on the Lagos calendar day of check-out."""
+    return early_minutes_before_cutoff(check_out_at, cutoff=cutoff or CHECK_OUT_TIME)
+
+
 def _late_cutoff_for_location(loc: models.CompanyLocation | None) -> time:
     if loc is None:
         return LATE_CUTOFF_TIME
@@ -515,25 +525,115 @@ def _lateness_count_for_payroll(db: Session, emp: models.Employee, period_id: in
     return int(q.scalar() or 0)
 
 
-def _attendance_row_to_history(
+def _check_out_time_for_location(loc: models.CompanyLocation | None) -> time:
+    if loc is None:
+        return CHECK_OUT_TIME
+    configured = getattr(loc, "check_out_time", None)
+    return configured if configured is not None else CHECK_OUT_TIME
+
+
+def _check_out_time_for_employee(db: Session, emp: models.Employee) -> time:
+    loc_id = getattr(emp, "work_location_id", None)
+    if loc_id is None:
+        return CHECK_OUT_TIME
+    loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+    return _check_out_time_for_location(loc)
+
+
+def _closing_time_for_attendance_row(r: models.EmployeeAttendanceEntry) -> time:
+    """Closing-time snapshot for a row; prefers stored snapshot over current location config."""
+    stored = getattr(r, "expected_check_out_time", None)
+    if stored is not None:
+        return stored
+    loc = getattr(r, "work_location", None)
+    return _check_out_time_for_location(loc)
+
+
+def _attendance_duration_minutes(r: models.EmployeeAttendanceEntry) -> Optional[int]:
+    if r.check_in_at is None or r.check_out_at is None:
+        return None
+    delta = to_lagos(r.check_out_at) - to_lagos(r.check_in_at)
+    return max(0, int(delta.total_seconds() // 60))
+
+
+def _early_check_out_minutes_for_row(r: models.EmployeeAttendanceEntry) -> Optional[int]:
+    if r.check_out_at is None:
+        return None
+    stored = getattr(r, "early_check_out_minutes", None)
+    if stored is not None:
+        return int(stored)
+    mins = _early_check_out_minutes(r.check_out_at, cutoff=_closing_time_for_attendance_row(r))
+    return mins if mins > 0 else None
+
+
+def _is_early_check_out_row(r: models.EmployeeAttendanceEntry) -> bool:
+    if r.check_out_at is None:
+        return False
+    if bool(getattr(r, "is_early_check_out", False)):
+        return True
+    return _early_check_out_minutes_for_row(r) is not None
+
+
+def _resolve_attendance_status(
+    r: models.EmployeeAttendanceEntry,
+    *,
+    today: date_type | None = None,
+) -> str:
+    """Derive history status without altering stored payroll rows."""
+    today = today or lagos_today()
+    is_late = bool(r.is_late)
+    has_check_out = r.check_out_at is not None
+    is_today = r.attendance_date == today
+
+    if not has_check_out:
+        if is_today:
+            return "checked_in"
+        return "incomplete_day"
+
+    is_early = _is_early_check_out_row(r)
+    duration = _attendance_duration_minutes(r)
+    is_short = duration is not None and duration < MIN_ATTENDANCE_SESSION_MINUTES
+
+    if is_late and is_early:
+        return "late_early_check_out"
+    if is_early:
+        return "early_check_out"
+    if is_late:
+        return "late"
+    if is_short:
+        return "short_session"
+    return "present"
+
+
+def _attendance_history_from_row(
     r: models.EmployeeAttendanceEntry,
     *,
     lateness_entry_id: Optional[int] = None,
+    today: date_type | None = None,
 ) -> EmployeeAttendanceHistoryOut:
     is_late = bool(r.is_late)
     late_id = lateness_entry_id
     if late_id is None:
         late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
+    is_early_check_out = _is_early_check_out_row(r)
+    early_check_out_minutes = _early_check_out_minutes_for_row(r)
+    attendance_duration_minutes = _attendance_duration_minutes(r)
+    status = _resolve_attendance_status(r, today=today)
     return EmployeeAttendanceHistoryOut(
         id=r.id,
         record_type="attendance",
         employee_id=r.employee_id,
         period_id=r.period_id,
         attendance_date=r.attendance_date,
-        status="late" if is_late else "present",
+        status=status,  # type: ignore[arg-type]
         check_in_at=r.check_in_at,
+        check_out_at=r.check_out_at,
         is_late=is_late,
         late_minutes=r.late_minutes,
+        is_early_check_out=is_early_check_out,
+        early_check_out_minutes=early_check_out_minutes,
+        expected_check_out_time=getattr(r, "expected_check_out_time", None),
+        attendance_duration_minutes=attendance_duration_minutes,
         deduction_naira=LATENESS_DEDUCTION_NAIRA if is_late else Decimal("0"),
         lateness_entry_id=int(late_id) if late_id is not None else None,
         absence_entry_id=None,
@@ -541,8 +641,19 @@ def _attendance_row_to_history(
         employee_latitude=r.employee_latitude,
         employee_longitude=r.employee_longitude,
         distance_meters=r.distance_meters,
+        check_out_latitude=r.check_out_latitude,
+        check_out_longitude=r.check_out_longitude,
+        check_out_distance_meters=r.check_out_distance_meters,
         work_location=CompanyLocationOut.model_validate(r.work_location) if getattr(r, "work_location", None) else None,
     )
+
+
+def _attendance_row_to_history(
+    r: models.EmployeeAttendanceEntry,
+    *,
+    lateness_entry_id: Optional[int] = None,
+) -> EmployeeAttendanceHistoryOut:
+    return _attendance_history_from_row(r, lateness_entry_id=lateness_entry_id)
 
 
 def _build_attendance_history(
@@ -571,30 +682,10 @@ def _build_attendance_history(
     )
 
     items: list[EmployeeAttendanceHistoryOut] = []
+    today = lagos_today()
     for r in att_rows:
         late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
-        is_late = bool(r.is_late)
-        items.append(
-            EmployeeAttendanceHistoryOut(
-                id=r.id,
-                record_type="attendance",
-                employee_id=r.employee_id,
-                period_id=r.period_id,
-                attendance_date=r.attendance_date,
-                status="late" if is_late else "present",
-                check_in_at=r.check_in_at,
-                is_late=is_late,
-                late_minutes=r.late_minutes,
-                deduction_naira=LATENESS_DEDUCTION_NAIRA if is_late else Decimal("0"),
-                lateness_entry_id=int(late_id) if late_id is not None else None,
-                absence_entry_id=None,
-                work_location_id=r.work_location_id,
-                employee_latitude=r.employee_latitude,
-                employee_longitude=r.employee_longitude,
-                distance_meters=r.distance_meters,
-                work_location=CompanyLocationOut.model_validate(r.work_location) if getattr(r, "work_location", None) else None,
-            )
-        )
+        items.append(_attendance_history_from_row(r, lateness_entry_id=int(late_id) if late_id is not None else None, today=today))
     for a in abs_rows:
         items.append(
             EmployeeAttendanceHistoryOut(
@@ -605,8 +696,13 @@ def _build_attendance_history(
                 attendance_date=a.absence_date,
                 status="absent",
                 check_in_at=None,
+                check_out_at=None,
                 is_late=False,
                 late_minutes=None,
+                is_early_check_out=False,
+                early_check_out_minutes=None,
+                expected_check_out_time=None,
+                attendance_duration_minutes=None,
                 deduction_naira=ABSENCE_DEDUCTION_NAIRA,
                 lateness_entry_id=None,
                 absence_entry_id=a.id,
@@ -614,6 +710,9 @@ def _build_attendance_history(
                 employee_latitude=None,
                 employee_longitude=None,
                 distance_meters=None,
+                check_out_latitude=None,
+                check_out_longitude=None,
+                check_out_distance_meters=None,
                 work_location=None,
             )
         )
@@ -727,7 +826,7 @@ def _validate_geo_clock_in_distance(
         raise HTTPException(
             status_code=403,
             detail=(
-                "You must be within your assigned work location to mark attendance. "
+                "You must be within your assigned work location to complete this attendance action. "
                 f"(About {int(round(distance))}m from the site center; allowed {allowed}m"
                 f" plus location tolerance, up to {int(round(effective))}m.{extra})"
             ),
@@ -1510,9 +1609,21 @@ def clock_in_my_attendance(
     if existing:
         late_id = getattr(getattr(existing, "lateness_entry", None), "id", None)
         out = _attendance_row_to_history(existing, lateness_entry_id=int(late_id) if late_id is not None else None)
+        if existing.check_out_at is not None:
+            return EmployeeClockInOut(
+                status="already_checked_out",
+                message=(
+                    f"Attendance already completed. Signed out at "
+                    f"{to_lagos(existing.check_out_at).strftime('%I:%M %p').lstrip('0')}."
+                ),
+                entry=out,
+            )
         return EmployeeClockInOut(
-            status="already_marked",
-            message=f"Attendance already marked at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}.",
+            status="already_checked_in",
+            message=(
+                f"Already checked in at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}. "
+                "Sign out when you leave."
+            ),
             entry=out,
         )
 
@@ -1579,7 +1690,7 @@ def clock_in_my_attendance(
     out = _attendance_row_to_history(att, lateness_entry_id=lateness_entry_id)
     return EmployeeClockInOut(
         status="late" if is_late else "present",
-        message="Clock-in recorded.",
+        message="Check-in recorded.",
         entry=out,
     )
 
@@ -1631,9 +1742,21 @@ def clock_in_my_attendance_geo(
     if existing:
         late_id = getattr(getattr(existing, "lateness_entry", None), "id", None)
         out = _attendance_row_to_history(existing, lateness_entry_id=int(late_id) if late_id is not None else None)
+        if existing.check_out_at is not None:
+            return EmployeeClockInOut(
+                status="already_checked_out",
+                message=(
+                    f"Attendance already completed. Signed out at "
+                    f"{to_lagos(existing.check_out_at).strftime('%I:%M %p').lstrip('0')}."
+                ),
+                entry=out,
+            )
         return EmployeeClockInOut(
-            status="already_marked",
-            message=f"Attendance already marked at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}.",
+            status="already_checked_in",
+            message=(
+                f"Already checked in at {to_lagos(existing.check_in_at).strftime('%I:%M %p').lstrip('0')}. "
+                "Sign out when you leave."
+            ),
             entry=out,
         )
 
@@ -1721,7 +1844,125 @@ def clock_in_my_attendance_geo(
     out = _attendance_row_to_history(att, lateness_entry_id=lateness_entry_id)
     return EmployeeClockInOut(
         status="late" if is_late else "present",
-        message="Clock-in recorded.",
+        message="Check-in recorded.",
+        entry=out,
+    )
+
+
+@router.post("/me/attendance/clock-out-geo", response_model=EmployeeClockOutOut)
+def clock_out_my_attendance_geo(
+    body: EmployeeClockInGeoIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Geo-validated monthly attendance check-out (one per day; Sundays excluded).
+
+    Requires a prior check-in for today and validates the employee is still within the assigned location radius.
+    """
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
+    if emp.work_location_id is None:
+        raise HTTPException(status_code=409, detail="No work location assigned. Contact an administrator.")
+
+    loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    if loc is None:
+        raise HTTPException(status_code=409, detail="Your assigned work location no longer exists. Contact an administrator.")
+    db.refresh(loc)
+
+    now = now_lagos()
+    today = now.date()
+    if _is_sunday(today):
+        return EmployeeClockOutOut(
+            status="sunday",
+            message="Sundays are excluded. No attendance is required today.",
+            entry=None,
+        )
+
+    att = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(
+            models.EmployeeAttendanceEntry.employee_id == emp.id,
+            models.EmployeeAttendanceEntry.attendance_date == today,
+        )
+        .first()
+    )
+    if att is None:
+        return EmployeeClockOutOut(
+            status="not_checked_in",
+            message="You have not checked in today. Check in first before signing out.",
+            entry=None,
+        )
+    if att.check_out_at is not None:
+        late_id = getattr(getattr(att, "lateness_entry", None), "id", None)
+        out = _attendance_row_to_history(att, lateness_entry_id=int(late_id) if late_id is not None else None)
+        return EmployeeClockOutOut(
+            status="already_checked_out",
+            message=(
+                f"Already signed out at {to_lagos(att.check_out_at).strftime('%I:%M %p').lstrip('0')}."
+            ),
+            entry=out,
+        )
+
+    gps_accuracy = float(body.accuracy_meters) if body.accuracy_meters is not None else None
+    distance, allowed = _validate_geo_clock_in_distance(
+        float(body.latitude),
+        float(body.longitude),
+        loc,
+        gps_accuracy_meters=gps_accuracy,
+        employee_id=int(emp.id),
+    )
+
+    att.check_out_at = utc_naive_from(now)
+    att.check_out_latitude = float(body.latitude)
+    att.check_out_longitude = float(body.longitude)
+    att.check_out_distance_meters = float(distance)
+    if att.work_location_id is None:
+        att.work_location_id = loc.id
+
+    expected_check_out = _check_out_time_for_location(loc)
+    early_mins = _early_check_out_minutes(att.check_out_at, cutoff=expected_check_out)
+    att.is_early_check_out = early_mins > 0
+    att.early_check_out_minutes = early_mins if early_mins > 0 else None
+    att.expected_check_out_time = expected_check_out
+
+    _log_payroll(
+        db,
+        "employee_attendance_clock_out_geo",
+        att.id,
+        current_user,
+        {
+            "employee_id": emp.id,
+            "attendance_date": today.isoformat(),
+            "check_out_at": now.isoformat(),
+            "work_location_id": int(loc.id),
+            "employee_latitude": float(body.latitude),
+            "employee_longitude": float(body.longitude),
+            "distance_meters": float(distance),
+            "allowed_radius_meters": allowed,
+            "geo_validation_buffer_meters": _GEO_VALIDATION_BUFFER_METERS,
+            "gps_accuracy_meters": gps_accuracy,
+            "effective_radius_meters": _effective_geo_radius_meters(allowed, gps_accuracy),
+            "expected_check_out_time": expected_check_out.strftime("%H:%M"),
+            "is_early_check_out": att.is_early_check_out,
+            "early_check_out_minutes": att.early_check_out_minutes,
+        },
+    )
+    db.commit()
+    db.refresh(att)
+
+    late_id = getattr(getattr(att, "lateness_entry", None), "id", None)
+    out = _attendance_row_to_history(att, lateness_entry_id=int(late_id) if late_id is not None else None)
+    message = "Check-out recorded."
+    if att.is_early_check_out:
+        message = "Check-out recorded. You signed out before your location's closing time."
+    return EmployeeClockOutOut(
+        status="checked_out",
+        message=message,
         entry=out,
     )
 

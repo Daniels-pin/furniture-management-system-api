@@ -18,8 +18,13 @@ export function StaffDashboardPage() {
         attendance={attendance.attendance}
         attBusy={attendance.attBusy}
         clockRes={attendance.clockRes}
+        clockOutRes={attendance.clockOutRes}
         todayEntry={attendance.todayEntry}
+        checkInAllowed={attendance.checkInAllowed}
+        checkOutAllowed={attendance.checkOutAllowed}
+        dayCompleted={attendance.dayCompleted}
         onMarkAttendance={attendance.markAttendance}
+        onSignOutAttendance={attendance.signOutAttendance}
         resultFeedback={attendance.resultFeedback}
         onDismissResultFeedback={attendance.dismissResultFeedback}
         missingProfileMessage="No employee profile is linked to your account yet. Ask an administrator to link your Staff login."
