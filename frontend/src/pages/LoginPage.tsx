@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
@@ -82,11 +83,10 @@ export function LoginPage() {
                   placeholder="you@company.com"
                   required
                 />
-                <Input
+                <PasswordInput
                   label="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  type="password"
                   autoComplete="current-password"
                   required
                 />
