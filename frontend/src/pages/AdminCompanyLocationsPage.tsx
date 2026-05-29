@@ -62,8 +62,16 @@ export function AdminCompanyLocationsPage() {
 
   const [name, setName] = useState("");
   const [radius, setRadius] = useState("150");
+  const [shiftMode, setShiftMode] = useState(false);
   const [lateTime, setLateTime] = useState("08:15");
   const [checkOutTime, setCheckOutTime] = useState("17:00");
+  const [morningLate, setMorningLate] = useState("08:30");
+  const [morningClose, setMorningClose] = useState("16:00");
+  const [fullDayLate, setFullDayLate] = useState("08:30");
+  const [fullDayClose, setFullDayClose] = useState("20:00");
+  const [lateFee, setLateFee] = useState("500");
+  const [earlyFee, setEarlyFee] = useState("500");
+  const [absenceFee, setAbsenceFee] = useState("1000");
   const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoBusy, setGeoBusy] = useState(false);
@@ -116,8 +124,16 @@ export function AdminCompanyLocationsPage() {
     if (!selected) return;
     setName(selected.name ?? "");
     setRadius(String(selected.allowed_radius_meters ?? 0));
+    setShiftMode(Boolean(selected.shift_mode_enabled));
     setLateTime(toTimeInputValue(selected.late_attendance_time));
     setCheckOutTime(toTimeInputValue(selected.check_out_time, "17:00"));
+    setMorningLate(toTimeInputValue(selected.morning_shift_late_time, "08:30"));
+    setMorningClose(toTimeInputValue(selected.morning_shift_closing_time, "16:00"));
+    setFullDayLate(toTimeInputValue(selected.full_day_shift_late_time, "08:30"));
+    setFullDayClose(toTimeInputValue(selected.full_day_shift_closing_time, "20:00"));
+    setLateFee(String(selected.late_coming_fee_naira ?? 500));
+    setEarlyFee(String(selected.early_sign_out_fee_naira ?? 500));
+    setAbsenceFee(String(selected.absence_fee_naira ?? 1000));
     setPin({ lat: selected.latitude, lng: selected.longitude });
   }, [selectedId]); // intentionally not depending on selected object identity
 
@@ -125,8 +141,16 @@ export function AdminCompanyLocationsPage() {
     setSelectedId(null);
     setName("");
     setRadius("150");
+    setShiftMode(false);
     setLateTime("08:15");
     setCheckOutTime("17:00");
+    setMorningLate("08:30");
+    setMorningClose("16:00");
+    setFullDayLate("08:30");
+    setFullDayClose("20:00");
+    setLateFee("500");
+    setEarlyFee("500");
+    setAbsenceFee("1000");
     setPin(null);
     setSearchQuery("");
   }
@@ -210,35 +234,58 @@ export function AdminCompanyLocationsPage() {
       toast.push("error", "Radius must be a number > 0.");
       return;
     }
+    const lateFeeNum = Number(lateFee);
+    const earlyFeeNum = Number(earlyFee);
+    const absenceFeeNum = Number(absenceFee);
+    if (![lateFeeNum, earlyFeeNum, absenceFeeNum].every((x) => Number.isFinite(x) && x >= 0)) {
+      toast.push("error", "Attendance fees must be valid non-negative numbers.");
+      return;
+    }
+    if (shiftMode && (!morningLate || !morningClose || !fullDayLate || !fullDayClose)) {
+      toast.push("error", "Configure all shift times when shift mode is enabled.");
+      return;
+    }
+
+    const payload = {
+      name: n,
+      latitude: pin.lat,
+      longitude: pin.lng,
+      allowed_radius_meters: r,
+      shift_mode_enabled: shiftMode,
+      late_attendance_time: lateTime,
+      check_out_time: checkOutTime,
+      morning_shift_late_time: shiftMode ? morningLate : undefined,
+      morning_shift_closing_time: shiftMode ? morningClose : undefined,
+      full_day_shift_late_time: shiftMode ? fullDayLate : undefined,
+      full_day_shift_closing_time: shiftMode ? fullDayClose : undefined,
+      late_coming_fee_naira: lateFeeNum,
+      early_sign_out_fee_naira: earlyFeeNum,
+      absence_fee_naira: absenceFeeNum
+    };
+
     setSaving(true);
     try {
       if (selectedId) {
-        const updated = await companyLocationsApi.update(selectedId, {
-          name: n,
-          latitude: pin.lat,
-          longitude: pin.lng,
-          allowed_radius_meters: r,
-          late_attendance_time: lateTime,
-          check_out_time: checkOutTime
-        });
+        const updated = await companyLocationsApi.update(selectedId, payload);
         const rows = await refresh();
         setSelectedId(updated.id);
         const synced = rows.find((x) => x.id === updated.id) ?? updated;
         setName(synced.name ?? "");
         setRadius(String(synced.allowed_radius_meters ?? 0));
+        setShiftMode(Boolean(synced.shift_mode_enabled));
         setLateTime(toTimeInputValue(synced.late_attendance_time));
         setCheckOutTime(toTimeInputValue(synced.check_out_time, "17:00"));
+        setMorningLate(toTimeInputValue(synced.morning_shift_late_time, "08:30"));
+        setMorningClose(toTimeInputValue(synced.morning_shift_closing_time, "16:00"));
+        setFullDayLate(toTimeInputValue(synced.full_day_shift_late_time, "08:30"));
+        setFullDayClose(toTimeInputValue(synced.full_day_shift_closing_time, "20:00"));
+        setLateFee(String(synced.late_coming_fee_naira ?? 500));
+        setEarlyFee(String(synced.early_sign_out_fee_naira ?? 500));
+        setAbsenceFee(String(synced.absence_fee_naira ?? 1000));
         setPin({ lat: synced.latitude, lng: synced.longitude });
         toast.push("success", "Location updated.");
       } else {
-        await companyLocationsApi.create({
-          name: n,
-          latitude: pin.lat,
-          longitude: pin.lng,
-          allowed_radius_meters: r,
-          late_attendance_time: lateTime,
-          check_out_time: checkOutTime
-        });
+        await companyLocationsApi.create(payload);
         await refresh();
         toast.push("success", "Location created.");
         // Workflow optimization: reset immediately so admin can create the next one without extra clicks.
@@ -353,30 +400,73 @@ export function AdminCompanyLocationsPage() {
           </Button>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Input label="Location name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main Factory" />
           <Input label="Allowed radius (meters)" value={radius} onChange={(e) => setRadius(e.target.value)} inputMode="numeric" />
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-black/60">Late attendance time</label>
-            <input
-              type="time"
-              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
-              value={lateTime}
-              onChange={(e) => setLateTime(e.target.value)}
-            />
-            <div className="mt-1 text-xs text-black/50">Clock-ins after this time (Lagos) count as late.</div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-black/60">Check-out time</label>
-            <input
-              type="time"
-              className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
-              value={checkOutTime}
-              onChange={(e) => setCheckOutTime(e.target.value)}
-            />
-            <div className="mt-1 text-xs text-black/50">Expected sign-out time shown to employees at this location.</div>
-          </div>
         </div>
+
+        <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm font-semibold text-black">
+          <input type="checkbox" checked={shiftMode} onChange={(e) => setShiftMode(e.target.checked)} />
+          Shift mode (employees select shift at check-in)
+        </label>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <Input label="Late coming fee (₦)" value={lateFee} onChange={(e) => setLateFee(e.target.value)} inputMode="numeric" />
+          <Input label="Early sign-out fee (₦)" value={earlyFee} onChange={(e) => setEarlyFee(e.target.value)} inputMode="numeric" />
+          <Input label="Absence fee (₦)" value={absenceFee} onChange={(e) => setAbsenceFee(e.target.value)} inputMode="numeric" />
+        </div>
+
+        {!shiftMode ? (
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-black/60">Late time</label>
+              <input
+                type="time"
+                className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
+                value={lateTime}
+                onChange={(e) => setLateTime(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-black/60">Closing time</label>
+              <input
+                type="time"
+                className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold"
+                value={checkOutTime}
+                onChange={(e) => setCheckOutTime(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-black/60">Morning shift</p>
+              <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-black/55">Late time</label>
+                  <input type="time" className="w-full rounded-xl border border-black/15 px-3 py-2 text-sm" value={morningLate} onChange={(e) => setMorningLate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-black/55">Closing time</label>
+                  <input type="time" className="w-full rounded-xl border border-black/15 px-3 py-2 text-sm" value={morningClose} onChange={(e) => setMorningClose(e.target.value)} />
+                </div>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-black/60">Full day shift</p>
+              <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-black/55">Late time</label>
+                  <input type="time" className="w-full rounded-xl border border-black/15 px-3 py-2 text-sm" value={fullDayLate} onChange={(e) => setFullDayLate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-black/55">Closing time</label>
+                  <input type="time" className="w-full rounded-xl border border-black/15 px-3 py-2 text-sm" value={fullDayClose} onChange={(e) => setFullDayClose(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="relative z-0 isolate mt-4 overflow-hidden rounded-2xl border border-black/10 [&_.leaflet-container]:z-0">
           <MapContainer

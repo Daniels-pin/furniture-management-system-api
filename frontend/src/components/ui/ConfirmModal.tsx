@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Modal } from "./Modal";
 import { Button } from "./Button";
 
@@ -14,7 +15,7 @@ export function ConfirmModal({
 }: {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   confirmVariant?: "primary" | "secondary" | "danger" | "ghost";
@@ -25,7 +26,7 @@ export function ConfirmModal({
   return (
     <Modal open={open} title={title} onClose={() => (busy ? null : onClose())}>
       <div className="space-y-4">
-        <div className="text-sm text-black/70 whitespace-pre-wrap">{message}</div>
+        <div className="text-sm text-black/70 whitespace-pre-wrap [&_p]:mt-0">{message}</div>
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" disabled={busy} onClick={onClose}>
             {cancelLabel}

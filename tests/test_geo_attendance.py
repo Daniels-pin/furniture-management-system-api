@@ -12,8 +12,6 @@ import pytest
 
 from app import models
 from app.routes.employees import (
-    ABSENCE_DEDUCTION_NAIRA,
-    LATENESS_DEDUCTION_NAIRA,
     MIN_ATTENDANCE_SESSION_MINUTES,
     _GEO_VALIDATION_BUFFER_METERS,
     _MAX_GPS_ACCURACY_CONTRIBUTION_METERS,
@@ -157,10 +155,17 @@ def test_sunday_detection():
     assert not _is_sunday(date(2026, 5, 16))  # Saturday
 
 
-def test_lateness_deduction_500_per_count():
-    b = _salary_breakdown(Decimal("100000"), lateness_count=2, penalties_total=Decimal("0"), bonuses_total=Decimal("0"))
-    assert b.lateness_deduction_auto == LATENESS_DEDUCTION_NAIRA * 2
-    assert b.lateness_deduction == LATENESS_DEDUCTION_NAIRA * 2
+def test_lateness_deduction_from_entry_totals():
+    b = _salary_breakdown(
+        Decimal("100000"),
+        lateness_count=2,
+        penalties_total=Decimal("0"),
+        bonuses_total=Decimal("0"),
+        lateness_auto=Decimal("1000"),
+        lateness_rate=Decimal("500"),
+    )
+    assert b.lateness_deduction_auto == Decimal("1000")
+    assert b.lateness_deduction == Decimal("1000")
     assert b.lateness_rate_naira == Decimal("500")
 
 
@@ -170,6 +175,7 @@ def test_lateness_deduction_override_reduces_payroll_not_count():
         lateness_count=2,
         penalties_total=Decimal("0"),
         bonuses_total=Decimal("0"),
+        lateness_auto=Decimal("1000"),
         lateness_deduction_override=Decimal("500"),
     )
     assert b.lateness_count == 2
@@ -178,18 +184,20 @@ def test_lateness_deduction_override_reduces_payroll_not_count():
     assert b.final_payable == Decimal("99500")
 
 
-def test_absence_deduction_1000_per_count():
+def test_absence_deduction_from_entry_totals():
     b = _salary_breakdown(
         Decimal("100000"),
         lateness_count=0,
         penalties_total=Decimal("0"),
         bonuses_total=Decimal("0"),
         absence_count=2,
+        absence_auto=Decimal("2000"),
+        absence_rate=Decimal("1000"),
     )
-    assert b.absence_deduction_auto == ABSENCE_DEDUCTION_NAIRA * 2
-    assert b.absence_deduction == ABSENCE_DEDUCTION_NAIRA * 2
+    assert b.absence_deduction_auto == Decimal("2000")
+    assert b.absence_deduction == Decimal("2000")
     assert b.absence_rate_naira == Decimal("1000")
-    assert b.total_deductions == ABSENCE_DEDUCTION_NAIRA * 2
+    assert b.total_deductions == Decimal("2000")
 
 
 def test_absence_deduction_override():
@@ -199,6 +207,7 @@ def test_absence_deduction_override():
         penalties_total=Decimal("0"),
         bonuses_total=Decimal("0"),
         absence_count=3,
+        absence_auto=Decimal("3000"),
         absence_deduction_override=Decimal("1500"),
     )
     assert b.absence_count == 3
@@ -214,6 +223,8 @@ def test_salary_breakdown_zeros_attendance_deductions_when_ineligible():
         penalties_total=Decimal("0"),
         bonuses_total=Decimal("0"),
         absence_count=3,
+        lateness_auto=Decimal("1000"),
+        absence_auto=Decimal("3000"),
         apply_attendance_deductions=False,
     )
     assert b.lateness_deduction_auto == Decimal("1000")
@@ -696,7 +707,7 @@ def test_early_check_out_history_preserves_snapshot_after_location_update(client
     assert row["early_check_out_minutes"] == 60
 
 
-def test_early_check_out_does_not_add_payroll_deduction(client, geo_employee, db_session):
+def test_early_check_out_adds_payroll_deduction(client, geo_employee, db_session):
     late = datetime(2026, 5, 21, 8, 30, 0, tzinfo=LAGOS)
     with patch("app.routes.employees.now_lagos", return_value=late):
         check_in = _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON)
@@ -710,7 +721,8 @@ def test_early_check_out_does_not_add_payroll_deduction(client, geo_employee, db
     entry = check_out.json()["entry"]
     assert entry["is_early_check_out"] is True
     assert entry["status"] == "late_early_check_out"
-    assert float(entry["deduction_naira"]) == float(LATENESS_DEDUCTION_NAIRA)
+    assert float(entry["late_deduction_naira"]) == 500.0
+    assert float(entry["early_sign_out_deduction_naira"]) == 500.0
 
     late_rows = (
         db_session.query(models.EmployeeLatenessEntry)
@@ -722,6 +734,17 @@ def test_early_check_out_does_not_add_payroll_deduction(client, geo_employee, db
         .all()
     )
     assert len(late_rows) == 1
+    early_rows = (
+        db_session.query(models.EmployeeEarlySignOutEntry)
+        .filter(
+            models.EmployeeEarlySignOutEntry.employee_id == geo_employee["employee_id"],
+            models.EmployeeEarlySignOutEntry.attendance_id == entry["id"],
+            models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+        )
+        .all()
+    )
+    assert len(early_rows) == 1
+    assert float(early_rows[0].deduction_amount_naira) == 500.0
     assert db_session.query(models.EmployeePenalty).filter_by(employee_id=geo_employee["employee_id"]).count() == 0
 
 

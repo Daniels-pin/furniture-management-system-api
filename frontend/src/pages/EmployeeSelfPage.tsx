@@ -24,8 +24,10 @@ import {
   mergeAttendanceWithClockResponse,
   type AttendanceResultFeedback
 } from "../utils/attendance";
-import { formatAttendanceDuration, formatCheckOutTime, formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
+import { formatAttendanceDuration, formatLagosDateTime } from "../utils/datetime";
 import { AttendanceResultModal } from "../components/employee/AttendanceResultModal";
+import { AttendanceRulesSummary } from "../components/employee/AttendanceRulesSummary";
+import { buildAttendanceRulesSummary, lateTimeLabelForAttendance } from "../utils/attendanceRules";
 import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmployeeFinancePanel";
 
 export function EmployeeSelfPage() {
@@ -120,7 +122,13 @@ export function EmployeeSelfPage() {
       } else {
         await refreshAttendance();
       }
-      setResultFeedback(getAttendanceSuccessFeedback(res, formatLateAttendanceTime(me.work_location?.late_attendance_time)));
+      setResultFeedback(
+        getAttendanceSuccessFeedback(
+          res,
+          me.work_location ? lateTimeLabelForAttendance(me.work_location, res.entry?.selected_shift) : "closing time",
+          Number(me.work_location?.late_coming_fee_naira ?? 0)
+        )
+      );
     } catch (e) {
       setResultFeedback(getAttendanceErrorFeedback(e));
     } finally {
@@ -151,7 +159,9 @@ export function EmployeeSelfPage() {
       } else {
         await refreshAttendance();
       }
-      setResultFeedback(getAttendanceClockOutSuccessFeedback(res));
+      setResultFeedback(
+        getAttendanceClockOutSuccessFeedback(res, Number(me.work_location?.early_sign_out_fee_naira ?? 0))
+      );
     } catch (e) {
       setResultFeedback(getAttendanceClockOutErrorFeedback(e));
     } finally {
@@ -242,8 +252,7 @@ export function EmployeeSelfPage() {
   }
 
   const todayEntry = findTodayAttendanceEntry(attendance);
-  const lateTimeLabel = formatLateAttendanceTime(emp?.work_location?.late_attendance_time);
-  const checkOutTimeLabel = formatCheckOutTime(emp?.work_location?.check_out_time);
+  const rulesModel = buildAttendanceRulesSummary(emp.work_location, todayEntry);
   const checkInAllowed = canCheckInToday(todayEntry);
   const checkOutAllowed = canCheckOutToday(todayEntry);
   const dayCompleted = hasCompletedTodayAttendance(todayEntry);
@@ -260,17 +269,8 @@ export function EmployeeSelfPage() {
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
           <div>
             <div className="text-sm font-semibold text-black">Attendance</div>
-            <p className="mt-1 text-xs text-black/55">
-              Check in on arrival and sign out when you leave. Late coming attracts ₦500; unmarked workdays attract ₦1,000 absence penalty.
-            </p>
-            {emp.work_location ? (
-              <p className="mt-1 text-xs font-semibold text-black/60">
-                Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m) · Late after{" "}
-                {lateTimeLabel} · Sign out by {checkOutTimeLabel}
-              </p>
-            ) : (
-              <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>
-            )}
+            <p className="mt-1 text-xs text-black/55">Check in on arrival and sign out when you leave.</p>
+            <AttendanceRulesSummary model={rulesModel} />
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
             <Button

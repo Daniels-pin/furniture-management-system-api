@@ -76,6 +76,7 @@ export function AttendanceHistoryList({
               <div className="min-w-0">
                 <p className="font-semibold">{item.attendance_date}</p>
                 <p className="text-xs text-black/60">
+                  {item.shift_label ? `${item.shift_label} · ` : ""}
                   {item.status === "absent"
                     ? "Check in: — · Check out: —"
                     : `Check in: ${item.check_in_at ? formatLagosTime(item.check_in_at) : "—"} · Check out: ${

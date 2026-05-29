@@ -7,6 +7,7 @@ import type {
   EmployeeClockOutResponse
 } from "../types/api";
 import { BUSINESS_TIMEZONE, formatAttendanceDuration, formatLagosTime, lagosDateKey } from "./datetime";
+import { formatMoney } from "./money";
 
 const ATTENDANCE_TIMEZONE = BUSINESS_TIMEZONE;
 
@@ -386,7 +387,8 @@ export function getAttendanceBlockedNoLocationFeedback(): AttendanceResultFeedba
 
 export function getAttendanceSuccessFeedback(
   res: EmployeeClockInResponse,
-  lateTimeLabel = "8:15 AM"
+  lateTimeLabel = "closing time",
+  lateFeeNaira = 0
 ): AttendanceResultFeedback {
   if (res.status === "already_checked_in" || res.status === "already_checked_out") {
     return {
@@ -405,10 +407,12 @@ export function getAttendanceSuccessFeedback(
   const time = formatAttendanceClockInTime(res.entry?.check_in_at);
   const timePart = time ? ` at ${time}` : "";
   if (res.status === "late") {
+    const feePart =
+      lateFeeNaira > 0 ? ` A ${formatMoney(lateFeeNaira)} late-coming deduction applies.` : "";
     return {
       variant: "success",
       title: "Checked in",
-      message: `Check-in recorded${timePart}. You were marked late (after ${lateTimeLabel}). A ₦500 lateness deduction applies.`
+      message: `Check-in recorded${timePart}. You were marked late (after ${lateTimeLabel}).${feePart}`
     };
   }
   return {
@@ -418,7 +422,10 @@ export function getAttendanceSuccessFeedback(
   };
 }
 
-export function getAttendanceClockOutSuccessFeedback(res: EmployeeClockOutResponse): AttendanceResultFeedback {
+export function getAttendanceClockOutSuccessFeedback(
+  res: EmployeeClockOutResponse,
+  earlyFeeNaira = 0
+): AttendanceResultFeedback {
   if (res.status === "already_checked_out") {
     return {
       variant: "info",
@@ -443,10 +450,12 @@ export function getAttendanceClockOutSuccessFeedback(res: EmployeeClockOutRespon
   const time = formatAttendanceClockInTime(res.entry?.check_out_at);
   const timePart = time ? ` at ${time}` : "";
   if (res.entry?.is_early_check_out) {
+    const feePart =
+      earlyFeeNaira > 0 ? ` A ${formatMoney(earlyFeeNaira)} early sign-out deduction may apply.` : "";
     return {
       variant: "success",
       title: "Signed out",
-      message: `Check-out recorded${timePart}. You signed out before your location's closing time.`
+      message: `Check-out recorded${timePart}. You signed out before your location's closing time.${feePart}`
     };
   }
   return {

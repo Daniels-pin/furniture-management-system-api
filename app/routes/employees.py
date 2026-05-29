@@ -20,11 +20,9 @@ from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 from app.utils.timezone import (
-    CHECK_OUT_TIME,
     early_minutes_before_cutoff,
     lagos_date_of,
     lagos_today,
-    LATE_CUTOFF_TIME,
     late_minutes_after_cutoff,
     now_lagos,
     now_utc_naive,
@@ -59,6 +57,7 @@ from app.schemas import (
     EmployeeClockInOut,
     EmployeeClockInGeoIn,
     EmployeeClockOutOut,
+    EmployeeSignOutPreviewOut,
     EmployeeWorkLocationAssignIn,
     PayrollPeriodsNavOut,
     PayrollSummaryOut,
@@ -67,10 +66,12 @@ from app.schemas import (
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
 
-LATENESS_DEDUCTION_NAIRA = Decimal("500")
-ABSENCE_DEDUCTION_NAIRA = Decimal("1000")
 # Completed sessions shorter than this are flagged as short_session (unless early check-out already applies).
 MIN_ATTENDANCE_SESSION_MINUTES = 30
+
+SHIFT_MORNING = "morning"
+SHIFT_FULL_DAY = "full_day"
+VALID_SHIFTS = frozenset({SHIFT_MORNING, SHIFT_FULL_DAY})
 
 _MONTH_NAMES = (
     "",
@@ -145,6 +146,7 @@ def _employee_ids_with_period_footprint(db: Session, period_id: int) -> set[int]
     ids: set[int] = set()
     for model in (
         models.EmployeeLatenessEntry,
+        models.EmployeeEarlySignOutEntry,
         models.EmployeeAbsenceEntry,
         models.EmployeePenalty,
         models.EmployeeBonus,
@@ -330,28 +332,105 @@ def _is_sunday(d: date_type) -> bool:
     return d.weekday() == 6
 
 
-def _late_minutes(check_in_at: datetime, *, cutoff: time | None = None) -> int:
+def _decimal_fee(value) -> Decimal:
+    return Decimal(str(value or 0))
+
+
+def _shift_label(shift: str | None) -> str | None:
+    if shift == SHIFT_MORNING:
+        return "Morning Shift"
+    if shift == SHIFT_FULL_DAY:
+        return "Full Day Shift"
+    return None
+
+
+def _location_late_fee(loc: models.CompanyLocation | None) -> Decimal:
+    if loc is None:
+        return Decimal("0")
+    return _decimal_fee(getattr(loc, "late_coming_fee_naira", 0))
+
+
+def _location_early_sign_out_fee(loc: models.CompanyLocation | None) -> Decimal:
+    if loc is None:
+        return Decimal("0")
+    return _decimal_fee(getattr(loc, "early_sign_out_fee_naira", 0))
+
+
+def _location_absence_fee(loc: models.CompanyLocation | None) -> Decimal:
+    if loc is None:
+        return Decimal("0")
+    return _decimal_fee(getattr(loc, "absence_fee_naira", 0))
+
+
+def _shift_times_for_location(loc: models.CompanyLocation, shift: str) -> tuple[time, time]:
+    if shift == SHIFT_MORNING:
+        late_t = getattr(loc, "morning_shift_late_time", None)
+        close_t = getattr(loc, "morning_shift_closing_time", None)
+    elif shift == SHIFT_FULL_DAY:
+        late_t = getattr(loc, "full_day_shift_late_time", None)
+        close_t = getattr(loc, "full_day_shift_closing_time", None)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid shift selection.")
+    if late_t is None or close_t is None:
+        raise HTTPException(status_code=409, detail="Shift times are not configured for this location.")
+    return late_t, close_t
+
+
+def _attendance_times_for_check_in(
+    loc: models.CompanyLocation,
+    shift: str | None,
+) -> tuple[time, time, str | None]:
+    """Return (late_time, closing_time, selected_shift) for a new attendance row."""
+    if bool(getattr(loc, "shift_mode_enabled", False)):
+        if shift not in VALID_SHIFTS:
+            raise HTTPException(
+                status_code=400,
+                detail="Select today's shift before checking in.",
+            )
+        late_t, close_t = _shift_times_for_location(loc, shift)
+        return late_t, close_t, shift
+    return loc.late_attendance_time, loc.check_out_time, None
+
+
+def _late_minutes(check_in_at: datetime, *, cutoff: time) -> int:
     """Minutes after the location cutoff on the Lagos calendar day of check-in."""
-    return late_minutes_after_cutoff(check_in_at, cutoff=cutoff or LATE_CUTOFF_TIME)
+    return late_minutes_after_cutoff(check_in_at, cutoff=cutoff)
 
 
-def _early_check_out_minutes(check_out_at: datetime, *, cutoff: time | None = None) -> int:
+def _early_check_out_minutes(check_out_at: datetime, *, cutoff: time) -> int:
     """Minutes before the location closing time on the Lagos calendar day of check-out."""
-    return early_minutes_before_cutoff(check_out_at, cutoff=cutoff or CHECK_OUT_TIME)
+    return early_minutes_before_cutoff(check_out_at, cutoff=cutoff)
 
 
 def _late_cutoff_for_location(loc: models.CompanyLocation | None) -> time:
     if loc is None:
-        return LATE_CUTOFF_TIME
-    configured = getattr(loc, "late_attendance_time", None)
-    return configured if configured is not None else LATE_CUTOFF_TIME
+        raise HTTPException(status_code=409, detail="Work location is required for attendance rules.")
+    return loc.late_attendance_time
+
+
+def _late_cutoff_for_attendance_row(
+    r: models.EmployeeAttendanceEntry,
+    loc: models.CompanyLocation | None = None,
+) -> time:
+    stored = getattr(r, "expected_late_time", None)
+    if stored is not None:
+        return stored
+    shift = getattr(r, "selected_shift", None)
+    if loc is not None and shift in VALID_SHIFTS:
+        late_t, _ = _shift_times_for_location(loc, shift)
+        return late_t
+    if loc is not None:
+        return loc.late_attendance_time
+    raise HTTPException(status_code=409, detail="Attendance rules are unavailable for this record.")
 
 
 def _late_cutoff_for_employee(db: Session, emp: models.Employee) -> time:
     loc_id = getattr(emp, "work_location_id", None)
     if loc_id is None:
-        return LATE_CUTOFF_TIME
+        raise HTTPException(status_code=409, detail="No work location assigned.")
     loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+    if loc is None:
+        raise HTTPException(status_code=409, detail="Assigned work location no longer exists.")
     return _late_cutoff_for_location(loc)
 
 
@@ -425,6 +504,11 @@ def _sync_absence_entries_for_period(db: Session, employee_id: int, period: mode
         .all()
     }
 
+    loc = None
+    if emp.work_location_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    absence_fee = _location_absence_fee(loc)
+
     day = start
     while day <= end:
         if not _is_sunday(day) and day not in attended and day not in existing_absence:
@@ -434,6 +518,7 @@ def _sync_absence_entries_for_period(db: Session, employee_id: int, period: mode
                     employee_id=employee_id,
                     period_id=period.id,
                     absence_date=day,
+                    deduction_amount_naira=absence_fee,
                     note=note,
                 )
             )
@@ -527,26 +612,37 @@ def _lateness_count_for_payroll(db: Session, emp: models.Employee, period_id: in
 
 def _check_out_time_for_location(loc: models.CompanyLocation | None) -> time:
     if loc is None:
-        return CHECK_OUT_TIME
-    configured = getattr(loc, "check_out_time", None)
-    return configured if configured is not None else CHECK_OUT_TIME
+        raise HTTPException(status_code=409, detail="Work location is required for attendance rules.")
+    return loc.check_out_time
 
 
 def _check_out_time_for_employee(db: Session, emp: models.Employee) -> time:
     loc_id = getattr(emp, "work_location_id", None)
     if loc_id is None:
-        return CHECK_OUT_TIME
+        raise HTTPException(status_code=409, detail="No work location assigned.")
     loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == int(loc_id)).first()
+    if loc is None:
+        raise HTTPException(status_code=409, detail="Assigned work location no longer exists.")
     return _check_out_time_for_location(loc)
 
 
-def _closing_time_for_attendance_row(r: models.EmployeeAttendanceEntry) -> time:
+def _closing_time_for_attendance_row(
+    r: models.EmployeeAttendanceEntry,
+    loc: models.CompanyLocation | None = None,
+) -> time:
     """Closing-time snapshot for a row; prefers stored snapshot over current location config."""
     stored = getattr(r, "expected_check_out_time", None)
     if stored is not None:
         return stored
-    loc = getattr(r, "work_location", None)
-    return _check_out_time_for_location(loc)
+    if loc is None:
+        loc = getattr(r, "work_location", None)
+    shift = getattr(r, "selected_shift", None)
+    if loc is not None and shift in VALID_SHIFTS:
+        _, close_t = _shift_times_for_location(loc, shift)
+        return close_t
+    if loc is not None:
+        return loc.check_out_time
+    raise HTTPException(status_code=409, detail="Closing time is unavailable for this attendance record.")
 
 
 def _attendance_duration_minutes(r: models.EmployeeAttendanceEntry) -> Optional[int]:
@@ -562,7 +658,10 @@ def _early_check_out_minutes_for_row(r: models.EmployeeAttendanceEntry) -> Optio
     stored = getattr(r, "early_check_out_minutes", None)
     if stored is not None:
         return int(stored)
-    mins = _early_check_out_minutes(r.check_out_at, cutoff=_closing_time_for_attendance_row(r))
+    mins = _early_check_out_minutes(
+        r.check_out_at,
+        cutoff=_closing_time_for_attendance_row(r, getattr(r, "work_location", None)),
+    )
     return mins if mins > 0 else None
 
 
@@ -605,6 +704,187 @@ def _resolve_attendance_status(
     return "present"
 
 
+def _lateness_deduction_sum_for_payroll(db: Session, emp: models.Employee, period_id: int) -> Decimal:
+    if not _attendance_deductions_apply(db, emp, period_id):
+        return Decimal("0")
+    q = (
+        db.query(func.coalesce(func.sum(models.EmployeeLatenessEntry.deduction_amount_naira), 0))
+        .filter(
+            models.EmployeeLatenessEntry.employee_id == emp.id,
+            models.EmployeeLatenessEntry.period_id == period_id,
+            models.EmployeeLatenessEntry.voided_at.is_(None),
+        )
+    )
+    if not _period_paid(db, emp.id, period_id):
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeLatenessEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            ).filter(
+                or_(
+                    models.EmployeeAttendanceEntry.attendance_date >= assigned,
+                    and_(
+                        models.EmployeeLatenessEntry.attendance_id.is_(None),
+                        func.date(models.EmployeeLatenessEntry.created_at) >= assigned,
+                    ),
+                )
+            )
+    return _decimal_fee(q.scalar())
+
+
+def _early_sign_out_count_for_payroll(db: Session, emp: models.Employee, period_id: int) -> int:
+    if not _attendance_deductions_apply(db, emp, period_id):
+        return 0
+    q = (
+        db.query(func.count(models.EmployeeEarlySignOutEntry.id))
+        .filter(
+            models.EmployeeEarlySignOutEntry.employee_id == emp.id,
+            models.EmployeeEarlySignOutEntry.period_id == period_id,
+            models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+        )
+    )
+    if not _period_paid(db, emp.id, period_id):
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeEarlySignOutEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            ).filter(
+                or_(
+                    models.EmployeeAttendanceEntry.attendance_date >= assigned,
+                    and_(
+                        models.EmployeeEarlySignOutEntry.attendance_id.is_(None),
+                        func.date(models.EmployeeEarlySignOutEntry.created_at) >= assigned,
+                    ),
+                )
+            )
+    return int(q.scalar() or 0)
+
+
+def _early_sign_out_deduction_sum_for_payroll(db: Session, emp: models.Employee, period_id: int) -> Decimal:
+    if not _attendance_deductions_apply(db, emp, period_id):
+        return Decimal("0")
+    q = (
+        db.query(func.coalesce(func.sum(models.EmployeeEarlySignOutEntry.deduction_amount_naira), 0))
+        .filter(
+            models.EmployeeEarlySignOutEntry.employee_id == emp.id,
+            models.EmployeeEarlySignOutEntry.period_id == period_id,
+            models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+        )
+    )
+    if not _period_paid(db, emp.id, period_id):
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeEarlySignOutEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            ).filter(
+                or_(
+                    models.EmployeeAttendanceEntry.attendance_date >= assigned,
+                    and_(
+                        models.EmployeeEarlySignOutEntry.attendance_id.is_(None),
+                        func.date(models.EmployeeEarlySignOutEntry.created_at) >= assigned,
+                    ),
+                )
+            )
+    return _decimal_fee(q.scalar())
+
+
+def _absence_deduction_sum_for_payroll(db: Session, emp: models.Employee, period: models.SalaryPeriod) -> Decimal:
+    if not _attendance_deductions_apply(db, emp, period.id):
+        return Decimal("0")
+    ac = _absence_count_for_period(db, emp.id, period)
+    if ac == 0:
+        return Decimal("0")
+    q = (
+        db.query(func.coalesce(func.sum(models.EmployeeAbsenceEntry.deduction_amount_naira), 0))
+        .filter(
+            models.EmployeeAbsenceEntry.employee_id == emp.id,
+            models.EmployeeAbsenceEntry.period_id == period.id,
+            models.EmployeeAbsenceEntry.voided_at.is_(None),
+        )
+    )
+    if not _period_paid(db, emp.id, period.id):
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            q = q.filter(models.EmployeeAbsenceEntry.absence_date >= assigned)
+    return _decimal_fee(q.scalar())
+
+
+def _location_rates_for_employee(db: Session, emp: models.Employee) -> tuple[Decimal, Decimal, Decimal]:
+    loc = None
+    if emp.work_location_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    return (
+        _location_late_fee(loc),
+        _location_early_sign_out_fee(loc),
+        _location_absence_fee(loc),
+    )
+
+
+def _create_lateness_entry(
+    db: Session,
+    *,
+    emp: models.Employee,
+    period_id: int,
+    attendance_id: int,
+    note: str,
+    fee: Decimal,
+) -> models.EmployeeLatenessEntry:
+    existing = (
+        db.query(models.EmployeeLatenessEntry)
+        .filter(
+            models.EmployeeLatenessEntry.attendance_id == attendance_id,
+            models.EmployeeLatenessEntry.voided_at.is_(None),
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    le = models.EmployeeLatenessEntry(
+        employee_id=emp.id,
+        period_id=period_id,
+        attendance_id=attendance_id,
+        deduction_amount_naira=fee,
+        note=note,
+    )
+    db.add(le)
+    db.flush()
+    return le
+
+
+def _create_early_sign_out_entry(
+    db: Session,
+    *,
+    emp: models.Employee,
+    period_id: int,
+    attendance_id: int,
+    note: str,
+    fee: Decimal,
+) -> models.EmployeeEarlySignOutEntry:
+    existing = (
+        db.query(models.EmployeeEarlySignOutEntry)
+        .filter(
+            models.EmployeeEarlySignOutEntry.attendance_id == attendance_id,
+            models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    row = models.EmployeeEarlySignOutEntry(
+        employee_id=emp.id,
+        period_id=period_id,
+        attendance_id=attendance_id,
+        deduction_amount_naira=fee,
+        note=note,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _attendance_history_from_row(
     r: models.EmployeeAttendanceEntry,
     *,
@@ -619,6 +899,21 @@ def _attendance_history_from_row(
     early_check_out_minutes = _early_check_out_minutes_for_row(r)
     attendance_duration_minutes = _attendance_duration_minutes(r)
     status = _resolve_attendance_status(r, today=today)
+    early_id = getattr(getattr(r, "early_sign_out_entry", None), "id", None)
+    loc = getattr(r, "work_location", None)
+    late_fee = Decimal("0")
+    if is_late and late_id is not None:
+        le = getattr(r, "lateness_entry", None)
+        late_fee = _decimal_fee(getattr(le, "deduction_amount_naira", None) if le else None)
+        if late_fee <= 0:
+            late_fee = _location_late_fee(loc)
+    early_fee = Decimal("0")
+    if is_early_check_out and early_id is not None:
+        ese = getattr(r, "early_sign_out_entry", None)
+        early_fee = _decimal_fee(getattr(ese, "deduction_amount_naira", None) if ese else None)
+        if early_fee <= 0:
+            early_fee = _location_early_sign_out_fee(loc)
+    shift_key = getattr(r, "selected_shift", None)
     return EmployeeAttendanceHistoryOut(
         id=r.id,
         record_type="attendance",
@@ -628,14 +923,20 @@ def _attendance_history_from_row(
         status=status,  # type: ignore[arg-type]
         check_in_at=r.check_in_at,
         check_out_at=r.check_out_at,
+        selected_shift=shift_key if shift_key in VALID_SHIFTS else None,  # type: ignore[arg-type]
+        shift_label=_shift_label(shift_key),
+        expected_late_time=getattr(r, "expected_late_time", None),
         is_late=is_late,
         late_minutes=r.late_minutes,
         is_early_check_out=is_early_check_out,
         early_check_out_minutes=early_check_out_minutes,
         expected_check_out_time=getattr(r, "expected_check_out_time", None),
         attendance_duration_minutes=attendance_duration_minutes,
-        deduction_naira=LATENESS_DEDUCTION_NAIRA if is_late else Decimal("0"),
+        late_deduction_naira=late_fee,
+        early_sign_out_deduction_naira=early_fee,
+        deduction_naira=late_fee + early_fee,
         lateness_entry_id=int(late_id) if late_id is not None else None,
+        early_sign_out_entry_id=int(early_id) if early_id is not None else None,
         absence_entry_id=None,
         work_location_id=r.work_location_id,
         employee_latitude=r.employee_latitude,
@@ -703,8 +1004,11 @@ def _build_attendance_history(
                 early_check_out_minutes=None,
                 expected_check_out_time=None,
                 attendance_duration_minutes=None,
-                deduction_naira=ABSENCE_DEDUCTION_NAIRA,
+                late_deduction_naira=Decimal("0"),
+                early_sign_out_deduction_naira=Decimal("0"),
+                deduction_naira=_decimal_fee(getattr(a, "deduction_amount_naira", 0)),
                 lateness_entry_id=None,
+                early_sign_out_entry_id=None,
                 absence_entry_id=a.id,
                 work_location_id=None,
                 employee_latitude=None,
@@ -952,6 +1256,7 @@ def _payroll_breakdown_kwargs(payroll: Optional[models.EmployeePeriodPayroll]) -
             "adjustment_late_penalty": Decimal("0"),
             "lateness_deduction_override": None,
             "absence_deduction_override": None,
+            "early_sign_out_deduction_override": None,
             "adjustment_note": None,
         }
     return {
@@ -969,6 +1274,11 @@ def _payroll_breakdown_kwargs(payroll: Optional[models.EmployeePeriodPayroll]) -
             if getattr(payroll, "absence_deduction_override", None) is not None
             else None
         ),
+        "early_sign_out_deduction_override": (
+            Decimal(str(payroll.early_sign_out_deduction_override))
+            if getattr(payroll, "early_sign_out_deduction_override", None) is not None
+            else None
+        ),
         "adjustment_note": getattr(payroll, "adjustment_note", None),
     }
 
@@ -979,33 +1289,43 @@ def _salary_breakdown(
     penalties_total: Decimal,
     bonuses_total: Decimal,
     *,
+    lateness_auto: Decimal = Decimal("0"),
+    early_sign_out_count: int = 0,
+    early_sign_out_auto: Decimal = Decimal("0"),
     absence_count: int = 0,
+    absence_auto: Decimal = Decimal("0"),
+    lateness_rate: Optional[Decimal] = None,
+    early_sign_out_rate: Optional[Decimal] = None,
+    absence_rate: Optional[Decimal] = None,
     period_base_salary: Optional[Decimal] = None,
     adjustment_bonus: Decimal = Decimal("0"),
     adjustment_deduction: Decimal = Decimal("0"),
     adjustment_late_penalty: Decimal = Decimal("0"),
     lateness_deduction_override: Optional[Decimal] = None,
     absence_deduction_override: Optional[Decimal] = None,
+    early_sign_out_deduction_override: Optional[Decimal] = None,
     adjustment_note: Optional[str] = None,
     apply_attendance_deductions: bool = True,
 ) -> EmployeeSalaryBreakdown:
-    lateness_rate = LATENESS_DEDUCTION_NAIRA
-    absence_rate = ABSENCE_DEDUCTION_NAIRA
-    lateness_auto = lateness_rate * Decimal(lateness_count)
-    absence_auto = absence_rate * Decimal(absence_count)
     if apply_attendance_deductions:
         lateness_ded = lateness_deduction_override if lateness_deduction_override is not None else lateness_auto
+        early_ded = (
+            early_sign_out_deduction_override
+            if early_sign_out_deduction_override is not None
+            else early_sign_out_auto
+        )
         absence_ded = absence_deduction_override if absence_deduction_override is not None else absence_auto
     else:
         lateness_ded = Decimal("0")
+        early_ded = Decimal("0")
         absence_ded = Decimal("0")
     base_used = period_base_salary if period_base_salary is not None else base
     penalties_entries_total = penalties_total
     bonuses_entries_total = bonuses_total
     bonuses_total_all = bonuses_entries_total + (adjustment_bonus or Decimal("0"))
     penalties_total_all = penalties_entries_total + (adjustment_deduction or Decimal("0")) + (adjustment_late_penalty or Decimal("0"))
-    total_ded = lateness_ded + absence_ded + penalties_total_all
-    final = base_used - lateness_ded - absence_ded - penalties_total_all + bonuses_total_all
+    total_ded = lateness_ded + early_ded + absence_ded + penalties_total_all
+    final = base_used - lateness_ded - early_ded - absence_ded - penalties_total_all + bonuses_total_all
     return EmployeeSalaryBreakdown(
         base_salary_used=base_used,
         base_salary=base_used,
@@ -1015,6 +1335,11 @@ def _salary_breakdown(
         lateness_deduction=lateness_ded,
         lateness_deduction_override=lateness_deduction_override,
         lateness_rate_naira=lateness_rate,
+        early_sign_out_count=early_sign_out_count,
+        early_sign_out_deduction_auto=early_sign_out_auto,
+        early_sign_out_deduction=early_ded,
+        early_sign_out_deduction_override=early_sign_out_deduction_override,
+        early_sign_out_rate_naira=early_sign_out_rate,
         absence_count=absence_count,
         absence_deduction_auto=absence_auto,
         absence_deduction=absence_ded,
@@ -1054,14 +1379,23 @@ def _payroll_salary_for_employee(
 ) -> EmployeeSalaryBreakdown:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     lc = _lateness_count_for_payroll(db, emp, period.id) + lateness_extra
+    esc = _early_sign_out_count_for_payroll(db, emp, period.id)
     ac = _absence_count_for_period(db, emp.id, period)
     apply_att = _attendance_deductions_apply(db, emp, period.id)
+    late_rate, early_rate, abs_rate = _location_rates_for_employee(db, emp)
     return _salary_breakdown(
         base,
         lc,
         penalties_total,
         bonuses_total,
+        lateness_auto=_lateness_deduction_sum_for_payroll(db, emp, period.id),
+        early_sign_out_count=esc,
+        early_sign_out_auto=_early_sign_out_deduction_sum_for_payroll(db, emp, period.id),
         absence_count=ac,
+        absence_auto=_absence_deduction_sum_for_payroll(db, emp, period),
+        lateness_rate=late_rate,
+        early_sign_out_rate=early_rate,
+        absence_rate=abs_rate,
         apply_attendance_deductions=apply_att,
         **_payroll_breakdown_kwargs(payroll),
     )
@@ -1173,18 +1507,7 @@ def _list_item(
     payroll: Optional[models.EmployeePeriodPayroll],
 ) -> EmployeeListItemOut:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
-    lc = _lateness_count_for_payroll(db, emp, period.id)
-    ac = _absence_count_for_period(db, emp.id, period)
-    apply_att = _attendance_deductions_apply(db, emp, period.id)
-    salary = _salary_breakdown(
-        base,
-        lc,
-        penalties_total,
-        bonuses_total,
-        absence_count=ac,
-        apply_attendance_deductions=apply_att,
-        **_payroll_breakdown_kwargs(payroll),
-    )
+    salary = _payroll_salary_for_employee(db, emp, period, penalties_total, bonuses_total, payroll=payroll)
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -1366,6 +1689,7 @@ def payroll_summary(
     payroll_map = _payroll_map_for_period(db, period.id)
     total_base = Decimal("0")
     total_lat = Decimal("0")
+    total_early = Decimal("0")
     total_abs = Decimal("0")
     total_pen = Decimal("0")
     total_bon = Decimal("0")
@@ -1375,20 +1699,10 @@ def payroll_summary(
         base = e.base_salary if e.base_salary is not None else Decimal("0")
         pt = pen_map.get(e.id, Decimal("0"))
         bt = bon_map.get(e.id, Decimal("0"))
-        lc = _lateness_count_for_payroll(db, e, period.id)
-        ac = _absence_count_for_period(db, e.id, period)
-        apply_att = _attendance_deductions_apply(db, e, period.id)
-        br = _salary_breakdown(
-            base,
-            lc,
-            pt,
-            bt,
-            absence_count=ac,
-            apply_attendance_deductions=apply_att,
-            **_payroll_breakdown_kwargs(payroll_map.get(e.id)),
-        )
+        br = _payroll_salary_for_employee(db, e, period, pt, bt, payroll=payroll_map.get(e.id))
         total_base += br.base_salary_used
         total_lat += br.lateness_deduction
+        total_early += br.early_sign_out_deduction
         total_abs += br.absence_deduction
         total_pen += br.penalties_total
         total_bon += br.bonuses_total
@@ -1399,6 +1713,7 @@ def payroll_summary(
         employee_count=len(emps),
         total_base_salary=total_base,
         total_lateness_deductions=total_lat,
+        total_early_sign_out_deductions=total_early,
         total_absence_deductions=total_abs,
         total_penalties=total_pen,
         total_bonuses=total_bon,
@@ -1629,8 +1944,17 @@ def clock_in_my_attendance(
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
-    cutoff = _late_cutoff_for_employee(db, emp)
-    mins = _late_minutes(now, cutoff=cutoff)
+    loc = None
+    if emp.work_location_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    if loc is not None and bool(getattr(loc, "shift_mode_enabled", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="This location requires shift selection. Use geo check-in with a selected shift.",
+        )
+    late_t = loc.late_attendance_time if loc is not None else time(8, 15)
+    close_t = loc.check_out_time if loc is not None else time(17, 0)
+    mins = _late_minutes(now, cutoff=late_t)
     is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
@@ -1638,35 +1962,28 @@ def clock_in_my_attendance(
         period_id=period.id,
         attendance_date=today,
         check_in_at=utc_naive_from(now),
+        expected_late_time=late_t,
+        expected_check_out_time=close_t,
         is_late=is_late,
         late_minutes=mins if is_late else 0,
+        work_location_id=loc.id if loc is not None else None,
     )
     db.add(att)
     db.flush()
     _remove_absence_for_date(db, emp.id, today)
 
     lateness_entry_id: Optional[int] = None
-    if is_late and emp.work_location_id is not None:
-        # Prevent duplicates defensively (unique constraint also guards this).
-        existing_late = (
-            db.query(models.EmployeeLatenessEntry)
-            .filter(
-                models.EmployeeLatenessEntry.attendance_id == att.id,
-                models.EmployeeLatenessEntry.voided_at.is_(None),
-            )
-            .first()
+    if is_late and emp.work_location_id is not None and loc is not None:
+        late_note = f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
+        le = _create_lateness_entry(
+            db,
+            emp=emp,
+            period_id=period.id,
+            attendance_id=att.id,
+            note=late_note,
+            fee=_location_late_fee(loc),
         )
-        if existing_late is None:
-            late_note = f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
-            le = models.EmployeeLatenessEntry(
-                employee_id=emp.id,
-                period_id=period.id,
-                attendance_id=att.id,
-                note=late_note,
-            )
-            db.add(le)
-            db.flush()
-            lateness_entry_id = int(le.id)
+        lateness_entry_id = int(le.id)
 
     # Lightweight action log for audit (no retention issues since action_logs are already managed).
     _log_payroll(
@@ -1771,8 +2088,8 @@ def clock_in_my_attendance_geo(
 
     ensure_payroll_periods_current(db)
     period = get_or_create_period(db, today.year, today.month)
-    cutoff = _late_cutoff_for_location(loc)
-    mins = _late_minutes(now, cutoff=cutoff)
+    late_t, close_t, selected_shift = _attendance_times_for_check_in(loc, body.shift)
+    mins = _late_minutes(now, cutoff=late_t)
     is_late = mins > 0
 
     att = models.EmployeeAttendanceEntry(
@@ -1780,6 +2097,9 @@ def clock_in_my_attendance_geo(
         period_id=period.id,
         attendance_date=today,
         check_in_at=utc_naive_from(now),
+        selected_shift=selected_shift,
+        expected_late_time=late_t,
+        expected_check_out_time=close_t,
         is_late=is_late,
         late_minutes=mins if is_late else 0,
         work_location_id=loc.id,
@@ -1793,27 +2113,16 @@ def clock_in_my_attendance_geo(
 
     lateness_entry_id: Optional[int] = None
     if is_late:
-        existing_late = (
-            db.query(models.EmployeeLatenessEntry)
-            .filter(
-                models.EmployeeLatenessEntry.attendance_id == att.id,
-                models.EmployeeLatenessEntry.voided_at.is_(None),
-            )
-            .first()
+        late_note = f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
+        le = _create_lateness_entry(
+            db,
+            emp=emp,
+            period_id=period.id,
+            attendance_id=att.id,
+            note=late_note,
+            fee=_location_late_fee(loc),
         )
-        if existing_late is None:
-            late_note = (
-                f"Late attendance: {today.isoformat()} (clock-in {to_lagos(now).strftime('%H:%M')})"
-            )
-            le = models.EmployeeLatenessEntry(
-                employee_id=emp.id,
-                period_id=period.id,
-                attendance_id=att.id,
-                note=late_note,
-            )
-            db.add(le)
-            db.flush()
-            lateness_entry_id = int(le.id)
+        lateness_entry_id = int(le.id)
 
     _log_payroll(
         db,
@@ -1924,11 +2233,29 @@ def clock_out_my_attendance_geo(
     if att.work_location_id is None:
         att.work_location_id = loc.id
 
-    expected_check_out = _check_out_time_for_location(loc)
+    expected_check_out = _closing_time_for_attendance_row(att, loc)
     early_mins = _early_check_out_minutes(att.check_out_at, cutoff=expected_check_out)
     att.is_early_check_out = early_mins > 0
     att.early_check_out_minutes = early_mins if early_mins > 0 else None
-    att.expected_check_out_time = expected_check_out
+    if att.expected_check_out_time is None:
+        att.expected_check_out_time = expected_check_out
+
+    early_sign_out_entry_id: Optional[int] = None
+    if att.is_early_check_out and emp.work_location_id is not None:
+        shift_part = f" ({_shift_label(att.selected_shift)})" if att.selected_shift else ""
+        early_note = (
+            f"Early sign-out: {today.isoformat()}{shift_part} "
+            f"(clock-out {to_lagos(now).strftime('%H:%M')}, closing {expected_check_out.strftime('%H:%M')})"
+        )
+        ese = _create_early_sign_out_entry(
+            db,
+            emp=emp,
+            period_id=att.period_id,
+            attendance_id=att.id,
+            note=early_note,
+            fee=_location_early_sign_out_fee(loc),
+        )
+        early_sign_out_entry_id = int(ese.id)
 
     _log_payroll(
         db,
@@ -1950,6 +2277,7 @@ def clock_out_my_attendance_geo(
             "expected_check_out_time": expected_check_out.strftime("%H:%M"),
             "is_early_check_out": att.is_early_check_out,
             "early_check_out_minutes": att.early_check_out_minutes,
+            "early_sign_out_entry_id": early_sign_out_entry_id,
         },
     )
     db.commit()
@@ -1959,11 +2287,73 @@ def clock_out_my_attendance_geo(
     out = _attendance_row_to_history(att, lateness_entry_id=int(late_id) if late_id is not None else None)
     message = "Check-out recorded."
     if att.is_early_check_out:
-        message = "Check-out recorded. You signed out before your location's closing time."
+        fee = _location_early_sign_out_fee(loc)
+        message = (
+            f"Check-out recorded. Early sign-out before closing time; "
+            f"a deduction of ₦{fee:,.0f} may apply."
+        )
     return EmployeeClockOutOut(
         status="checked_out",
         message=message,
         entry=out,
+    )
+
+
+@router.get("/me/attendance/sign-out-preview", response_model=EmployeeSignOutPreviewOut)
+def preview_sign_out_my_attendance(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Preview sign-out confirmation using the shift locked at check-in."""
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="No employee profile linked to your account.")
+    if emp.work_location_id is None:
+        raise HTTPException(status_code=409, detail="No work location assigned.")
+
+    loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    if loc is None:
+        raise HTTPException(status_code=409, detail="Your assigned work location no longer exists.")
+
+    now = now_lagos()
+    today = now.date()
+    att = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(
+            models.EmployeeAttendanceEntry.employee_id == emp.id,
+            models.EmployeeAttendanceEntry.attendance_date == today,
+        )
+        .first()
+    )
+    if att is None:
+        raise HTTPException(status_code=409, detail="You have not checked in today.")
+    if att.check_out_at is not None:
+        raise HTTPException(status_code=409, detail="You have already signed out for today.")
+
+    closing = _closing_time_for_attendance_row(att, loc)
+    early_mins = _early_check_out_minutes(utc_naive_from(now), cutoff=closing)
+    is_early = early_mins > 0
+    fee = _location_early_sign_out_fee(loc) if is_early else Decimal("0")
+    shift_label = _shift_label(getattr(att, "selected_shift", None))
+    closing_label = closing.strftime("%I:%M %p").lstrip("0")
+    current_label = now.strftime("%I:%M %p").lstrip("0")
+    if is_early:
+        message = (
+            "This will be recorded as an early sign-out and a deduction may apply."
+        )
+    else:
+        message = "You are signing out at or after your closing time."
+    return EmployeeSignOutPreviewOut(
+        shift_label=shift_label,
+        closing_time=closing_label,
+        current_time=current_label,
+        is_early_sign_out=is_early,
+        early_sign_out_fee_naira=fee,
+        message=message,
     )
 
 
@@ -2281,8 +2671,9 @@ def patch_employee_payroll_adjustments(
     lateness_count = _lateness_count_for_payroll(db, emp, period.id)
     ac = _absence_count_for_period(db, employee_id, period)
     apply_att = _attendance_deductions_apply(db, emp, period.id)
-    auto_lateness = LATENESS_DEDUCTION_NAIRA * Decimal(lateness_count)
-    auto_absence = ABSENCE_DEDUCTION_NAIRA * Decimal(ac)
+    auto_lateness = _lateness_deduction_sum_for_payroll(db, emp, period.id)
+    auto_early = _early_sign_out_deduction_sum_for_payroll(db, emp, period.id)
+    auto_absence = _absence_deduction_sum_for_payroll(db, emp, period)
 
     if body.period_base_salary is not None:
         payroll.period_base_salary = body.period_base_salary
@@ -2301,6 +2692,12 @@ def patch_employee_payroll_adjustments(
         payroll.absence_deduction_override = (
             body.absence_deduction if body.absence_deduction != auto_absence else None
         )
+    if body.early_sign_out_deduction is not None:
+        payroll.early_sign_out_deduction_override = (
+            body.early_sign_out_deduction
+            if body.early_sign_out_deduction != auto_early
+            else None
+        )
     if body.note is not None:
         payroll.adjustment_note = body.note
 
@@ -2308,18 +2705,9 @@ def patch_employee_payroll_adjustments(
     payroll.updated_by_id = current_user.id
     emp.updated_at = now_utc_naive()
 
-    base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     pen_entries = sum((p.amount for p in penalties), Decimal("0"))
     bon_entries = sum((b.amount for b in bonuses), Decimal("0"))
-    projected = _salary_breakdown(
-        base,
-        lateness_count,
-        pen_entries,
-        bon_entries,
-        absence_count=ac,
-        apply_attendance_deductions=apply_att,
-        **_payroll_breakdown_kwargs(payroll),
-    )
+    projected = _payroll_salary_for_employee(db, emp, period, pen_entries, bon_entries, payroll=payroll)
     _validate_breakdown(projected)
 
     _log_payroll(
@@ -2446,19 +2834,37 @@ def add_lateness_entry(
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     pen = sum((p.amount for p in penalties), Decimal("0"))
     bon = sum((b.amount for b in bonuses), Decimal("0"))
+    loc = None
+    if emp.work_location_id is not None:
+        loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    late_fee = _location_late_fee(loc)
     apply_att = _attendance_deductions_apply(db, emp, period.id)
-    projected = _payroll_salary_for_employee(
-        db,
-        emp,
-        period,
-        pen,
-        bon,
-        lateness_extra=1 if apply_att else 0,
-        payroll=payroll,
-    )
+    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+    if apply_att:
+        projected = _salary_breakdown(
+            emp.base_salary if emp.base_salary is not None else Decimal("0"),
+            _lateness_count_for_payroll(db, emp, period.id) + 1,
+            pen,
+            bon,
+            lateness_auto=_lateness_deduction_sum_for_payroll(db, emp, period.id) + late_fee,
+            early_sign_out_count=_early_sign_out_count_for_payroll(db, emp, period.id),
+            early_sign_out_auto=_early_sign_out_deduction_sum_for_payroll(db, emp, period.id),
+            absence_count=_absence_count_for_period(db, emp.id, period),
+            absence_auto=_absence_deduction_sum_for_payroll(db, emp, period),
+            lateness_rate=_location_late_fee(loc),
+            early_sign_out_rate=_location_early_sign_out_fee(loc),
+            absence_rate=_location_absence_fee(loc),
+            apply_attendance_deductions=True,
+            **_payroll_breakdown_kwargs(payroll),
+        )
     _validate_breakdown(projected)
 
-    row = models.EmployeeLatenessEntry(employee_id=employee_id, period_id=period.id, note=body.note)
+    row = models.EmployeeLatenessEntry(
+        employee_id=employee_id,
+        period_id=period.id,
+        note=body.note,
+        deduction_amount_naira=late_fee if apply_att else None,
+    )
     db.add(row)
     emp.updated_at = now_utc_naive()
     db.flush()

@@ -1025,20 +1025,38 @@ class EmployeeLatenessEntryOut(BaseModel):
         from_attributes = True
 
 
+AttendanceShiftKey = Literal["morning", "full_day"]
+
+
 class CompanyLocationOut(BaseModel):
     id: int
     name: str
     latitude: float
     longitude: float
     allowed_radius_meters: int
+    shift_mode_enabled: bool = False
     late_attendance_time: time
     check_out_time: time
+    morning_shift_late_time: Optional[time] = None
+    morning_shift_closing_time: Optional[time] = None
+    full_day_shift_late_time: Optional[time] = None
+    full_day_shift_closing_time: Optional[time] = None
+    late_coming_fee_naira: Decimal
+    early_sign_out_fee_naira: Decimal
+    absence_fee_naira: Decimal
     created_at: datetime
 
-    @field_serializer("late_attendance_time", "check_out_time")
+    @field_serializer(
+        "late_attendance_time",
+        "check_out_time",
+        "morning_shift_late_time",
+        "morning_shift_closing_time",
+        "full_day_shift_late_time",
+        "full_day_shift_closing_time",
+    )
     @classmethod
-    def _serialize_location_time(cls, v: time) -> str:
-        return v.strftime("%H:%M")
+    def _serialize_location_time(cls, v: Optional[time]) -> Optional[str]:
+        return v.strftime("%H:%M") if v is not None else None
 
     class Config:
         from_attributes = True
@@ -1069,8 +1087,16 @@ class CompanyLocationCreate(BaseModel):
     latitude: float
     longitude: float
     allowed_radius_meters: int = Field(..., ge=1, le=200_000)
+    shift_mode_enabled: bool = False
     late_attendance_time: time = Field(default=time(8, 15))
     check_out_time: time = Field(default=time(17, 0))
+    morning_shift_late_time: Optional[time] = None
+    morning_shift_closing_time: Optional[time] = None
+    full_day_shift_late_time: Optional[time] = None
+    full_day_shift_closing_time: Optional[time] = None
+    late_coming_fee_naira: Decimal = Field(default=Decimal("500"), ge=0)
+    early_sign_out_fee_naira: Decimal = Field(default=Decimal("500"), ge=0)
+    absence_fee_naira: Decimal = Field(default=Decimal("1000"), ge=0)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1079,10 +1105,40 @@ class CompanyLocationCreate(BaseModel):
             return v
         return str(v).strip()
 
-    @field_validator("late_attendance_time", "check_out_time", mode="before")
+    @field_validator(
+        "late_attendance_time",
+        "check_out_time",
+        "morning_shift_late_time",
+        "morning_shift_closing_time",
+        "full_day_shift_late_time",
+        "full_day_shift_closing_time",
+        mode="before",
+    )
     @classmethod
     def _parse_location_time_create(cls, v: object) -> object:
+        if v is None:
+            return None
         return _parse_attendance_time(v)
+
+    @model_validator(mode="after")
+    def _validate_shift_config(self) -> "CompanyLocationCreate":
+        if self.shift_mode_enabled:
+            missing = [
+                name
+                for name, val in (
+                    ("morning_shift_late_time", self.morning_shift_late_time),
+                    ("morning_shift_closing_time", self.morning_shift_closing_time),
+                    ("full_day_shift_late_time", self.full_day_shift_late_time),
+                    ("full_day_shift_closing_time", self.full_day_shift_closing_time),
+                )
+                if val is None
+            ]
+            if missing:
+                raise ValueError(
+                    "When shift mode is enabled, all shift times must be configured: "
+                    + ", ".join(missing)
+                )
+        return self
 
 
 class CompanyLocationUpdate(BaseModel):
@@ -1090,8 +1146,16 @@ class CompanyLocationUpdate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     allowed_radius_meters: Optional[int] = Field(None, ge=1, le=200_000)
+    shift_mode_enabled: Optional[bool] = None
     late_attendance_time: Optional[time] = None
     check_out_time: Optional[time] = None
+    morning_shift_late_time: Optional[time] = None
+    morning_shift_closing_time: Optional[time] = None
+    full_day_shift_late_time: Optional[time] = None
+    full_day_shift_closing_time: Optional[time] = None
+    late_coming_fee_naira: Optional[Decimal] = Field(None, ge=0)
+    early_sign_out_fee_naira: Optional[Decimal] = Field(None, ge=0)
+    absence_fee_naira: Optional[Decimal] = Field(None, ge=0)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1101,7 +1165,15 @@ class CompanyLocationUpdate(BaseModel):
         s = str(v).strip()
         return s or None
 
-    @field_validator("late_attendance_time", "check_out_time", mode="before")
+    @field_validator(
+        "late_attendance_time",
+        "check_out_time",
+        "morning_shift_late_time",
+        "morning_shift_closing_time",
+        "full_day_shift_late_time",
+        "full_day_shift_closing_time",
+        mode="before",
+    )
     @classmethod
     def _parse_location_time_update(cls, v: object) -> object:
         if v is None:
@@ -1116,12 +1188,16 @@ class EmployeeAttendanceEntryOut(BaseModel):
     attendance_date: date
     check_in_at: datetime
     check_out_at: Optional[datetime] = None
+    selected_shift: Optional[AttendanceShiftKey] = None
+    shift_label: Optional[str] = None
+    expected_late_time: Optional[time] = None
     is_late: bool = False
     late_minutes: Optional[int] = None
     is_early_check_out: bool = False
     early_check_out_minutes: Optional[int] = None
     expected_check_out_time: Optional[time] = None
     lateness_entry_id: Optional[int] = None
+    early_sign_out_entry_id: Optional[int] = None
     work_location_id: Optional[int] = None
     employee_latitude: Optional[float] = None
     employee_longitude: Optional[float] = None
@@ -1135,8 +1211,8 @@ class EmployeeAttendanceEntryOut(BaseModel):
     def _serialize_attendance_times(self, v: Optional[datetime]) -> Optional[datetime]:
         return datetime_for_api(v) if v is not None else None
 
-    @field_serializer("expected_check_out_time")
-    def _serialize_expected_check_out_time(self, v: Optional[time]) -> Optional[str]:
+    @field_serializer("expected_check_out_time", "expected_late_time")
+    def _serialize_expected_times(self, v: Optional[time]) -> Optional[str]:
         return v.strftime("%H:%M") if v is not None else None
 
     class Config:
@@ -1163,14 +1239,20 @@ class EmployeeAttendanceHistoryOut(BaseModel):
     ]
     check_in_at: Optional[datetime] = None
     check_out_at: Optional[datetime] = None
+    selected_shift: Optional[AttendanceShiftKey] = None
+    shift_label: Optional[str] = None
+    expected_late_time: Optional[time] = None
     is_late: bool = False
     late_minutes: Optional[int] = None
     is_early_check_out: bool = False
     early_check_out_minutes: Optional[int] = None
     expected_check_out_time: Optional[time] = None
     attendance_duration_minutes: Optional[int] = None
+    late_deduction_naira: Decimal = Decimal("0")
+    early_sign_out_deduction_naira: Decimal = Decimal("0")
     deduction_naira: Decimal = Decimal("0")
     lateness_entry_id: Optional[int] = None
+    early_sign_out_entry_id: Optional[int] = None
     absence_entry_id: Optional[int] = None
     work_location_id: Optional[int] = None
     employee_latitude: Optional[float] = None
@@ -1185,9 +1267,20 @@ class EmployeeAttendanceHistoryOut(BaseModel):
     def _serialize_check_times(self, v: Optional[datetime]) -> Optional[datetime]:
         return datetime_for_api(v) if v is not None else None
 
-    @field_serializer("expected_check_out_time")
-    def _serialize_expected_check_out_time(self, v: Optional[time]) -> Optional[str]:
+    @field_serializer("expected_check_out_time", "expected_late_time")
+    def _serialize_expected_times(self, v: Optional[time]) -> Optional[str]:
         return v.strftime("%H:%M") if v is not None else None
+
+
+class EmployeeSignOutPreviewOut(BaseModel):
+    """Preview for sign-out confirmation (uses locked shift / snapshotted closing time)."""
+
+    shift_label: Optional[str] = None
+    closing_time: str
+    current_time: str
+    is_early_sign_out: bool
+    early_sign_out_fee_naira: Decimal = Decimal("0")
+    message: str
 
 
 class EmployeeClockInOut(BaseModel):
@@ -1207,6 +1300,10 @@ class EmployeeClockInGeoIn(BaseModel):
     longitude: float
     # Browser-reported horizontal accuracy (meters); expands allowed radius for GPS uncertainty.
     accuracy_meters: Optional[float] = Field(None, ge=0, le=500)
+    shift: Optional[AttendanceShiftKey] = Field(
+        None,
+        description="Required when the assigned location has shift mode enabled.",
+    )
 
 
 class EmployeeWorkLocationAssignIn(BaseModel):
@@ -1261,12 +1358,17 @@ class EmployeeSalaryBreakdown(BaseModel):
     lateness_deduction_auto: Decimal
     lateness_deduction: Decimal
     lateness_deduction_override: Optional[Decimal] = None
-    lateness_rate_naira: Decimal
+    lateness_rate_naira: Optional[Decimal] = None
+    early_sign_out_count: int = 0
+    early_sign_out_deduction_auto: Decimal = Decimal("0")
+    early_sign_out_deduction: Decimal = Decimal("0")
+    early_sign_out_deduction_override: Optional[Decimal] = None
+    early_sign_out_rate_naira: Optional[Decimal] = None
     absence_count: int = 0
     absence_deduction_auto: Decimal = Decimal("0")
     absence_deduction: Decimal = Decimal("0")
     absence_deduction_override: Optional[Decimal] = None
-    absence_rate_naira: Decimal = Decimal("1000")
+    absence_rate_naira: Optional[Decimal] = None
     # False when no work location is assigned (unpaid periods); lateness/absence amounts are zero.
     attendance_deductions_eligible: bool = True
     # Entry totals (raw entries, excluding manual adjustments)
@@ -1376,6 +1478,11 @@ class EmployeePayrollAdjustmentIn(BaseModel):
         ge=0,
         description="Effective absence deduction for this period (overrides count × rate when different).",
     )
+    early_sign_out_deduction: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Effective early sign-out deduction for this period (overrides automatic total when different).",
+    )
     note: Optional[str] = Field(None, max_length=8000)
     confirm_financial_edit: bool = False
 
@@ -1394,6 +1501,7 @@ class PayrollSummaryOut(BaseModel):
     employee_count: int
     total_base_salary: Decimal
     total_lateness_deductions: Decimal
+    total_early_sign_out_deductions: Decimal = Decimal("0")
     total_absence_deductions: Decimal = Decimal("0")
     total_penalties: Decimal
     total_bonuses: Decimal

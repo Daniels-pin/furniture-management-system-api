@@ -23,8 +23,15 @@ export function StaffDashboardPage() {
         checkInAllowed={attendance.checkInAllowed}
         checkOutAllowed={attendance.checkOutAllowed}
         dayCompleted={attendance.dayCompleted}
-        onMarkAttendance={attendance.markAttendance}
+        onMarkAttendanceWithShift={attendance.markAttendance}
+        onRequestMarkAttendance={attendance.requestMarkAttendance}
         onSignOutAttendance={attendance.signOutAttendance}
+        onRequestSignOut={attendance.requestSignOut}
+        shiftModalOpen={attendance.shiftModalOpen}
+        onShiftModalClose={() => attendance.setShiftModalOpen(false)}
+        signOutConfirmOpen={attendance.signOutConfirmOpen}
+        signOutPreview={attendance.signOutPreview}
+        onSignOutConfirmClose={() => attendance.setSignOutConfirmOpen(false)}
         resultFeedback={attendance.resultFeedback}
         onDismissResultFeedback={attendance.dismissResultFeedback}
         missingProfileMessage="No employee profile is linked to your account yet. Ask an administrator to link your Staff login."

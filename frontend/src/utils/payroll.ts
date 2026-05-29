@@ -17,6 +17,18 @@ export function absenceDeductionEffective(salary: EmployeeSalaryBreakdown): numb
   return Number(salary.absence_deduction ?? 0);
 }
 
+export function earlySignOutDeductionAuto(salary: EmployeeSalaryBreakdown): number {
+  return Number(salary.early_sign_out_deduction_auto ?? salary.early_sign_out_deduction ?? 0);
+}
+
+export function earlySignOutDeductionEffective(salary: EmployeeSalaryBreakdown): number {
+  return Number(salary.early_sign_out_deduction ?? 0);
+}
+
+export function isEarlySignOutDeductionAdjusted(salary: EmployeeSalaryBreakdown): boolean {
+  return salary.early_sign_out_deduction_override != null && salary.early_sign_out_deduction_override !== "";
+}
+
 export function isLatenessDeductionAdjusted(salary: EmployeeSalaryBreakdown): boolean {
   return salary.lateness_deduction_override != null && salary.lateness_deduction_override !== "";
 }
@@ -32,12 +44,16 @@ export function computePayrollPreview(input: {
   adjustmentBonus: number;
   adjustmentDeduction: number;
   latenessDeduction: number;
+  earlySignOutDeduction?: number;
   absenceDeduction: number;
 }): { finalPayable: number; totalDeductions: number } {
   const bonuses = input.entriesBonus + input.adjustmentBonus;
   const penalties = input.entriesPenalties + input.adjustmentDeduction;
   const totalDeductions =
-    input.latenessDeduction + input.absenceDeduction + penalties;
+    input.latenessDeduction +
+    (input.earlySignOutDeduction ?? 0) +
+    input.absenceDeduction +
+    penalties;
   const finalPayable = input.baseUsed + bonuses - totalDeductions;
   return { finalPayable, totalDeductions };
 }
@@ -49,12 +65,14 @@ export function getPayrollSummaryTotals(summary: PayrollSummary) {
   const deductions = parseMoneyNumber(summary.total_deductions) ?? 0;
   const payable = parseMoneyNumber(summary.net_payroll) ?? 0;
   const totalLatenessDeductions = parseMoneyNumber(summary.total_lateness_deductions) ?? 0;
+  const totalEarlySignOutDeductions = parseMoneyNumber(summary.total_early_sign_out_deductions) ?? 0;
   const totalAbsenceDeductions = parseMoneyNumber(summary.total_absence_deductions) ?? 0;
   const totalSalaries = base + bonuses;
   return {
     totalSalaries,
     totalDeductions: deductions,
     totalLatenessDeductions,
+    totalEarlySignOutDeductions,
     totalAbsenceDeductions,
     totalPayable: payable,
     bonuses,

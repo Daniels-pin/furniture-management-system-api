@@ -26,6 +26,7 @@ from app.models import (
     EmployeePeriodPayroll,
     EmployeeLatenessEntry,
     EmployeeAbsenceEntry,
+    EmployeeEarlySignOutEntry,
     EmployeeAttendanceEntry,
     EmployeePenalty,
     EmployeeBonus,

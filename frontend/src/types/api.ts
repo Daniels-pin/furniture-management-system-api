@@ -489,12 +489,17 @@ export type EmployeeSalaryBreakdown = {
   lateness_deduction_auto?: string | number;
   lateness_deduction: string | number;
   lateness_deduction_override?: string | number | null;
-  lateness_rate_naira: string | number;
+  lateness_rate_naira?: string | number | null;
+  early_sign_out_count?: number;
+  early_sign_out_deduction_auto?: string | number;
+  early_sign_out_deduction?: string | number;
+  early_sign_out_deduction_override?: string | number | null;
+  early_sign_out_rate_naira?: string | number | null;
   absence_count?: number;
   absence_deduction_auto?: string | number;
   absence_deduction?: string | number;
   absence_deduction_override?: string | number | null;
-  absence_rate_naira?: string | number;
+  absence_rate_naira?: string | number | null;
   attendance_deductions_eligible?: boolean;
   penalties_entries_total?: string | number;
   bonuses_entries_total?: string | number;
@@ -538,6 +543,7 @@ export type PayrollSummary = {
   employee_count: number;
   total_base_salary: string | number;
   total_lateness_deductions: string | number;
+  total_early_sign_out_deductions?: string | number;
   total_absence_deductions?: string | number;
   total_penalties: string | number;
   total_bonuses: string | number;
@@ -559,14 +565,24 @@ export type EmployeeLatenessEntry = {
   created_at: string;
 };
 
+export type AttendanceShiftKey = "morning" | "full_day";
+
 export type CompanyLocation = {
   id: number;
   name: string;
   latitude: number;
   longitude: number;
   allowed_radius_meters: number;
+  shift_mode_enabled: boolean;
   late_attendance_time: string;
   check_out_time: string;
+  morning_shift_late_time?: string | null;
+  morning_shift_closing_time?: string | null;
+  full_day_shift_late_time?: string | null;
+  full_day_shift_closing_time?: string | null;
+  late_coming_fee_naira: string | number;
+  early_sign_out_fee_naira: string | number;
+  absence_fee_naira: string | number;
   created_at: string;
 };
 
@@ -579,14 +595,20 @@ export type EmployeeAttendanceHistoryItem = {
   status: "present" | "late" | "absent" | "incomplete_day" | "checked_in" | "early_check_out" | "late_early_check_out" | "short_session";
   check_in_at?: string | null;
   check_out_at?: string | null;
+  selected_shift?: AttendanceShiftKey | null;
+  shift_label?: string | null;
+  expected_late_time?: string | null;
   is_late: boolean;
   late_minutes?: number | null;
   is_early_check_out?: boolean;
   early_check_out_minutes?: number | null;
   expected_check_out_time?: string | null;
   attendance_duration_minutes?: number | null;
+  late_deduction_naira?: string | number;
+  early_sign_out_deduction_naira?: string | number;
   deduction_naira: string | number;
   lateness_entry_id?: number | null;
+  early_sign_out_entry_id?: number | null;
   absence_entry_id?: number | null;
   work_location_id?: number | null;
   employee_latitude?: number | null;
@@ -613,6 +635,15 @@ export type EmployeeClockOutResponse = {
   status: "checked_out" | "not_checked_in" | "already_checked_out" | "sunday";
   message?: string | null;
   entry?: EmployeeAttendanceEntry | null;
+};
+
+export type EmployeeSignOutPreview = {
+  shift_label?: string | null;
+  closing_time: string;
+  current_time: string;
+  is_early_sign_out: boolean;
+  early_sign_out_fee_naira: string | number;
+  message: string;
 };
 
 export type EmployeePenalty = {

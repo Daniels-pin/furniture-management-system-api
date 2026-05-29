@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { employeesApi } from "../services/endpoints";
 import { useAuth } from "../state/auth";
-import type { EmployeeAttendanceEntry, EmployeeClockInResponse, EmployeeClockOutResponse, EmployeeDetail } from "../types/api";
+import type {
+  AttendanceShiftKey,
+  EmployeeAttendanceEntry,
+  EmployeeClockInResponse,
+  EmployeeClockOutResponse,
+  EmployeeDetail,
+  EmployeeSignOutPreview
+} from "../types/api";
 import type { AttendanceResultFeedback } from "../utils/attendance";
-import { formatCheckOutTime, formatLateAttendanceTime } from "../utils/datetime";
+import { lateTimeLabelForAttendance } from "../utils/attendanceRules";
 import {
   attendanceGeoAccuracyMeters,
   canCheckInToday,
@@ -34,6 +41,9 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
   const [clockRes, setClockRes] = useState<EmployeeClockInResponse | null>(null);
   const [clockOutRes, setClockOutRes] = useState<EmployeeClockOutResponse | null>(null);
   const [resultFeedback, setResultFeedback] = useState<AttendanceResultFeedback | null>(null);
+  const [shiftModalOpen, setShiftModalOpen] = useState(false);
+  const [signOutPreview, setSignOutPreview] = useState<EmployeeSignOutPreview | null>(null);
+  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
 
   const dismissResultFeedback = useCallback(() => {
     setResultFeedback(null);
@@ -47,6 +57,16 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       // non-fatal
     }
   }, []);
+
+  const refreshProfileAndAttendance = useCallback(async () => {
+    try {
+      const me = await employeesApi.getMe();
+      setEmp(me);
+      await refreshAttendance();
+    } catch {
+      // non-fatal
+    }
+  }, [refreshAttendance]);
 
   useEffect(() => {
     if (!enabled) {
@@ -90,36 +110,75 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
     };
   }, [enabled, auth.token]);
 
-  const markAttendance = useCallback(async () => {
-    setAttBusy(true);
-    try {
-      const me = await employeesApi.getMe();
-      setEmp(me);
-      if (!me.work_location) {
-        setResultFeedback(getAttendanceBlockedNoLocationFeedback());
-        return;
-      }
+  useEffect(() => {
+    if (!enabled) return;
 
-      const pos = await getAttendanceGeolocationPosition();
-      const res = await employeesApi.clockInAttendanceGeo({
-        latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude,
-        accuracy_meters: attendanceGeoAccuracyMeters(pos)
-      });
-      setClockRes(res);
-      setClockOutRes(null);
-      if (res.entry) {
-        setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
-      } else {
-        await refreshAttendance();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshProfileAndAttendance();
+    };
+    const onFocus = () => void refreshProfileAndAttendance();
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [enabled, refreshProfileAndAttendance]);
+
+  const markAttendance = useCallback(
+    async (shift?: AttendanceShiftKey) => {
+      setAttBusy(true);
+      try {
+        const me = await employeesApi.getMe();
+        setEmp(me);
+        if (!me.work_location) {
+          setResultFeedback(getAttendanceBlockedNoLocationFeedback());
+          return;
+        }
+
+        const pos = await getAttendanceGeolocationPosition();
+        const res = await employeesApi.clockInAttendanceGeo({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy_meters: attendanceGeoAccuracyMeters(pos),
+          shift
+        });
+        setClockRes(res);
+        setClockOutRes(null);
+        setShiftModalOpen(false);
+        if (res.entry) {
+          setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
+        } else {
+          await refreshAttendance();
+        }
+        const lateLabel = lateTimeLabelForAttendance(me.work_location, shift);
+        const lateFee = Number(me.work_location.late_coming_fee_naira ?? 0);
+        setResultFeedback(getAttendanceSuccessFeedback(res, lateLabel, lateFee));
+      } catch (e) {
+        setResultFeedback(getAttendanceErrorFeedback(e));
+      } finally {
+        setAttBusy(false);
       }
-      setResultFeedback(getAttendanceSuccessFeedback(res, formatLateAttendanceTime(me.work_location?.late_attendance_time)));
-    } catch (e) {
-      setResultFeedback(getAttendanceErrorFeedback(e));
-    } finally {
-      setAttBusy(false);
-    }
-  }, [refreshAttendance]);
+    },
+    [refreshAttendance]
+  );
+
+  const requestMarkAttendance = useCallback(() => {
+    void (async () => {
+      try {
+        const me = await employeesApi.getMe();
+        setEmp(me);
+        if (me.work_location?.shift_mode_enabled) {
+          setShiftModalOpen(true);
+          return;
+        }
+        await markAttendance();
+      } catch (e) {
+        setResultFeedback(getAttendanceErrorFeedback(e));
+      }
+    })();
+  }, [markAttendance]);
 
   const signOutAttendance = useCallback(async () => {
     setAttBusy(true);
@@ -139,18 +198,34 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
       });
       setClockOutRes(res);
       setClockRes(null);
+      setSignOutConfirmOpen(false);
+      setSignOutPreview(null);
       if (res.entry) {
         setAttendance((prev) => mergeAttendanceWithClockResponse(prev, res));
       } else {
         await refreshAttendance();
       }
-      setResultFeedback(getAttendanceClockOutSuccessFeedback(res));
+      const earlyFee = Number(me.work_location.early_sign_out_fee_naira ?? 0);
+      setResultFeedback(getAttendanceClockOutSuccessFeedback(res, earlyFee));
     } catch (e) {
       setResultFeedback(getAttendanceClockOutErrorFeedback(e));
     } finally {
       setAttBusy(false);
     }
   }, [refreshAttendance]);
+
+  const requestSignOut = useCallback(async () => {
+    setAttBusy(true);
+    try {
+      const preview = await employeesApi.signOutAttendancePreview();
+      setSignOutPreview(preview);
+      setSignOutConfirmOpen(true);
+    } catch (e) {
+      setResultFeedback(getAttendanceClockOutErrorFeedback(e));
+    } finally {
+      setAttBusy(false);
+    }
+  }, []);
 
   const todayEntry = findTodayAttendanceEntry(attendance);
   const checkInAllowed = canCheckInToday(todayEntry);
@@ -169,11 +244,17 @@ export function useMonthlyEmployeeAttendance(options?: Options) {
     checkOutAllowed,
     dayCompleted,
     markAttendance,
+    requestMarkAttendance,
     signOutAttendance,
+    requestSignOut,
+    shiftModalOpen,
+    setShiftModalOpen,
+    signOutPreview,
+    signOutConfirmOpen,
+    setSignOutConfirmOpen,
     refreshAttendance,
+    refreshProfileAndAttendance,
     resultFeedback,
-    dismissResultFeedback,
-    lateTimeLabel: formatLateAttendanceTime(emp?.work_location?.late_attendance_time),
-    checkOutTimeLabel: formatCheckOutTime(emp?.work_location?.check_out_time)
+    dismissResultFeedback
   };
 }

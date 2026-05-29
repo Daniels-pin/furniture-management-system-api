@@ -408,8 +408,15 @@ export function FinanceDashboardPage() {
           checkInAllowed={monthlyAttendance.checkInAllowed}
           checkOutAllowed={monthlyAttendance.checkOutAllowed}
           dayCompleted={monthlyAttendance.dayCompleted}
-          onMarkAttendance={monthlyAttendance.markAttendance}
+          onMarkAttendanceWithShift={monthlyAttendance.markAttendance}
+          onRequestMarkAttendance={monthlyAttendance.requestMarkAttendance}
           onSignOutAttendance={monthlyAttendance.signOutAttendance}
+          onRequestSignOut={monthlyAttendance.requestSignOut}
+          shiftModalOpen={monthlyAttendance.shiftModalOpen}
+          onShiftModalClose={() => monthlyAttendance.setShiftModalOpen(false)}
+          signOutConfirmOpen={monthlyAttendance.signOutConfirmOpen}
+          signOutPreview={monthlyAttendance.signOutPreview}
+          onSignOutConfirmClose={() => monthlyAttendance.setSignOutConfirmOpen(false)}
           resultFeedback={monthlyAttendance.resultFeedback}
           onDismissResultFeedback={monthlyAttendance.dismissResultFeedback}
           showHistory

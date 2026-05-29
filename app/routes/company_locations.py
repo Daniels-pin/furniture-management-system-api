@@ -41,8 +41,16 @@ def create_location(
         latitude=float(body.latitude),
         longitude=float(body.longitude),
         allowed_radius_meters=int(body.allowed_radius_meters),
+        shift_mode_enabled=bool(body.shift_mode_enabled),
         late_attendance_time=body.late_attendance_time,
         check_out_time=body.check_out_time,
+        morning_shift_late_time=body.morning_shift_late_time,
+        morning_shift_closing_time=body.morning_shift_closing_time,
+        full_day_shift_late_time=body.full_day_shift_late_time,
+        full_day_shift_closing_time=body.full_day_shift_closing_time,
+        late_coming_fee_naira=body.late_coming_fee_naira,
+        early_sign_out_fee_naira=body.early_sign_out_fee_naira,
+        absence_fee_naira=body.absence_fee_naira,
         created_at=datetime.utcnow(),
     )
     db.add(row)

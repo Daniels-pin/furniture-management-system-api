@@ -11,8 +11,13 @@ import type {
 import type { AttendanceResultFeedback } from "../../utils/attendance";
 import { attendanceTodayStatusBadgeClass, attendanceTodayStatusLabel } from "../../utils/attendance";
 import { AttendanceHistoryList } from "./AttendanceHistoryList";
-import { formatAttendanceDuration, formatLagosDateTime, formatLagosTime, formatCheckOutTime, formatLateAttendanceTime } from "../../utils/datetime";
+import { AttendanceShiftSelectModal } from "./AttendanceShiftSelectModal";
+import { AttendanceSignOutConfirmModal } from "./AttendanceSignOutConfirmModal";
+import type { AttendanceShiftKey, EmployeeSignOutPreview } from "../../types/api";
+import { formatAttendanceDuration, formatLagosDateTime, formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
+import { AttendanceRulesSummary } from "./AttendanceRulesSummary";
+import { buildAttendanceRulesSummary } from "../../utils/attendanceRules";
 
 type Props = {
   empLoading: boolean;
@@ -25,8 +30,16 @@ type Props = {
   checkInAllowed?: boolean;
   checkOutAllowed?: boolean;
   dayCompleted?: boolean;
-  onMarkAttendance: () => void | Promise<void>;
+  onMarkAttendance?: () => void | Promise<void>;
+  onMarkAttendanceWithShift?: (shift: AttendanceShiftKey) => void | Promise<void>;
+  onRequestMarkAttendance?: () => void | Promise<void>;
   onSignOutAttendance?: () => void | Promise<void>;
+  onRequestSignOut?: () => void | Promise<void>;
+  shiftModalOpen?: boolean;
+  onShiftModalClose?: () => void;
+  signOutConfirmOpen?: boolean;
+  signOutPreview?: EmployeeSignOutPreview | null;
+  onSignOutConfirmClose?: () => void;
   resultFeedback?: AttendanceResultFeedback | null;
   onDismissResultFeedback?: () => void;
   /** When set, shown instead of hiding the card while profile is missing. */
@@ -47,7 +60,15 @@ export function MonthlyEmployeeAttendanceCard({
   checkOutAllowed,
   dayCompleted,
   onMarkAttendance,
+  onMarkAttendanceWithShift,
+  onRequestMarkAttendance,
   onSignOutAttendance,
+  onRequestSignOut,
+  shiftModalOpen = false,
+  onShiftModalClose,
+  signOutConfirmOpen = false,
+  signOutPreview = null,
+  onSignOutConfirmClose,
   resultFeedback = null,
   onDismissResultFeedback,
   missingProfileMessage,
@@ -82,8 +103,7 @@ export function MonthlyEmployeeAttendanceCard({
     );
   }
 
-  const lateTimeLabel = formatLateAttendanceTime(emp?.work_location?.late_attendance_time);
-  const checkOutTimeLabel = formatCheckOutTime(emp?.work_location?.check_out_time);
+  const rulesModel = buildAttendanceRulesSummary(emp.work_location, todayEntry);
   const canCheckIn = checkInAllowed ?? !todayEntry;
   const canCheckOut = checkOutAllowed ?? Boolean(todayEntry?.check_in_at && !todayEntry?.check_out_at);
   const completed = dayCompleted ?? Boolean(todayEntry?.check_out_at);
@@ -109,18 +129,10 @@ export function MonthlyEmployeeAttendanceCard({
         <div>
           <p className="text-sm font-semibold text-black">Attendance</p>
           {compact ? <p className="mt-2 text-sm text-black/80">{statusLine}</p> : null}
-          <p className={compact ? "mt-3 text-xs leading-relaxed text-black/55" : "mt-1 text-xs text-black/55"}>
-            Check in on arrival and sign out when you leave. Late coming attracts ₦500; unmarked workdays attract ₦1,000
-            absence penalty.
+          <p className={compact ? "mt-2 text-xs text-black/55" : "mt-1 text-xs text-black/55"}>
+            Check in on arrival and sign out when you leave.
           </p>
-          {emp.work_location ? (
-            <p className="mt-1 text-xs font-semibold text-black/60">
-              Assigned location: {emp.work_location.name} ({emp.work_location.allowed_radius_meters}m) · Late after{" "}
-              {lateTimeLabel} · Sign out by {checkOutTimeLabel}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs font-semibold text-amber-900">No work location assigned. Contact an administrator.</p>
-          )}
+          <AttendanceRulesSummary model={rulesModel} className={compact ? "mt-2" : "mt-1"} />
         </div>
         <div className={`flex flex-col gap-2 sm:items-end ${compact ? "mt-5 w-full sm:mt-0 sm:w-auto" : ""}`}>
           <Button
@@ -128,7 +140,7 @@ export function MonthlyEmployeeAttendanceCard({
             isLoading={attBusy && canCheckIn}
             loadingLabel="Checking location…"
             disabled={attBusy || !canCheckIn || !emp.work_location}
-            onClick={() => void onMarkAttendance()}
+            onClick={() => void (onRequestMarkAttendance ? onRequestMarkAttendance() : onMarkAttendance?.())}
           >
             {completed ? "Checked in" : canCheckIn ? (attBusy ? "Checking location…" : "Check In") : "Checked in"}
           </Button>
@@ -139,7 +151,7 @@ export function MonthlyEmployeeAttendanceCard({
               isLoading={attBusy && canCheckOut}
               loadingLabel="Checking location…"
               disabled={attBusy || !canCheckOut || !emp.work_location}
-              onClick={() => void onSignOutAttendance()}
+              onClick={() => void (onRequestSignOut ? onRequestSignOut() : onSignOutAttendance?.())}
             >
               {completed ? "Signed out" : canCheckOut ? (attBusy ? "Checking location…" : "Check Out") : "Check Out"}
             </Button>
@@ -177,6 +189,21 @@ export function MonthlyEmployeeAttendanceCard({
 
       {showHistory ? <AttendanceHistoryList items={attendance} compact={compact} /> : null}
     </Card>
+
+      <AttendanceShiftSelectModal
+        open={shiftModalOpen}
+        busy={attBusy}
+        workLocation={emp.work_location}
+        onClose={() => onShiftModalClose?.()}
+        onContinue={(shift) => void onMarkAttendanceWithShift?.(shift)}
+      />
+      <AttendanceSignOutConfirmModal
+        open={signOutConfirmOpen}
+        busy={attBusy}
+        preview={signOutPreview}
+        onClose={() => onSignOutConfirmClose?.()}
+        onConfirm={() => void onSignOutAttendance?.()}
+      />
     </>
   );
 }

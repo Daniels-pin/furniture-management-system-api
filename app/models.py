@@ -441,8 +441,16 @@ class CompanyLocation(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     allowed_radius_meters = Column(Integer, nullable=False, default=0, server_default="0")
+    shift_mode_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     late_attendance_time = Column(Time, nullable=False, server_default="08:15:00")
     check_out_time = Column(Time, nullable=False, server_default="17:00:00")
+    morning_shift_late_time = Column(Time, nullable=True)
+    morning_shift_closing_time = Column(Time, nullable=True)
+    full_day_shift_late_time = Column(Time, nullable=True)
+    full_day_shift_closing_time = Column(Time, nullable=True)
+    late_coming_fee_naira = Column(Numeric(14, 2), nullable=False, default=0, server_default="500")
+    early_sign_out_fee_naira = Column(Numeric(14, 2), nullable=False, default=0, server_default="500")
+    absence_fee_naira = Column(Numeric(14, 2), nullable=False, default=0, server_default="1000")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -553,6 +561,7 @@ class EmployeePeriodPayroll(Base):
     # Attendance/lateness/absence entry records are unchanged.
     lateness_deduction_override = Column(Numeric(14, 2), nullable=True)
     absence_deduction_override = Column(Numeric(14, 2), nullable=True)
+    early_sign_out_deduction_override = Column(Numeric(14, 2), nullable=True)
     adjustment_note = Column(Text, nullable=True)
     updated_at = Column(DateTime, nullable=True)
     updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -565,7 +574,7 @@ class EmployeePeriodPayroll(Base):
 
 
 class EmployeeLatenessEntry(Base):
-    """One lateness instance; deduction = count × ₦500 (constant in application code)."""
+    """One lateness instance; deduction amount snapshotted at creation from location rules."""
 
     __tablename__ = "employee_lateness_entries"
 
@@ -575,6 +584,7 @@ class EmployeeLatenessEntry(Base):
     # Optional link to a daily attendance record (Monthly Employees attendance system).
     # When set, attendance_id is unique to prevent duplicate lateness deductions for the same day.
     attendance_id = Column(Integer, ForeignKey("employee_attendance_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    deduction_amount_naira = Column(Numeric(14, 2), nullable=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     voided_at = Column(DateTime, nullable=True, index=True)
@@ -588,7 +598,7 @@ class EmployeeLatenessEntry(Base):
 
 
 class EmployeeAbsenceEntry(Base):
-    """One absence instance (no attendance marked on a workday); deduction = count × ₦1,000."""
+    """One absence instance (no attendance marked on a workday); deduction snapshotted at creation."""
 
     __tablename__ = "employee_absence_entries"
 
@@ -596,6 +606,7 @@ class EmployeeAbsenceEntry(Base):
     employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
     period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
     absence_date = Column(Date, nullable=False, index=True)
+    deduction_amount_naira = Column(Numeric(14, 2), nullable=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     voided_at = Column(DateTime, nullable=True, index=True)
@@ -621,6 +632,8 @@ class EmployeeAttendanceEntry(Base):
     attendance_date = Column(Date, nullable=False, index=True)
     check_in_at = Column(DateTime, nullable=False, index=True)
     check_out_at = Column(DateTime, nullable=True, index=True)
+    selected_shift = Column(String(32), nullable=True)
+    expected_late_time = Column(Time, nullable=True)
     is_late = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
     late_minutes = Column(Integer, nullable=True)
     is_early_check_out = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
@@ -650,6 +663,39 @@ class EmployeeAttendanceEntry(Base):
         uselist=False,
         primaryjoin="EmployeeAttendanceEntry.id==EmployeeLatenessEntry.attendance_id",
     )
+    early_sign_out_entry = relationship(
+        "EmployeeEarlySignOutEntry",
+        back_populates="attendance",
+        uselist=False,
+        primaryjoin="EmployeeAttendanceEntry.id==EmployeeEarlySignOutEntry.attendance_id",
+    )
+
+
+class EmployeeEarlySignOutEntry(Base):
+    """One early sign-out instance; deduction snapshotted at check-out from location rules."""
+
+    __tablename__ = "employee_early_sign_out_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    attendance_id = Column(Integer, ForeignKey("employee_attendance_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    deduction_amount_naira = Column(Numeric(14, 2), nullable=False)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
+
+    employee = relationship("Employee")
+    period = relationship("SalaryPeriod")
+    attendance = relationship(
+        "EmployeeAttendanceEntry",
+        back_populates="early_sign_out_entry",
+        foreign_keys=[attendance_id],
+    )
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
 
 class EmployeePenalty(Base):
     __tablename__ = "employee_penalties"

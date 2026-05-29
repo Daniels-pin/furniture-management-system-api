@@ -18,6 +18,8 @@ import {
   absenceDeductionAuto,
   absenceDeductionEffective,
   computePayrollPreview,
+  earlySignOutDeductionAuto,
+  earlySignOutDeductionEffective,
   latenessDeductionAuto,
   latenessDeductionEffective
 } from "../utils/payroll";
@@ -62,6 +64,7 @@ export function MonthlyEmployeeDetailPage() {
   const [deduction, setDeduction] = useState("");
   const [latenessDeductionTotal, setLatenessDeductionTotal] = useState("");
   const [absenceDeductionTotal, setAbsenceDeductionTotal] = useState("");
+  const [earlySignOutDeductionTotal, setEarlySignOutDeductionTotal] = useState("");
   const [adjNote, setAdjNote] = useState("");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -115,6 +118,7 @@ export function MonthlyEmployeeDetailPage() {
         setDeduction(String(d.salary.adjustment_deduction ?? 0));
         setLatenessDeductionTotal(String(latenessDeductionEffective(d.salary)));
         setAbsenceDeductionTotal(String(absenceDeductionEffective(d.salary)));
+        setEarlySignOutDeductionTotal(String(earlySignOutDeductionEffective(d.salary)));
         setAdjNote(d.salary.adjustment_note?.trim() ?? "");
       } catch (e) {
         toast.push("error", getErrorMessage(e));
@@ -222,12 +226,14 @@ export function MonthlyEmployeeDetailPage() {
     const entriesBonus = Number(detail.salary.bonuses_entries_total ?? 0);
     const entriesPen = Number(detail.salary.penalties_entries_total ?? 0);
     const latenessAuto = latenessDeductionAuto(detail.salary);
+    const earlySignOutAuto = earlySignOutDeductionAuto(detail.salary);
     const absenceAuto = absenceDeductionAuto(detail.salary);
 
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
     const b = parseMoneyInput(bonus) ?? 0;
     const d = parseMoneyInput(deduction) ?? 0;
     const latenessTotal = parseMoneyInput(latenessDeductionTotal) ?? latenessAuto;
+    const earlySignOutTotal = parseMoneyInput(earlySignOutDeductionTotal) ?? earlySignOutAuto;
     const absenceTotal = parseMoneyInput(absenceDeductionTotal) ?? absenceAuto;
     const baseUsed = baseOverride != null ? baseOverride : baseFromInput;
     const preview = computePayrollPreview({
@@ -237,6 +243,7 @@ export function MonthlyEmployeeDetailPage() {
       adjustmentBonus: b,
       adjustmentDeduction: d,
       latenessDeduction: latenessTotal,
+      earlySignOutDeduction: earlySignOutTotal,
       absenceDeduction: absenceTotal
     });
     return {
@@ -244,8 +251,10 @@ export function MonthlyEmployeeDetailPage() {
       entriesBonus,
       entriesPen,
       latenessAuto,
+      earlySignOutAuto,
       absenceAuto,
       latenessTotal,
+      earlySignOutTotal,
       absenceTotal,
       latenessAdjusted: latenessTotal !== latenessAuto,
       absenceAdjusted: absenceTotal !== absenceAuto,
@@ -254,7 +263,17 @@ export function MonthlyEmployeeDetailPage() {
       finalPayable: preview.finalPayable,
       totalDeductions: preview.totalDeductions
     };
-  }, [auth.role, detail, baseSalary, periodBaseSalary, bonus, deduction, latenessDeductionTotal, absenceDeductionTotal]);
+  }, [
+    auth.role,
+    detail,
+    baseSalary,
+    periodBaseSalary,
+    bonus,
+    deduction,
+    latenessDeductionTotal,
+    earlySignOutDeductionTotal,
+    absenceDeductionTotal
+  ]);
 
   async function onSaveAdjustments() {
     if (!detail) return;
@@ -294,6 +313,9 @@ export function MonthlyEmployeeDetailPage() {
     const b = bonus.trim() ? parseMoneyInput(bonus) : 0;
     const d = deduction.trim() ? parseMoneyInput(deduction) : 0;
     const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : latenessDeductionAuto(detail.salary);
+    const earlySignOutTotal = earlySignOutDeductionTotal.trim()
+      ? parseMoneyInput(earlySignOutDeductionTotal)
+      : earlySignOutDeductionAuto(detail.salary);
     const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : absenceDeductionAuto(detail.salary);
     if (empBase !== null && (Number.isNaN(empBase) || empBase < 0)) {
       toast.push("error", "Enter a valid base salary (≥ 0).");
@@ -319,6 +341,10 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", "Enter a valid absence deduction (≥ 0).");
       return;
     }
+    if (earlySignOutTotal === null || Number.isNaN(earlySignOutTotal) || earlySignOutTotal < 0) {
+      toast.push("error", "Enter a valid early sign-out deduction (≥ 0).");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -336,6 +362,7 @@ export function MonthlyEmployeeDetailPage() {
             bonus: b,
             deduction: d,
             lateness_deduction: latenessTotal,
+            early_sign_out_deduction: earlySignOutTotal,
             absence_deduction: absenceTotal,
             note: adjNote.trim() || null,
             confirm_financial_edit: confirm
@@ -349,6 +376,7 @@ export function MonthlyEmployeeDetailPage() {
       setDeduction(String(updated.salary.adjustment_deduction ?? d ?? 0));
       setLatenessDeductionTotal(String(latenessDeductionEffective(updated.salary)));
       setAbsenceDeductionTotal(String(absenceDeductionEffective(updated.salary)));
+      setEarlySignOutDeductionTotal(String(earlySignOutDeductionEffective(updated.salary)));
       setAdjNote(updated.salary.adjustment_note?.trim() ?? "");
       toast.push("success", "Saved adjustments.");
     } catch (e) {
@@ -514,8 +542,7 @@ export function MonthlyEmployeeDetailPage() {
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">3. Attendance (Monthly employee)</div>
         <p className="mt-1 text-xs text-black/55">
-          Late after the assigned location&apos;s cutoff attracts ₦500; unmarked workdays attract ₦1,000 absence penalty (Sundays
-          excluded).
+          Deductions use fees configured on the assigned location (late coming, early sign-out, absence). Sundays are excluded.
           Assign a work location before attendance deductions apply to payroll.
         </p>
         {detail.salary.attendance_deductions_eligible === false ? (
@@ -604,9 +631,21 @@ export function MonthlyEmployeeDetailPage() {
               </p>
             ) : (
               <p className="mt-1 text-xs text-black/55">
-                Calculated at ₦500 per late record ({formatMoney(computed?.latenessAuto ?? 0)}).
+                Calculated from late records ({formatMoney(computed?.latenessAuto ?? 0)}).
               </p>
             )}
+          </div>
+          <div>
+            <Input
+              label={`Early sign-out deduction (NGN) — ${detail.salary.early_sign_out_count ?? 0} record(s)`}
+              value={earlySignOutDeductionTotal}
+              onChange={(e) => setEarlySignOutDeductionTotal(e.target.value)}
+              inputMode="decimal"
+              disabled={!isAdmin}
+            />
+            <p className="mt-1 text-xs text-black/55">
+              Calculated from early sign-out records ({formatMoney(computed?.earlySignOutAuto ?? 0)}).
+            </p>
           </div>
           <div>
             <Input
@@ -622,7 +661,7 @@ export function MonthlyEmployeeDetailPage() {
               </p>
             ) : (
               <p className="mt-1 text-xs text-black/55">
-                Calculated at ₦1,000 per absence ({formatMoney(computed?.absenceAuto ?? 0)}).
+                Calculated from absence records ({formatMoney(computed?.absenceAuto ?? 0)}).
               </p>
             )}
           </div>

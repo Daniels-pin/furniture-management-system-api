@@ -17,6 +17,7 @@ export function AttendanceAdminTable({ rows }: { rows: EmployeeAttendanceHistory
       <thead className="text-black/60">
         <tr className="border-b border-black/10">
           <th className="py-3 pr-4 font-semibold">Date</th>
+          <th className="py-3 pr-4 font-semibold">Shift</th>
           <th className="py-3 pr-4 font-semibold">Check in</th>
           <th className="py-3 pr-4 font-semibold">Check out</th>
           <th className="py-3 pr-4 font-semibold">Duration</th>
@@ -36,6 +37,7 @@ export function AttendanceAdminTable({ rows }: { rows: EmployeeAttendanceHistory
             ].join(" ")}
           >
             <td className="py-3 pr-4 font-semibold">{a.attendance_date}</td>
+            <td className="py-3 pr-4 text-xs font-semibold text-black/60">{a.shift_label ?? "—"}</td>
             <td className="py-3 pr-4 text-xs font-semibold text-black/60">
               {a.status === "absent" || !a.check_in_at ? "—" : formatLagosTime(a.check_in_at)}
             </td>

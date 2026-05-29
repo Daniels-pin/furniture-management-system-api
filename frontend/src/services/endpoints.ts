@@ -853,8 +853,16 @@ export const companyLocationsApi = {
     latitude: number;
     longitude: number;
     allowed_radius_meters: number;
+    shift_mode_enabled?: boolean;
     late_attendance_time?: string;
     check_out_time?: string;
+    morning_shift_late_time?: string;
+    morning_shift_closing_time?: string;
+    full_day_shift_late_time?: string;
+    full_day_shift_closing_time?: string;
+    late_coming_fee_naira?: string | number;
+    early_sign_out_fee_naira?: string | number;
+    absence_fee_naira?: string | number;
   }) {
     const { data } = await api.post<CompanyLocation>("/company-locations", body);
     return data;
@@ -866,8 +874,16 @@ export const companyLocationsApi = {
       latitude: number;
       longitude: number;
       allowed_radius_meters: number;
+      shift_mode_enabled: boolean;
       late_attendance_time: string;
       check_out_time: string;
+      morning_shift_late_time: string;
+      morning_shift_closing_time: string;
+      full_day_shift_late_time: string;
+      full_day_shift_closing_time: string;
+      late_coming_fee_naira: string | number;
+      early_sign_out_fee_naira: string | number;
+      absence_fee_naira: string | number;
     }>
   ) {
     const { data } = await api.patch<CompanyLocation>(`/company-locations/${locationId}`, patch);
@@ -930,8 +946,19 @@ export const employeesApi = {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in");
     return data;
   },
-  async clockInAttendanceGeo(body: { latitude: number; longitude: number; accuracy_meters?: number }) {
+  async clockInAttendanceGeo(body: {
+    latitude: number;
+    longitude: number;
+    accuracy_meters?: number;
+    shift?: "morning" | "full_day";
+  }) {
     const { data } = await api.post<EmployeeClockInResponse>("/employees/me/attendance/clock-in-geo", body);
+    return data;
+  },
+  async signOutAttendancePreview() {
+    const { data } = await api.get<import("../types/api").EmployeeSignOutPreview>(
+      "/employees/me/attendance/sign-out-preview"
+    );
     return data;
   },
   async clockOutAttendanceGeo(body: { latitude: number; longitude: number; accuracy_meters?: number }) {
@@ -1051,6 +1078,7 @@ export const employeesApi = {
       deduction?: string | number | null;
       late_penalty?: string | number | null;
       lateness_deduction?: string | number | null;
+      early_sign_out_deduction?: string | number | null;
       absence_deduction?: string | number | null;
       note?: string | null;
       confirm_financial_edit?: boolean;
