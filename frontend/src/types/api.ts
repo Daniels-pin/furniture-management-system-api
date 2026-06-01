@@ -646,6 +646,76 @@ export type EmployeeSignOutPreview = {
   message: string;
 };
 
+export type AttendanceMonitorFilterStatus =
+  | "present"
+  | "late"
+  | "early_sign_out"
+  | "absent"
+  | "checked_in"
+  | "incomplete_day";
+
+export type AttendanceMonitorSummary = {
+  attendance_date: string;
+  expected_employees: number;
+  present: number;
+  late: number;
+  early_sign_out: number;
+  absent: number;
+  checked_in_only: number;
+  incomplete_day: number;
+};
+
+export type AttendanceMonitorRow = {
+  employee_id: number;
+  full_name: string;
+  work_location?: CompanyLocation | null;
+  shift_label?: string | null;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  status: EmployeeAttendanceHistoryItem["status"];
+  monitor_filter_status: AttendanceMonitorFilterStatus;
+};
+
+export type AttendanceMonitorResponse = {
+  attendance_date: string;
+  summary: AttendanceMonitorSummary;
+  rows: AttendanceMonitorRow[];
+};
+
+export type EmployeeAttendanceMonthSummary = {
+  year: number;
+  month: number;
+  label: string;
+  record_count: number;
+};
+
+export type EmployeeAttendanceHistoryPage = {
+  year: number;
+  month: number;
+  items: EmployeeAttendanceHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type EmployeeAttendanceStats = {
+  year: number;
+  month: number;
+  present: number;
+  late: number;
+  early_sign_out: number;
+  absent: number;
+  checked_in_only: number;
+  incomplete_day: number;
+};
+
+export type EmployeeAttendanceOverview = {
+  employee_id: number;
+  full_name: string;
+  work_location?: CompanyLocation | null;
+  stats: EmployeeAttendanceStats;
+};
+
 export type EmployeePenalty = {
   id: number;
   description: string;

@@ -556,6 +556,39 @@ export function attendanceHistoryStatusLabel(item: EmployeeAttendanceHistoryItem
   }
 }
 
+/** Compact labels for the attendance monitor dashboard table. */
+export function attendanceMonitorStatusLabel(
+  status: EmployeeAttendanceHistoryItem["status"]
+): string {
+  switch (status) {
+    case "late_early_check_out":
+      return "Late · Early Sign-Out";
+    case "early_check_out":
+      return "Early Sign-Out";
+    case "short_session":
+      return "Short Session";
+    case "late":
+      return "Late";
+    case "absent":
+      return "Absent";
+    case "incomplete_day":
+      return "Incomplete Day";
+    case "checked_in":
+      return "Checked In";
+    case "present":
+      return "Present";
+    default:
+      return "Present";
+  }
+}
+
+export function attendanceMonitorStatusBadgeClass(
+  status: EmployeeAttendanceHistoryItem["status"]
+): string {
+  const item = { status } as EmployeeAttendanceHistoryItem;
+  return attendanceHistoryStatusBadgeClass(item);
+}
+
 export function attendanceHistoryStatusBadgeClass(item: EmployeeAttendanceHistoryItem): string {
   switch (item.status) {
     case "late_early_check_out":

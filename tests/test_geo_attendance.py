@@ -872,3 +872,69 @@ def test_delete_location_with_multiple_assignees(client, admin_token):
     list_r = client.get("/company-locations", headers=_auth(admin_token))
     assert list_r.status_code == 200
     assert loc_id not in {row["id"] for row in list_r.json()}
+
+
+def test_attendance_monitor_admin_access(client, geo_employee, admin_token):
+    r = client.get("/employees/attendance/monitor", headers=_auth(admin_token))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "summary" in body
+    assert "rows" in body
+    assert body["summary"]["expected_employees"] >= 1
+    emp_row = next((row for row in body["rows"] if row["employee_id"] == geo_employee["employee_id"]), None)
+    assert emp_row is not None
+
+
+def test_attendance_monitor_factory_access(client, geo_employee, factory_token):
+    r = client.get("/employees/attendance/monitor", headers=_auth(factory_token))
+    assert r.status_code == 200, r.text
+
+
+def test_attendance_monitor_staff_forbidden(client, geo_employee):
+    r = client.get("/employees/attendance/monitor", headers=_auth(geo_employee["staff_token"]))
+    assert r.status_code == 403, r.text
+
+
+def test_attendance_monitor_checked_in_status(client, geo_employee, admin_token):
+    assert _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON).status_code == 200
+    r = client.get("/employees/attendance/monitor", headers=_auth(admin_token))
+    assert r.status_code == 200, r.text
+    row = next(row for row in r.json()["rows"] if row["employee_id"] == geo_employee["employee_id"])
+    assert row["status"] == "checked_in"
+    assert row["monitor_filter_status"] == "checked_in"
+
+
+def test_attendance_monitor_status_filter(client, geo_employee, admin_token):
+    assert _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON).status_code == 200
+    r = client.get(
+        "/employees/attendance/monitor",
+        params={"status": "checked_in"},
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    assert all(row["monitor_filter_status"] == "checked_in" for row in r.json()["rows"])
+
+
+def test_attendance_history_page_admin(client, geo_employee, admin_token):
+    assert _geo_clock_in(client, geo_employee["staff_token"], OFFICE_LAT, OFFICE_LON).status_code == 200
+    today = date.today()
+    r = client.get(
+        f"/employees/{geo_employee['employee_id']}/attendance/history",
+        params={"year": today.year, "month": today.month, "limit": 15, "offset": 0},
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] >= 1
+    assert len(body["items"]) >= 1
+
+
+def test_attendance_overview_and_months(client, geo_employee, admin_token):
+    emp_id = geo_employee["employee_id"]
+    overview = client.get(f"/employees/{emp_id}/attendance/overview", headers=_auth(admin_token))
+    assert overview.status_code == 200, overview.text
+    assert overview.json()["employee_id"] == emp_id
+
+    months = client.get(f"/employees/{emp_id}/attendance/months", headers=_auth(admin_token))
+    assert months.status_code == 200, months.text
+    assert isinstance(months.json(), list)

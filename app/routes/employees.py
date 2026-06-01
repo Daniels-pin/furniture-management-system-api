@@ -11,7 +11,7 @@ from datetime import date as date_type, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, extract, func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -54,6 +54,14 @@ from app.schemas import (
     EmployeeTransactionOut,
     EmployeeAttendanceEntryOut,
     EmployeeAttendanceHistoryOut,
+    EmployeeAttendanceHistoryPageOut,
+    EmployeeAttendanceMonthSummaryOut,
+    EmployeeAttendanceOverviewOut,
+    EmployeeAttendanceStatsOut,
+    AttendanceMonitorFilterStatus,
+    AttendanceMonitorOut,
+    AttendanceMonitorRowOut,
+    AttendanceMonitorSummaryOut,
     EmployeeClockInOut,
     EmployeeClockInGeoIn,
     EmployeeClockOutOut,
@@ -92,6 +100,16 @@ _MONTH_NAMES = (
 
 def _month_label(year: int, month: int) -> str:
     return f"{_MONTH_NAMES[month]} {year}"
+
+
+def _can_view_attendance_oversight(user) -> bool:
+    role = normalize_role(getattr(user, "role", None))
+    return role in ("admin", "factory")
+
+
+def _require_attendance_oversight(user) -> None:
+    if not _can_view_attendance_oversight(user):
+        raise HTTPException(status_code=403, detail="Not authorized")
 
 
 def _is_admin(user) -> bool:
@@ -964,7 +982,147 @@ def _build_attendance_history(
     limit: int,
     offset: int,
 ) -> list[EmployeeAttendanceHistoryOut]:
-    _ensure_absences_synced(db, employee_id)
+    items = _collect_attendance_history_items(db, employee_id, sync_absences=True)
+    return items[offset : offset + limit]
+
+
+MONITOR_FILTER_STATUSES = frozenset(
+    {"present", "late", "early_sign_out", "absent", "checked_in", "incomplete_day"}
+)
+
+
+def _monitor_filter_status(raw_status: str) -> str:
+    if raw_status in ("present", "short_session"):
+        return "present"
+    if raw_status in ("late", "late_early_check_out"):
+        return "late"
+    if raw_status in ("early_check_out", "late_early_check_out"):
+        return "early_sign_out"
+    if raw_status == "checked_in":
+        return "checked_in"
+    if raw_status == "incomplete_day":
+        return "incomplete_day"
+    if raw_status == "absent":
+        return "absent"
+    return "present"
+
+
+def _attendance_assigned_employees(db: Session) -> list[models.Employee]:
+    return (
+        db.query(models.Employee)
+        .filter(
+            models.Employee.deleted_at.is_(None),
+            models.Employee.work_location_id.isnot(None),
+        )
+        .order_by(models.Employee.full_name.asc(), models.Employee.id.asc())
+        .all()
+    )
+
+
+def _absence_history_item(
+    a: models.EmployeeAbsenceEntry,
+) -> EmployeeAttendanceHistoryOut:
+    return EmployeeAttendanceHistoryOut(
+        id=a.id,
+        record_type="absence",
+        employee_id=a.employee_id,
+        period_id=a.period_id,
+        attendance_date=a.absence_date,
+        status="absent",
+        check_in_at=None,
+        check_out_at=None,
+        is_late=False,
+        late_minutes=None,
+        is_early_check_out=False,
+        early_check_out_minutes=None,
+        expected_check_out_time=None,
+        attendance_duration_minutes=None,
+        late_deduction_naira=Decimal("0"),
+        early_sign_out_deduction_naira=Decimal("0"),
+        deduction_naira=_decimal_fee(getattr(a, "deduction_amount_naira", 0)),
+        lateness_entry_id=None,
+        early_sign_out_entry_id=None,
+        absence_entry_id=a.id,
+        work_location_id=None,
+        employee_latitude=None,
+        employee_longitude=None,
+        distance_meters=None,
+        check_out_latitude=None,
+        check_out_longitude=None,
+        check_out_distance_meters=None,
+        work_location=None,
+    )
+
+
+
+def _month_bounds(year: int, month: int) -> tuple[date_type, date_type]:
+    start = date_type(year, month, 1)
+    if month == 12:
+        end = date_type(year + 1, 1, 1)
+    else:
+        end = date_type(year, month + 1, 1)
+    return start, end
+
+
+def _attendance_history_items_for_range(
+    db: Session,
+    employee_id: int,
+    *,
+    start: date_type,
+    end: date_type,
+    sync_absences: bool = False,
+) -> list[EmployeeAttendanceHistoryOut]:
+    if sync_absences:
+        _ensure_absences_synced(db, employee_id)
+
+    att_rows = (
+        db.query(models.EmployeeAttendanceEntry)
+        .filter(
+            models.EmployeeAttendanceEntry.employee_id == employee_id,
+            models.EmployeeAttendanceEntry.attendance_date >= start,
+            models.EmployeeAttendanceEntry.attendance_date < end,
+        )
+        .order_by(models.EmployeeAttendanceEntry.attendance_date.desc(), models.EmployeeAttendanceEntry.id.desc())
+        .all()
+    )
+    abs_rows = (
+        db.query(models.EmployeeAbsenceEntry)
+        .filter(
+            models.EmployeeAbsenceEntry.employee_id == employee_id,
+            models.EmployeeAbsenceEntry.absence_date >= start,
+            models.EmployeeAbsenceEntry.absence_date < end,
+            models.EmployeeAbsenceEntry.voided_at.is_(None),
+        )
+        .order_by(models.EmployeeAbsenceEntry.absence_date.desc(), models.EmployeeAbsenceEntry.id.desc())
+        .all()
+    )
+
+    items: list[EmployeeAttendanceHistoryOut] = []
+    today = lagos_today()
+    for r in att_rows:
+        late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
+        items.append(
+            _attendance_history_from_row(
+                r,
+                lateness_entry_id=int(late_id) if late_id is not None else None,
+                today=today,
+            )
+        )
+    for a in abs_rows:
+        items.append(_absence_history_item(a))
+
+    items.sort(key=lambda x: (x.attendance_date, 0 if x.record_type == "attendance" else 1), reverse=True)
+    return items
+
+
+def _collect_attendance_history_items(
+    db: Session,
+    employee_id: int,
+    *,
+    sync_absences: bool,
+) -> list[EmployeeAttendanceHistoryOut]:
+    if sync_absences:
+        _ensure_absences_synced(db, employee_id)
 
     att_rows = (
         db.query(models.EmployeeAttendanceEntry)
@@ -986,43 +1144,261 @@ def _build_attendance_history(
     today = lagos_today()
     for r in att_rows:
         late_id = getattr(getattr(r, "lateness_entry", None), "id", None)
-        items.append(_attendance_history_from_row(r, lateness_entry_id=int(late_id) if late_id is not None else None, today=today))
-    for a in abs_rows:
         items.append(
-            EmployeeAttendanceHistoryOut(
-                id=a.id,
-                record_type="absence",
-                employee_id=a.employee_id,
-                period_id=a.period_id,
-                attendance_date=a.absence_date,
-                status="absent",
-                check_in_at=None,
-                check_out_at=None,
-                is_late=False,
-                late_minutes=None,
-                is_early_check_out=False,
-                early_check_out_minutes=None,
-                expected_check_out_time=None,
-                attendance_duration_minutes=None,
-                late_deduction_naira=Decimal("0"),
-                early_sign_out_deduction_naira=Decimal("0"),
-                deduction_naira=_decimal_fee(getattr(a, "deduction_amount_naira", 0)),
-                lateness_entry_id=None,
-                early_sign_out_entry_id=None,
-                absence_entry_id=a.id,
-                work_location_id=None,
-                employee_latitude=None,
-                employee_longitude=None,
-                distance_meters=None,
-                check_out_latitude=None,
-                check_out_longitude=None,
-                check_out_distance_meters=None,
-                work_location=None,
+            _attendance_history_from_row(
+                r,
+                lateness_entry_id=int(late_id) if late_id is not None else None,
+                today=today,
             )
         )
+    for a in abs_rows:
+        items.append(_absence_history_item(a))
 
     items.sort(key=lambda x: (x.attendance_date, 0 if x.record_type == "attendance" else 1), reverse=True)
-    return items[offset : offset + limit]
+    return items
+
+
+def _build_attendance_history_page(
+    db: Session,
+    employee_id: int,
+    *,
+    year: int,
+    month: int,
+    limit: int,
+    offset: int,
+) -> tuple[list[EmployeeAttendanceHistoryOut], int]:
+    start, end = _month_bounds(year, month)
+    items = _attendance_history_items_for_range(
+        db,
+        employee_id,
+        start=start,
+        end=end,
+        sync_absences=True,
+    )
+    total = len(items)
+    return items[offset : offset + limit], total
+
+
+def _attendance_month_summaries(
+    db: Session,
+    employee_id: int,
+) -> list[EmployeeAttendanceMonthSummaryOut]:
+    _ensure_absences_synced(db, employee_id)
+    counts: dict[tuple[int, int], int] = {}
+
+    att_groups = (
+        db.query(
+            extract("year", models.EmployeeAttendanceEntry.attendance_date),
+            extract("month", models.EmployeeAttendanceEntry.attendance_date),
+            func.count(),
+        )
+        .filter(models.EmployeeAttendanceEntry.employee_id == employee_id)
+        .group_by(
+            extract("year", models.EmployeeAttendanceEntry.attendance_date),
+            extract("month", models.EmployeeAttendanceEntry.attendance_date),
+        )
+        .all()
+    )
+    for y_val, m_val, count in att_groups:
+        counts[(int(y_val), int(m_val))] = counts.get((int(y_val), int(m_val)), 0) + int(count)
+
+    abs_groups = (
+        db.query(
+            extract("year", models.EmployeeAbsenceEntry.absence_date),
+            extract("month", models.EmployeeAbsenceEntry.absence_date),
+            func.count(),
+        )
+        .filter(
+            models.EmployeeAbsenceEntry.employee_id == employee_id,
+            models.EmployeeAbsenceEntry.voided_at.is_(None),
+        )
+        .group_by(
+            extract("year", models.EmployeeAbsenceEntry.absence_date),
+            extract("month", models.EmployeeAbsenceEntry.absence_date),
+        )
+        .all()
+    )
+    for y_val, m_val, count in abs_groups:
+        key = (int(y_val), int(m_val))
+        counts[key] = counts.get(key, 0) + int(count)
+
+    today = lagos_today()
+    counts.setdefault((today.year, today.month), 0)
+
+    out: list[EmployeeAttendanceMonthSummaryOut] = []
+    for (y, m), count in sorted(counts.items(), reverse=True):
+        label = date_type(y, m, 1).strftime("%B %Y")
+        out.append(EmployeeAttendanceMonthSummaryOut(year=y, month=m, label=label, record_count=count))
+    return out
+
+
+def _attendance_stats_for_month(
+    db: Session,
+    employee_id: int,
+    *,
+    year: int,
+    month: int,
+) -> EmployeeAttendanceStatsOut:
+    start, end = _month_bounds(year, month)
+    month_items = _attendance_history_items_for_range(
+        db,
+        employee_id,
+        start=start,
+        end=end,
+        sync_absences=True,
+    )
+    counts = {
+        "present": 0,
+        "late": 0,
+        "early_sign_out": 0,
+        "absent": 0,
+        "checked_in_only": 0,
+        "incomplete_day": 0,
+    }
+    for item in month_items:
+        key = _monitor_filter_status(item.status)
+        if key in counts:
+            counts[key] += 1
+    return EmployeeAttendanceStatsOut(year=year, month=month, **counts)
+
+
+def _monitor_row_for_employee(
+    db: Session,
+    emp: models.Employee,
+    *,
+    target_date: date_type,
+    today: date_type,
+    att_by_emp: dict[int, models.EmployeeAttendanceEntry],
+    abs_by_emp: dict[int, models.EmployeeAbsenceEntry],
+) -> AttendanceMonitorRowOut | None:
+    if _is_sunday(target_date):
+        return None
+
+    att = att_by_emp.get(emp.id)
+    if att is not None:
+        history = _attendance_history_from_row(att, today=today)
+        raw_status = history.status
+        return AttendanceMonitorRowOut(
+            employee_id=emp.id,
+            full_name=emp.full_name or "",
+            work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
+            shift_label=history.shift_label,
+            check_in_at=history.check_in_at,
+            check_out_at=history.check_out_at,
+            status=raw_status,  # type: ignore[arg-type]
+            monitor_filter_status=_monitor_filter_status(raw_status),  # type: ignore[arg-type]
+        )
+
+    abs_row = abs_by_emp.get(emp.id)
+    if abs_row is not None or target_date < today or target_date == today:
+        return AttendanceMonitorRowOut(
+            employee_id=emp.id,
+            full_name=emp.full_name or "",
+            work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
+            shift_label=None,
+            check_in_at=None,
+            check_out_at=None,
+            status="absent",
+            monitor_filter_status="absent",
+        )
+    return None
+
+
+def _build_attendance_monitor(
+    db: Session,
+    *,
+    target_date: date_type,
+    search: str = "",
+    status_filter: str | None = None,
+    location_id: int | None = None,
+) -> AttendanceMonitorOut:
+    today = lagos_today()
+    employees = _attendance_assigned_employees(db)
+    s = (search or "").strip().lower()
+    if s:
+        employees = [e for e in employees if s in (e.full_name or "").lower()]
+    if location_id is not None:
+        employees = [e for e in employees if e.work_location_id == location_id]
+
+    emp_ids = [e.id for e in employees]
+    att_rows: list[models.EmployeeAttendanceEntry] = []
+    abs_rows: list[models.EmployeeAbsenceEntry] = []
+    if emp_ids:
+        att_rows = (
+            db.query(models.EmployeeAttendanceEntry)
+            .filter(
+                models.EmployeeAttendanceEntry.employee_id.in_(emp_ids),
+                models.EmployeeAttendanceEntry.attendance_date == target_date,
+            )
+            .all()
+        )
+        abs_rows = (
+            db.query(models.EmployeeAbsenceEntry)
+            .filter(
+                models.EmployeeAbsenceEntry.employee_id.in_(emp_ids),
+                models.EmployeeAbsenceEntry.absence_date == target_date,
+                models.EmployeeAbsenceEntry.voided_at.is_(None),
+            )
+            .all()
+        )
+
+    att_by_emp = {r.employee_id: r for r in att_rows}
+    abs_by_emp = {r.employee_id: r for r in abs_rows}
+
+    rows: list[AttendanceMonitorRowOut] = []
+    for emp in employees:
+        row = _monitor_row_for_employee(
+            db,
+            emp,
+            target_date=target_date,
+            today=today,
+            att_by_emp=att_by_emp,
+            abs_by_emp=abs_by_emp,
+        )
+        if row is None:
+            continue
+        if status_filter and status_filter in MONITOR_FILTER_STATUSES:
+            if row.monitor_filter_status != status_filter:
+                continue
+        rows.append(row)
+
+    summary_counts = {
+        "expected_employees": 0,
+        "present": 0,
+        "late": 0,
+        "early_sign_out": 0,
+        "absent": 0,
+        "checked_in_only": 0,
+        "incomplete_day": 0,
+    }
+    for emp in employees:
+        row = _monitor_row_for_employee(
+            db,
+            emp,
+            target_date=target_date,
+            today=today,
+            att_by_emp=att_by_emp,
+            abs_by_emp=abs_by_emp,
+        )
+        if row is None:
+            continue
+        summary_counts["expected_employees"] += 1
+        key = row.monitor_filter_status
+        if key == "present":
+            summary_counts["present"] += 1
+        elif key == "late":
+            summary_counts["late"] += 1
+        elif key == "early_sign_out":
+            summary_counts["early_sign_out"] += 1
+        elif key == "absent":
+            summary_counts["absent"] += 1
+        elif key == "checked_in":
+            summary_counts["checked_in_only"] += 1
+        elif key == "incomplete_day":
+            summary_counts["incomplete_day"] += 1
+
+    summary = AttendanceMonitorSummaryOut(attendance_date=target_date, **summary_counts)
+    return AttendanceMonitorOut(attendance_date=target_date, summary=summary, rows=rows)
 
 
 def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -2447,6 +2823,42 @@ def patch_employee_location_assignment(
         work_location=CompanyLocationOut.model_validate(emp.work_location) if getattr(emp, "work_location", None) else None,
     )
 
+
+@router.get("/attendance/monitor/summary", response_model=AttendanceMonitorSummaryOut)
+def attendance_monitor_summary(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    target_date: Optional[date_type] = Query(None, alias="date"),
+):
+    _require_attendance_oversight(current_user)
+    day = target_date or lagos_today()
+    monitor = _build_attendance_monitor(db, target_date=day)
+    return monitor.summary
+
+
+@router.get("/attendance/monitor", response_model=AttendanceMonitorOut)
+def attendance_monitor(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    target_date: Optional[date_type] = Query(None, alias="date"),
+    search: str = Query("", max_length=200),
+    status: Optional[str] = Query(None, description="present | late | early_sign_out | absent | checked_in | incomplete_day"),
+    location_id: Optional[int] = Query(None, ge=1),
+):
+    _require_attendance_oversight(current_user)
+    day = target_date or lagos_today()
+    status_filter = (status or "").strip().lower() or None
+    if status_filter and status_filter not in MONITOR_FILTER_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status filter")
+    return _build_attendance_monitor(
+        db,
+        target_date=day,
+        search=search,
+        status_filter=status_filter,
+        location_id=location_id,
+    )
+
+
 @router.get("/me/attendance", response_model=list[EmployeeAttendanceHistoryOut])
 def list_my_attendance(
     db: Session = Depends(get_db),
@@ -2465,6 +2877,94 @@ def list_my_attendance(
     history = _build_attendance_history(db, emp.id, limit=limit, offset=offset)
     db.commit()
     return history
+
+
+@router.get("/{employee_id}/attendance/overview", response_model=EmployeeAttendanceOverviewOut)
+def employee_attendance_overview(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    month: Optional[int] = Query(None, ge=1, le=12),
+):
+    _require_attendance_oversight(current_user)
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    today = lagos_today()
+    stats_year = year or today.year
+    stats_month = month or today.month
+    stats = _attendance_stats_for_month(db, employee_id, year=stats_year, month=stats_month)
+    db.commit()
+    return EmployeeAttendanceOverviewOut(
+        employee_id=emp.id,
+        full_name=emp.full_name or "",
+        work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
+        stats=stats,
+    )
+
+
+@router.get("/{employee_id}/attendance/months", response_model=list[EmployeeAttendanceMonthSummaryOut])
+def employee_attendance_months(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    _require_attendance_oversight(current_user)
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    months = _attendance_month_summaries(db, employee_id)
+    db.commit()
+    return months
+
+
+@router.get("/{employee_id}/attendance/history", response_model=EmployeeAttendanceHistoryPageOut)
+def employee_attendance_history_page(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    limit: int = Query(15, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    _require_attendance_oversight(current_user)
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    items, total = _build_attendance_history_page(
+        db,
+        employee_id,
+        year=year,
+        month=month,
+        limit=limit,
+        offset=offset,
+    )
+    db.commit()
+    return EmployeeAttendanceHistoryPageOut(
+        year=year,
+        month=month,
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{employee_id}/attendance", response_model=list[EmployeeAttendanceHistoryOut])

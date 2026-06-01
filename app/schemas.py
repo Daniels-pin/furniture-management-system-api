@@ -1313,6 +1313,91 @@ class EmployeeWorkLocationAssignIn(BaseModel):
     )
 
 
+AttendanceMonitorFilterStatus = Literal[
+    "present",
+    "late",
+    "early_sign_out",
+    "absent",
+    "checked_in",
+    "incomplete_day",
+]
+
+
+class AttendanceMonitorSummaryOut(BaseModel):
+    attendance_date: date
+    expected_employees: int
+    present: int
+    late: int
+    early_sign_out: int
+    absent: int
+    checked_in_only: int
+    incomplete_day: int = 0
+
+
+class AttendanceMonitorRowOut(BaseModel):
+    employee_id: int
+    full_name: str
+    work_location: Optional[CompanyLocationOut] = None
+    shift_label: Optional[str] = None
+    check_in_at: Optional[datetime] = None
+    check_out_at: Optional[datetime] = None
+    status: Literal[
+        "present",
+        "late",
+        "absent",
+        "incomplete_day",
+        "checked_in",
+        "early_check_out",
+        "late_early_check_out",
+        "short_session",
+    ]
+    monitor_filter_status: AttendanceMonitorFilterStatus
+
+    @field_serializer("check_in_at", "check_out_at")
+    def _serialize_monitor_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
+
+
+class AttendanceMonitorOut(BaseModel):
+    attendance_date: date
+    summary: AttendanceMonitorSummaryOut
+    rows: list[AttendanceMonitorRowOut]
+
+
+class EmployeeAttendanceMonthSummaryOut(BaseModel):
+    year: int
+    month: int
+    label: str
+    record_count: int
+
+
+class EmployeeAttendanceHistoryPageOut(BaseModel):
+    year: int
+    month: int
+    items: list[EmployeeAttendanceHistoryOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class EmployeeAttendanceStatsOut(BaseModel):
+    year: int
+    month: int
+    present: int
+    late: int
+    early_sign_out: int
+    absent: int
+    checked_in_only: int
+    incomplete_day: int
+
+
+class EmployeeAttendanceOverviewOut(BaseModel):
+    employee_id: int
+    full_name: str
+    work_location: Optional[CompanyLocationOut] = None
+    stats: EmployeeAttendanceStatsOut
+
+
 class EmployeeLocationAssignmentItemOut(BaseModel):
     id: int
     full_name: str

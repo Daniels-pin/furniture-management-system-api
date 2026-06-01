@@ -977,6 +977,47 @@ export const employeesApi = {
     const { data } = await api.get<EmployeeAttendanceEntry[]>(`/employees/${employeeId}/attendance`, { params });
     return data;
   },
+  async attendanceMonitor(params?: {
+    date?: string;
+    search?: string;
+    status?: import("../types/api").AttendanceMonitorFilterStatus;
+    location_id?: number;
+  }) {
+    const { data } = await api.get<import("../types/api").AttendanceMonitorResponse>("/employees/attendance/monitor", {
+      params
+    });
+    return data;
+  },
+  async attendanceMonitorSummary(params?: { date?: string }) {
+    const { data } = await api.get<import("../types/api").AttendanceMonitorSummary>(
+      "/employees/attendance/monitor/summary",
+      { params }
+    );
+    return data;
+  },
+  async attendanceOverview(employeeId: number, params?: { year?: number; month?: number }) {
+    const { data } = await api.get<import("../types/api").EmployeeAttendanceOverview>(
+      `/employees/${employeeId}/attendance/overview`,
+      { params }
+    );
+    return data;
+  },
+  async attendanceMonths(employeeId: number) {
+    const { data } = await api.get<import("../types/api").EmployeeAttendanceMonthSummary[]>(
+      `/employees/${employeeId}/attendance/months`
+    );
+    return data;
+  },
+  async attendanceHistoryPage(
+    employeeId: number,
+    params: { year: number; month: number; limit?: number; offset?: number }
+  ) {
+    const { data } = await api.get<import("../types/api").EmployeeAttendanceHistoryPage>(
+      `/employees/${employeeId}/attendance/history`,
+      { params }
+    );
+    return data;
+  },
   async get(employeeId: number, params?: EmployeePeriodParams) {
     const { data } = await api.get<EmployeeDetail>(`/employees/${employeeId}`, { params });
     return data;

@@ -40,6 +40,8 @@ import { EmployeeAdminPage } from "./pages/EmployeeAdminPage";
 import { EmployeeLegacyRedirect } from "./pages/EmployeeLegacyRedirect";
 import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
 import { MonthlyEmployeeDetailPage } from "./pages/MonthlyEmployeeDetailPage";
+import { AttendanceRecordsPage } from "./pages/AttendanceRecordsPage";
+import { EmployeeAttendanceDetailPage } from "./pages/EmployeeAttendanceDetailPage";
 import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
 import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
 import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboardPage";
@@ -344,6 +346,22 @@ export default function App() {
           element={
             <RequireAuth roles={["admin"]}>
               <MonthlyEmployeeDetailPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="attendance-records"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <AttendanceRecordsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="attendance-records/:employeeId"
+          element={
+            <RequireAuth roles={["admin", "factory"]}>
+              <EmployeeAttendanceDetailPage />
             </RequireAuth>
           }
         />

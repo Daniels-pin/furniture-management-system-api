@@ -106,6 +106,12 @@ const NAV_GROUPS: NavGroupModel[] = [
         label: "Workforce",
         items: [
           { key: "employees", label: "Employees", to: "/employees", roles: ["admin", "finance", "factory"] },
+          {
+            key: "attendance-records",
+            label: "Attendance Records",
+            to: "/attendance-records",
+            roles: ["admin", "factory"]
+          },
           { key: "company-locations", label: "Company Locations", to: "/admin/locations", roles: ["admin"] },
           { key: "jobs", label: "Jobs", to: "/admin/jobs", roles: ["admin"], badge: "pendingNegotiations" },
           {
