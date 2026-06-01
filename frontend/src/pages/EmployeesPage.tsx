@@ -4,6 +4,8 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
 import { contractEmployeesApi, employeePaymentsApi, employeesApi } from "../services/endpoints";
+import { queryKeys, usePayrollPeriodsNav } from "../query/hooks";
+import { queryClient } from "../query/client";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
@@ -53,7 +55,8 @@ export function EmployeesPage() {
   const refreshToken = searchParams.get("r");
   const moneyRequestsView = searchParams.get("moneyRequests") === "1";
 
-  const [nav, setNav] = useState<PayrollPeriodsNav | null>(null);
+  const payrollNavQuery = usePayrollPeriodsNav(auth.role === "admin");
+  const nav = payrollNavQuery.data ?? null;
   const [rows, setRows] = useState<EmployeeListItem[]>([]);
   const [monthlySearch, setMonthlySearch] = useState("");
   const [monthlySearchDebounced, setMonthlySearchDebounced] = useState("");
@@ -152,23 +155,11 @@ export function EmployeesPage() {
     return { period_year: year, period_month: month };
   }, [year, month]);
 
-  /** Load payroll month list (Admin monthly tab only) */
   useEffect(() => {
-    if (auth.role !== "admin") return;
-    let alive = true;
-    (async () => {
-      try {
-        const n = await employeesApi.payrollPeriodsNav();
-        if (!alive) return;
-        setNav(n);
-      } catch (e) {
-        toast.push("error", getErrorMessage(e));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [toast]);
+    if (payrollNavQuery.error) {
+      toast.push("error", getErrorMessage(payrollNavQuery.error));
+    }
+  }, [payrollNavQuery.error, toast]);
 
   /** Default URL to active payroll month when missing (monthly tab only — avoid clobbering contract tab params). */
   useEffect(() => {
@@ -216,6 +207,7 @@ export function EmployeesPage() {
   useEffect(() => {
     let alive = true;
     if (auth.role !== "admin") return;
+    if (tab !== "monthly") return;
     if (!periodParams) {
       setLoading(false);
       return;
@@ -241,7 +233,7 @@ export function EmployeesPage() {
     return () => {
       alive = false;
     };
-  }, [toast, periodParams, auth.role, monthlySearchDebounced]);
+  }, [toast, periodParams, auth.role, monthlySearchDebounced, tab]);
 
   useEffect(() => {
     if (auth.role !== "finance") return;
@@ -325,7 +317,7 @@ export function EmployeesPage() {
     setStartingMonth(true);
     try {
       const n = await employeesApi.startNextPayrollMonth();
-      setNav(n);
+      queryClient.setQueryData(queryKeys.payrollPeriodsNav, n);
       if (n.active_period) {
         patchSearchParams(setSearchParams, searchParams, {
           year: String(n.active_period.year),
@@ -677,8 +669,7 @@ export function EmployeesPage() {
             <PayrollMonthsPanel
               nav={nav}
               onNavRefresh={async () => {
-                const n = await employeesApi.payrollPeriodsNav();
-                setNav(n);
+                await payrollNavQuery.refetch();
               }}
               onToast={(kind, message) => toast.push(kind, message)}
             />

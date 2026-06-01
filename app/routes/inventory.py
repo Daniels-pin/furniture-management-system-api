@@ -365,8 +365,10 @@ def list_movements(
     return out
 
 
-@router.get("/inventory", response_model=list[InventoryMaterialOut])
+@router.get("/inventory")
 def list_inventory(
+    limit: int = 30,
+    offset: int = 0,
     db: Session = Depends(get_db),
     _user=Depends(require_inventory_access),
     search: str | None = Query(None, max_length=200),
@@ -374,6 +376,8 @@ def list_inventory(
     supplier: str | None = Query(None, max_length=500),
     payment_status: str | None = Query(None, pattern="^(paid|partial|unpaid)$"),
 ):
+    lim = max(1, min(int(limit or 30), 100))
+    off = max(0, int(offset or 0))
     q = (
         db.query(models.InventoryMaterial)
         .filter(inventory_material_alive())
@@ -381,7 +385,6 @@ def list_inventory(
             joinedload(models.InventoryMaterial.created_by_user),
             joinedload(models.InventoryMaterial.updated_by_user),
         )
-        .order_by(models.InventoryMaterial.id.desc())
     )
     if search and search.strip():
         term = f"%{search.strip()}%"
@@ -396,18 +399,17 @@ def list_inventory(
         q = q.filter(models.InventoryMaterial.stock_level == stock_level)
     if supplier and supplier.strip():
         q = q.filter(models.InventoryMaterial.supplier_name.ilike(supplier.strip()))
-    mats = q.all()
+    if payment_status:
+        q = q.filter(models.InventoryMaterial.payment_status == payment_status)
+    total = q.count()
+    mats = q.order_by(models.InventoryMaterial.id.desc()).offset(off).limit(lim).all()
     ids = [m.id for m in mats]
     pmap = _sum_payments_map(db, ids)
     out: list[InventoryMaterialOut] = []
     for m in mats:
         paid = pmap.get(m.id, Decimal("0"))
-        cost = _as_dec(m.cost)
-        st = _derive_payment_status(cost, paid)
-        if payment_status and st != payment_status:
-            continue
         out.append(_material_to_out(m, amount_paid=paid))
-    return out
+    return {"items": out, "total": total}
 
 
 @router.post("/inventory", response_model=InventoryMaterialOut)

@@ -187,10 +187,13 @@ export function ContractEmployeeDetailPage() {
     (async () => {
       setLoading(true);
       try {
-        const [d, j] = await Promise.all([contractEmployeesApi.get(id), contractJobsApi.listAdmin({ employee_id: id })]);
+        const [d, j] = await Promise.all([
+          contractEmployeesApi.get(id),
+          contractJobsApi.listAdmin({ employee_id: id, limit: 500 })
+        ]);
         if (!alive) return;
         setDetail(d);
-        setJobs(j);
+        setJobs(Array.isArray(j.items) ? j.items : []);
         window.dispatchEvent(new Event("furniture:notifications-updated"));
       } catch (err) {
         toast.push("error", getErrorMessage(err));
@@ -305,8 +308,8 @@ export function ContractEmployeeDetailPage() {
     if (!Number.isFinite(id)) return;
     setJobsLoading(true);
     try {
-      const j = await contractJobsApi.listAdmin({ employee_id: id });
-      setJobs(j);
+      const j = await contractJobsApi.listAdmin({ employee_id: id, limit: 500 });
+      setJobs(Array.isArray(j.items) ? j.items : []);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
@@ -323,9 +326,9 @@ export function ContractEmployeeDetailPage() {
     let alive = true;
     async function tick() {
       try {
-        const j = await contractJobsApi.listAdmin({ employee_id: id });
+        const j = await contractJobsApi.listAdmin({ employee_id: id, limit: 500 });
         if (!alive) return;
-        setJobs(Array.isArray(j) ? j : []);
+        setJobs(Array.isArray(j.items) ? j.items : []);
       } catch {
         // ignore (non-critical; manual refresh still available)
       }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { getErrorMessage } from "../../services/api";
 import { useToast } from "../../state/toast";
 import { contractJobsApi, customersApi, employeePaymentsApi, inventoryApi, notificationsApi, ordersApi } from "../../services/endpoints";
+import { useInvalidateNotifications, useNotificationsList, useUnreadNotifications } from "../../query/hooks";
 import { StatusBadge } from "../ui/StatusBadge";
 import { APP_NAME } from "../../config/app";
 import { env } from "../../env";
@@ -230,8 +231,12 @@ export function AppLayout() {
   const bWrapRef = useRef<HTMLDivElement | null>(null);
   const notifWrapRef = useRef<HTMLDivElement | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifLoading, setNotifLoading] = useState(false);
-  const [notifPage, setNotifPage] = useState<Awaited<ReturnType<typeof notificationsApi.my>> | null>(null);
+  const invalidateNotifications = useInvalidateNotifications();
+  const notifEnabled = Boolean(auth.token && auth.userId);
+  const { data: notifUnreadRes } = useUnreadNotifications(auth.role ?? "guest", notifEnabled);
+  const { data: notifListRes, isFetching: notifListLoading } = useNotificationsList(30, notifOpen && notifEnabled);
+  const notifPage = notifListRes ?? null;
+  const notifLoading = notifListLoading;
 
   useEffect(() => {
     // Reset per-user on login/logout.
@@ -243,104 +248,77 @@ export function AppLayout() {
   }, [auth.userId, auth.token]);
 
   useEffect(() => {
-    if (!auth.token || !auth.userId) return;
-    let alive = true;
+    if (!auth.token || !auth.userId || !notifUnreadRes) return;
     const key = `furniture_last_notif_created_at_${auth.userId}`;
+    const lastCreatedAt = localStorage.getItem(key) || "";
+    const baseline = lastCreatedAt ? new Date(lastCreatedAt).getTime() : 0;
 
-    async function tick() {
-      try {
-        const lastCreatedAt = localStorage.getItem(key) || "";
-        const baseline = lastCreatedAt ? new Date(lastCreatedAt).getTime() : 0;
-        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
-        if (!alive) return;
-        const items = Array.isArray(res?.items) ? [...res.items] : [];
-        // Toast any unread notification whose (possibly bumped) created_at is newer than our baseline.
-        items.sort((a: NotificationItem, b: NotificationItem) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-        let newest = baseline;
-        for (const n of items) {
-          const t = new Date(n.created_at).getTime();
-          if (!Number.isFinite(t)) continue;
-          newest = Math.max(newest, t);
-          if (t <= baseline) continue;
-          toast.pushLive("success", n.title + (n.message ? ` — ${n.message}` : ""));
-        }
-        if (newest > baseline) localStorage.setItem(key, new Date(newest).toISOString());
-      } catch {
-        // ignore (non-critical)
-      }
+    const items = Array.isArray(notifUnreadRes?.items) ? ([...notifUnreadRes.items] as NotificationItem[]) : [];
+    items.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    let newest = baseline;
+    for (const n of items) {
+      const t = new Date(n.created_at).getTime();
+      if (!Number.isFinite(t)) continue;
+      newest = Math.max(newest, t);
+      if (t <= baseline) continue;
+      toast.pushLive("success", n.title + (n.message ? ` — ${n.message}` : ""));
     }
+    if (newest > baseline) localStorage.setItem(key, new Date(newest).toISOString());
 
-    void tick();
-    const iv = window.setInterval(() => void tick(), 10_000);
-    return () => {
-      alive = false;
-      window.clearInterval(iv);
-    };
-  }, [auth.token, auth.userId, toast]);
-
-  useEffect(() => {
-    if (!auth.token || !auth.userId || auth.role !== "contract_employee") {
+    if (auth.role === "contract_employee") {
+      setAssignedJobsCount(items.filter((n) => isContractJobNotification(n)).length);
+    } else {
       setAssignedJobsCount(0);
-      return;
-    }
-    let alive = true;
-    async function refreshAssignedBadge() {
-      try {
-        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
-        if (!alive) return;
-        const items = Array.isArray(res?.items) ? res.items : [];
-        const count = items.filter((n) => isContractJobNotification(n as NotificationItem)).length;
-        setAssignedJobsCount(count);
-      } catch {
-        if (!alive) return;
-        setAssignedJobsCount(0);
-      }
     }
 
-    const onUpdated = () => void refreshAssignedBadge();
-    window.addEventListener("furniture:notifications-updated", onUpdated as any);
-    void refreshAssignedBadge();
-    const iv = window.setInterval(() => void refreshAssignedBadge(), 15_000);
-    return () => {
-      alive = false;
-      window.removeEventListener("furniture:notifications-updated", onUpdated as any);
-      window.clearInterval(iv);
-    };
-  }, [auth.token, auth.userId, auth.role, location.pathname]);
+    if (auth.role === "admin") {
+      setAdminNewJobsCount(items.filter((n) => isNewJobNotification(n)).length);
+    } else {
+      setAdminNewJobsCount(0);
+    }
+
+    if (auth.role === "admin" || auth.role === "finance") {
+      const kinds = auth.role === "finance" ? ["payment_sent_to_finance"] : ["payment_request_submitted"];
+      setPendingMoneyCount(items.filter((n) => kinds.includes(String(n.kind))).length);
+    } else {
+      setPendingMoneyCount(0);
+    }
+  }, [notifUnreadRes, auth.token, auth.userId, auth.role, toast]);
 
   useEffect(() => {
-    if (auth.role !== "admin") {
+    if (!auth.token || auth.role !== "admin") {
       setPendingNegotiationsCount(0);
-      setAdminNewJobsCount(0);
       return;
     }
     let alive = true;
-    async function refreshAdminJobsBadge() {
+    (async () => {
       try {
-        const [pendingRes, notifRes] = await Promise.all([
-          contractJobsApi.pendingNegotiationsCount(),
-          notificationsApi.my({ unread_only: true, limit: 200 })
-        ]);
+        const pendingRes = await contractJobsApi.pendingNegotiationsCount();
         if (!alive) return;
         setPendingNegotiationsCount(typeof pendingRes?.count === "number" ? pendingRes.count : 0);
-        const items = Array.isArray(notifRes?.items) ? (notifRes.items as NotificationItem[]) : [];
-        setAdminNewJobsCount(items.filter((n) => isNewJobNotification(n)).length);
       } catch {
         if (!alive) return;
         setPendingNegotiationsCount(0);
-        setAdminNewJobsCount(0);
       }
-    }
-    const onUpdated = () => void refreshAdminJobsBadge();
+    })();
+    const onUpdated = () => {
+      void contractJobsApi
+        .pendingNegotiationsCount()
+        .then((pendingRes) => setPendingNegotiationsCount(typeof pendingRes?.count === "number" ? pendingRes.count : 0))
+        .catch(() => setPendingNegotiationsCount(0));
+    };
     window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
-    void refreshAdminJobsBadge();
-    const iv = window.setInterval(() => void refreshAdminJobsBadge(), 10_000);
     return () => {
       alive = false;
       window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
-      window.clearInterval(iv);
     };
-  }, [auth.role, location.pathname]);
+  }, [auth.token, auth.role]);
+
+  useEffect(() => {
+    const onUpdated = () => invalidateNotifications();
+    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
+    return () => window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
+  }, [invalidateNotifications]);
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -385,36 +363,6 @@ export function AppLayout() {
     };
   }, [location.pathname, auth.role]);
 
-  useEffect(() => {
-    if (auth.role !== "admin" && auth.role !== "finance") {
-      setPendingMoneyCount(0);
-      return;
-    }
-    let alive = true;
-    const refreshPendingMoneyCount = async () => {
-      try {
-        const res = await notificationsApi.my({ unread_only: true, limit: 200 });
-        if (!alive) return;
-        const items = Array.isArray(res?.items) ? res.items : [];
-        const kinds =
-          auth.role === "finance" ? ["payment_sent_to_finance"] : ["payment_request_submitted"];
-        setPendingMoneyCount(items.filter((n) => kinds.includes(String(n.kind))).length);
-      } catch {
-        if (!alive) return;
-        setPendingMoneyCount(0);
-      }
-    };
-    void refreshPendingMoneyCount();
-    const onUpdated = () => void refreshPendingMoneyCount();
-    window.addEventListener("furniture:notifications-updated", onUpdated as EventListener);
-    const iv = window.setInterval(() => void refreshPendingMoneyCount(), 15_000);
-    return () => {
-      alive = false;
-      window.removeEventListener("furniture:notifications-updated", onUpdated as EventListener);
-      window.clearInterval(iv);
-    };
-  }, [location.pathname, auth.role]);
-
   function navigateForMoneyRequests() {
     if (auth.role === "finance") nav("/finance?moneyRequests=1");
     else nav("/employees?tab=contract&moneyRequests=1");
@@ -423,8 +371,7 @@ export function AppLayout() {
   function handleNotificationClick(n: NotificationItem) {
     void notificationsApi
       .markRead(n.id)
-      .then(() => notificationsApi.my({ limit: 30 }))
-      .then((res) => setNotifPage(res))
+      .then(() => invalidateNotifications())
       .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
       .catch(() => null);
 
@@ -530,18 +477,8 @@ export function AppLayout() {
     }
   }
 
-  async function toggleNotifications() {
-    const next = !notifOpen;
-    setNotifOpen(next);
-    if (!next) return;
-    if (!auth.token || !auth.userId) return;
-    setNotifLoading(true);
-    try {
-      const res = await notificationsApi.my({ limit: 30 });
-      setNotifPage(res);
-    } finally {
-      setNotifLoading(false);
-    }
+  function toggleNotifications() {
+    setNotifOpen((open) => !open);
   }
 
   async function toggleBirthdays() {
@@ -775,8 +712,7 @@ export function AppLayout() {
                               onClick={() => {
                                 void notificationsApi
                                   .markAllRead()
-                                  .then(() => notificationsApi.my({ limit: 30 }))
-                                  .then((res) => setNotifPage(res))
+                                  .then(() => invalidateNotifications())
                                   .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
                                   .catch(() => null);
                               }}

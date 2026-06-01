@@ -277,12 +277,7 @@ export function OrdersPage() {
     }
   }
 
-  useEffect(() => {
-    void refresh(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Server-side search/filter with debounce
+  // Server-side search/filter with debounce (also runs on mount)
   useEffect(() => {
     const t = window.setTimeout(() => {
       void refresh(1);

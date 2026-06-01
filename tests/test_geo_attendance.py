@@ -96,6 +96,17 @@ def _assign_location(client, admin_token: str, employee_id: int, location_id: in
     assert r.status_code == 200, r.text
 
 
+def _backdate_employee_hire(db, emp_id: int, *, year: int = 2026, month: int = 4) -> None:
+    """Hire month before May geo tests so get_or_create_period allows patched May dates."""
+    emp = db.query(models.Employee).filter_by(id=emp_id).one()
+    emp.created_at = datetime(year, month, 1, 8, 0, 0)
+    db.flush()
+    from app.routes.employees import ensure_payroll_periods_current
+
+    ensure_payroll_periods_current(db)
+    db.commit()
+
+
 def _geo_clock_in(client, token: str, lat: float, lon: float):
     return client.post(
         "/employees/me/attendance/clock-in-geo",
@@ -113,11 +124,12 @@ def _geo_clock_out(client, token: str, lat: float, lon: float):
 
 
 @pytest.fixture
-def geo_employee(client, admin_token):
+def geo_employee(client, admin_token, db_session):
     staff_token, user_id = _create_staff_user(client, admin_token)
     emp_id = _create_monthly_employee(client, admin_token, user_id)
     loc_id = _create_location(client, admin_token)
     _assign_location(client, admin_token, emp_id, loc_id)
+    _backdate_employee_hire(db_session, emp_id)
     return {"staff_token": staff_token, "employee_id": emp_id, "location_id": loc_id}
 
 
@@ -144,10 +156,11 @@ def test_haversine_boundary_inclusive():
 
 def test_late_minutes_threshold():
     tz = LAGOS
+    cutoff = time(8, 15)
     on_time = datetime(2026, 5, 15, 8, 15, 0, tzinfo=tz)
     late = datetime(2026, 5, 15, 8, 16, 0, tzinfo=tz)
-    assert _late_minutes(on_time) == 0
-    assert _late_minutes(late) == 1
+    assert _late_minutes(on_time, cutoff=cutoff) == 0
+    assert _late_minutes(late, cutoff=cutoff) == 1
 
 
 def test_sunday_detection():
@@ -517,10 +530,11 @@ def test_geo_clock_in_factory_location_assignment_endpoint(client, admin_token, 
     assert r.status_code == 200, r.text
 
 
-def test_geo_clock_in_uses_location_late_time(client, admin_token):
+def test_geo_clock_in_uses_location_late_time(client, admin_token, db_session):
     """Lateness threshold follows the assigned location's configured late time."""
     staff_token, user_id = _create_staff_user(client, admin_token)
     emp_id = _create_monthly_employee(client, admin_token, user_id)
+    _backdate_employee_hire(db_session, emp_id)
     loc_id = _create_location(client, admin_token, late_attendance_time="09:00")
 
     assign = client.patch(
@@ -540,6 +554,7 @@ def test_geo_clock_in_uses_location_late_time(client, admin_token):
     late = datetime(2026, 5, 15, 9, 1, 0, tzinfo=LAGOS)
     staff_token2, user_id2 = _create_staff_user(client, admin_token)
     emp_id2 = _create_monthly_employee(client, admin_token, user_id2)
+    _backdate_employee_hire(db_session, emp_id2)
     client.patch(
         f"/employees/{emp_id2}/location-assignment",
         json={"location_id": loc_id},
@@ -635,7 +650,8 @@ def test_geo_clock_out_early_records_flag(client, geo_employee):
     assert entry["expected_check_out_time"] == "17:00"
     assert entry["status"] == "early_check_out"
     assert entry["attendance_duration_minutes"] == 490
-    assert float(entry["deduction_naira"]) == 0.0
+    assert float(entry["early_sign_out_deduction_naira"]) == 500.0
+    assert float(entry["deduction_naira"]) == 500.0
 
 
 def test_geo_clock_out_on_time_not_early(client, geo_employee):
@@ -655,9 +671,10 @@ def test_geo_clock_out_on_time_not_early(client, geo_employee):
     assert entry["attendance_duration_minutes"] == 545
 
 
-def test_geo_clock_out_early_uses_location_closing_time(client, admin_token):
+def test_geo_clock_out_early_uses_location_closing_time(client, admin_token, db_session):
     staff_token, user_id = _create_staff_user(client, admin_token)
     emp_id = _create_monthly_employee(client, admin_token, user_id)
+    _backdate_employee_hire(db_session, emp_id)
     loc_id = _create_location(client, admin_token, check_out_time="18:00")
     _assign_location(client, admin_token, emp_id, loc_id)
 
@@ -678,6 +695,7 @@ def test_geo_clock_out_early_uses_location_closing_time(client, admin_token):
 def test_early_check_out_history_preserves_snapshot_after_location_update(client, admin_token, db_session):
     staff_token, user_id = _create_staff_user(client, admin_token)
     emp_id = _create_monthly_employee(client, admin_token, user_id)
+    _backdate_employee_hire(db_session, emp_id)
     loc_id = _create_location(client, admin_token, check_out_time="17:00")
     _assign_location(client, admin_token, emp_id, loc_id)
 

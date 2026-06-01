@@ -1,58 +1,130 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { RequireAuth } from "./routes/RequireAuth";
 import { AppLayout } from "./components/layout/AppLayout";
 import { PageHeaderProvider } from "./components/layout/pageHeader";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { OrdersPage } from "./pages/OrdersPage";
-import { OrderDetailsPage } from "./pages/OrderDetailsPage";
-import { CustomersPage } from "./pages/CustomersPage";
-import { AdminUsersPage } from "./pages/AdminUsersPage";
-import { AdminActivityLogPage } from "./pages/AdminActivityLogPage";
-import { AdminJobsPage } from "./pages/AdminJobsPage";
-import { AdminJobDetailPage } from "./pages/AdminJobDetailPage";
-import { AdminCompanyLocationsPage } from "./pages/AdminCompanyLocationsPage";
-import { TrashPage } from "./pages/TrashPage";
-import { InventoryPage } from "./pages/InventoryPage";
-import { InventoryMaterialDetailPage } from "./pages/InventoryMaterialDetailPage";
-import { EquipmentPage } from "./pages/EquipmentPage";
-import { ProductionMaterialTrackingPage } from "./pages/ProductionMaterialTrackingPage";
-import { ToolDetailPage } from "./pages/ToolDetailPage";
-import { MachineDetailPage } from "./pages/MachineDetailPage";
-import { AccountPage } from "./pages/AccountPage";
-import { InvoicesPage } from "./pages/InvoicesPage";
-import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
-import { ProformaListPage } from "./pages/ProformaListPage";
-import { ProformaFormPage } from "./pages/ProformaFormPage";
-import { ProformaDetailPage } from "./pages/ProformaDetailPage";
-import { QuotationListPage } from "./pages/QuotationListPage";
-import { QuotationFormPage } from "./pages/QuotationFormPage";
-import { QuotationDetailPage } from "./pages/QuotationDetailPage";
-import { WaybillListPage } from "./pages/WaybillListPage";
-import { WaybillDetailPage } from "./pages/WaybillDetailPage";
-import { InvoicePdfExportPage } from "./pages/pdf-export/InvoicePdfExportPage";
-import { QuotationPdfExportPage } from "./pages/pdf-export/QuotationPdfExportPage";
-import { ProformaPdfExportPage } from "./pages/pdf-export/ProformaPdfExportPage";
-import { WaybillPdfExportPage } from "./pages/pdf-export/WaybillPdfExportPage";
-import { OrderPdfExportPage } from "./pages/pdf-export/OrderPdfExportPage";
-import { EmployeesPage } from "./pages/EmployeesPage";
-import { EmployeeAdminPage } from "./pages/EmployeeAdminPage";
-import { EmployeeLegacyRedirect } from "./pages/EmployeeLegacyRedirect";
-import { EmployeeSelfPage } from "./pages/EmployeeSelfPage";
-import { MonthlyEmployeeDetailPage } from "./pages/MonthlyEmployeeDetailPage";
-import { AttendanceRecordsPage } from "./pages/AttendanceRecordsPage";
-import { EmployeeAttendanceDetailPage } from "./pages/EmployeeAttendanceDetailPage";
-import { ContractEmployeeDetailPage } from "./pages/ContractEmployeeDetailPage";
-import { ContractEmployeeCreatePage } from "./pages/ContractEmployeeCreatePage";
-import { ContractEmployeeDashboardPage } from "./pages/ContractEmployeeDashboardPage";
-import { ContractJobDetailPage } from "./pages/ContractJobDetailPage";
-import { ExpensesPage } from "./pages/ExpensesPage";
-import { FinanceDashboardPage } from "./pages/FinanceDashboardPage";
-import { StaffFinanceSelf } from "./pages/StaffFinanceSelf";
 import { StaffDashboardPage } from "./pages/StaffDashboardPage";
-import { StaffProfilePage } from "./pages/StaffProfilePage";
+import { AccountPage } from "./pages/AccountPage";
 import { useAuth } from "./state/auth";
 import { DraftRecoveryGate } from "./state/drafts";
+
+const OrdersPage = lazy(() => import("./pages/OrdersPage").then((m) => ({ default: m.OrdersPage })));
+const OrderDetailsPage = lazy(() =>
+  import("./pages/OrderDetailsPage").then((m) => ({ default: m.OrderDetailsPage }))
+);
+const CustomersPage = lazy(() => import("./pages/CustomersPage").then((m) => ({ default: m.CustomersPage })));
+const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage").then((m) => ({ default: m.AdminUsersPage })));
+const AdminActivityLogPage = lazy(() =>
+  import("./pages/AdminActivityLogPage").then((m) => ({ default: m.AdminActivityLogPage }))
+);
+const AdminJobsPage = lazy(() => import("./pages/AdminJobsPage").then((m) => ({ default: m.AdminJobsPage })));
+const AdminJobDetailPage = lazy(() =>
+  import("./pages/AdminJobDetailPage").then((m) => ({ default: m.AdminJobDetailPage }))
+);
+const AdminCompanyLocationsPage = lazy(() =>
+  import("./pages/AdminCompanyLocationsPage").then((m) => ({ default: m.AdminCompanyLocationsPage }))
+);
+const TrashPage = lazy(() => import("./pages/TrashPage").then((m) => ({ default: m.TrashPage })));
+const InventoryPage = lazy(() => import("./pages/InventoryPage").then((m) => ({ default: m.InventoryPage })));
+const InventoryMaterialDetailPage = lazy(() =>
+  import("./pages/InventoryMaterialDetailPage").then((m) => ({ default: m.InventoryMaterialDetailPage }))
+);
+const EquipmentPage = lazy(() => import("./pages/EquipmentPage").then((m) => ({ default: m.EquipmentPage })));
+const ProductionMaterialTrackingPage = lazy(() =>
+  import("./pages/ProductionMaterialTrackingPage").then((m) => ({ default: m.ProductionMaterialTrackingPage }))
+);
+const ToolDetailPage = lazy(() => import("./pages/ToolDetailPage").then((m) => ({ default: m.ToolDetailPage })));
+const MachineDetailPage = lazy(() =>
+  import("./pages/MachineDetailPage").then((m) => ({ default: m.MachineDetailPage }))
+);
+const InvoicesPage = lazy(() => import("./pages/InvoicesPage").then((m) => ({ default: m.InvoicesPage })));
+const InvoiceDetailPage = lazy(() =>
+  import("./pages/InvoiceDetailPage").then((m) => ({ default: m.InvoiceDetailPage }))
+);
+const ProformaListPage = lazy(() => import("./pages/ProformaListPage").then((m) => ({ default: m.ProformaListPage })));
+const ProformaFormPage = lazy(() => import("./pages/ProformaFormPage").then((m) => ({ default: m.ProformaFormPage })));
+const ProformaDetailPage = lazy(() =>
+  import("./pages/ProformaDetailPage").then((m) => ({ default: m.ProformaDetailPage }))
+);
+const QuotationListPage = lazy(() =>
+  import("./pages/QuotationListPage").then((m) => ({ default: m.QuotationListPage }))
+);
+const QuotationFormPage = lazy(() =>
+  import("./pages/QuotationFormPage").then((m) => ({ default: m.QuotationFormPage }))
+);
+const QuotationDetailPage = lazy(() =>
+  import("./pages/QuotationDetailPage").then((m) => ({ default: m.QuotationDetailPage }))
+);
+const WaybillListPage = lazy(() => import("./pages/WaybillListPage").then((m) => ({ default: m.WaybillListPage })));
+const WaybillDetailPage = lazy(() =>
+  import("./pages/WaybillDetailPage").then((m) => ({ default: m.WaybillDetailPage }))
+);
+const InvoicePdfExportPage = lazy(() =>
+  import("./pages/pdf-export/InvoicePdfExportPage").then((m) => ({ default: m.InvoicePdfExportPage }))
+);
+const QuotationPdfExportPage = lazy(() =>
+  import("./pages/pdf-export/QuotationPdfExportPage").then((m) => ({ default: m.QuotationPdfExportPage }))
+);
+const ProformaPdfExportPage = lazy(() =>
+  import("./pages/pdf-export/ProformaPdfExportPage").then((m) => ({ default: m.ProformaPdfExportPage }))
+);
+const WaybillPdfExportPage = lazy(() =>
+  import("./pages/pdf-export/WaybillPdfExportPage").then((m) => ({ default: m.WaybillPdfExportPage }))
+);
+const OrderPdfExportPage = lazy(() =>
+  import("./pages/pdf-export/OrderPdfExportPage").then((m) => ({ default: m.OrderPdfExportPage }))
+);
+const EmployeesPage = lazy(() => import("./pages/EmployeesPage").then((m) => ({ default: m.EmployeesPage })));
+const EmployeeAdminPage = lazy(() =>
+  import("./pages/EmployeeAdminPage").then((m) => ({ default: m.EmployeeAdminPage }))
+);
+const EmployeeLegacyRedirect = lazy(() =>
+  import("./pages/EmployeeLegacyRedirect").then((m) => ({ default: m.EmployeeLegacyRedirect }))
+);
+const EmployeeSelfPage = lazy(() =>
+  import("./pages/EmployeeSelfPage").then((m) => ({ default: m.EmployeeSelfPage }))
+);
+const MonthlyEmployeeDetailPage = lazy(() =>
+  import("./pages/MonthlyEmployeeDetailPage").then((m) => ({ default: m.MonthlyEmployeeDetailPage }))
+);
+const AttendanceRecordsPage = lazy(() =>
+  import("./pages/AttendanceRecordsPage").then((m) => ({ default: m.AttendanceRecordsPage }))
+);
+const EmployeeAttendanceDetailPage = lazy(() =>
+  import("./pages/EmployeeAttendanceDetailPage").then((m) => ({ default: m.EmployeeAttendanceDetailPage }))
+);
+const ContractEmployeeDetailPage = lazy(() =>
+  import("./pages/ContractEmployeeDetailPage").then((m) => ({ default: m.ContractEmployeeDetailPage }))
+);
+const ContractEmployeeCreatePage = lazy(() =>
+  import("./pages/ContractEmployeeCreatePage").then((m) => ({ default: m.ContractEmployeeCreatePage }))
+);
+const ContractEmployeeDashboardPage = lazy(() =>
+  import("./pages/ContractEmployeeDashboardPage").then((m) => ({ default: m.ContractEmployeeDashboardPage }))
+);
+const ContractJobDetailPage = lazy(() =>
+  import("./pages/ContractJobDetailPage").then((m) => ({ default: m.ContractJobDetailPage }))
+);
+const ExpensesPage = lazy(() => import("./pages/ExpensesPage").then((m) => ({ default: m.ExpensesPage })));
+const FinanceDashboardPage = lazy(() =>
+  import("./pages/FinanceDashboardPage").then((m) => ({ default: m.FinanceDashboardPage }))
+);
+const StaffFinanceSelf = lazy(() => import("./pages/StaffFinanceSelf").then((m) => ({ default: m.StaffFinanceSelf })));
+const StaffProfilePage = lazy(() => import("./pages/StaffProfilePage").then((m) => ({ default: m.StaffProfilePage })));
+
+function LazyPage({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[12rem] items-center justify-center p-6 text-sm text-black/60">Loading…</div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 function LegacyMachineDetailRedirect() {
   const { machineId } = useParams();
@@ -69,8 +141,18 @@ function DashboardGate() {
 
 function FinanceEntry() {
   const auth = useAuth();
-  if (auth.role === "staff") return <StaffFinanceSelf />;
-  return <FinanceDashboardPage />;
+  if (auth.role === "staff") {
+    return (
+      <LazyPage>
+        <StaffFinanceSelf />
+      </LazyPage>
+    );
+  }
+  return (
+    <LazyPage>
+      <FinanceDashboardPage />
+    </LazyPage>
+  );
 }
 
 export default function App() {
@@ -78,11 +160,46 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
 
-      <Route path="/pdf-export/invoice/:invoiceId" element={<InvoicePdfExportPage />} />
-      <Route path="/pdf-export/quotation/:quotationId" element={<QuotationPdfExportPage />} />
-      <Route path="/pdf-export/proforma/:proformaId" element={<ProformaPdfExportPage />} />
-      <Route path="/pdf-export/waybill/:waybillId" element={<WaybillPdfExportPage />} />
-      <Route path="/pdf-export/order/:orderId" element={<OrderPdfExportPage />} />
+      <Route
+        path="/pdf-export/invoice/:invoiceId"
+        element={
+          <LazyPage>
+            <InvoicePdfExportPage />
+          </LazyPage>
+        }
+      />
+      <Route
+        path="/pdf-export/quotation/:quotationId"
+        element={
+          <LazyPage>
+            <QuotationPdfExportPage />
+          </LazyPage>
+        }
+      />
+      <Route
+        path="/pdf-export/proforma/:proformaId"
+        element={
+          <LazyPage>
+            <ProformaPdfExportPage />
+          </LazyPage>
+        }
+      />
+      <Route
+        path="/pdf-export/waybill/:waybillId"
+        element={
+          <LazyPage>
+            <WaybillPdfExportPage />
+          </LazyPage>
+        }
+      />
+      <Route
+        path="/pdf-export/order/:orderId"
+        element={
+          <LazyPage>
+            <OrderPdfExportPage />
+          </LazyPage>
+        }
+      />
 
       <Route
         path="/"
@@ -102,7 +219,9 @@ export default function App() {
           path="orders"
           element={
             <RequireAuth roles={["admin", "showroom", "factory", "finance"]}>
-              <OrdersPage />
+              <LazyPage>
+                <OrdersPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -110,7 +229,9 @@ export default function App() {
           path="orders/:orderId"
           element={
             <RequireAuth roles={["admin", "showroom", "factory", "finance"]}>
-              <OrderDetailsPage />
+              <LazyPage>
+                <OrderDetailsPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -118,7 +239,9 @@ export default function App() {
           path="invoices"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <InvoicesPage />
+              <LazyPage>
+                <InvoicesPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -126,7 +249,9 @@ export default function App() {
           path="invoices/:invoiceId"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <InvoiceDetailPage />
+              <LazyPage>
+                <InvoiceDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -134,7 +259,9 @@ export default function App() {
           path="quotations/new"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <QuotationFormPage />
+              <LazyPage>
+                <QuotationFormPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -142,7 +269,9 @@ export default function App() {
           path="quotations/:quotationId/edit"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <QuotationFormPage />
+              <LazyPage>
+                <QuotationFormPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -150,7 +279,9 @@ export default function App() {
           path="quotations/:quotationId"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <QuotationDetailPage />
+              <LazyPage>
+                <QuotationDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -158,7 +289,9 @@ export default function App() {
           path="quotations"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <QuotationListPage />
+              <LazyPage>
+                <QuotationListPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -166,7 +299,9 @@ export default function App() {
           path="waybills/:waybillId"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <WaybillDetailPage />
+              <LazyPage>
+                <WaybillDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -174,7 +309,9 @@ export default function App() {
           path="waybills"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <WaybillListPage />
+              <LazyPage>
+                <WaybillListPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -182,7 +319,9 @@ export default function App() {
           path="proforma/new"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <ProformaFormPage />
+              <LazyPage>
+                <ProformaFormPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -190,7 +329,9 @@ export default function App() {
           path="proforma/:proformaId/edit"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <ProformaFormPage />
+              <LazyPage>
+                <ProformaFormPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -198,7 +339,9 @@ export default function App() {
           path="proforma/:proformaId"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <ProformaDetailPage />
+              <LazyPage>
+                <ProformaDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -206,7 +349,9 @@ export default function App() {
           path="proforma"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <ProformaListPage />
+              <LazyPage>
+                <ProformaListPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -214,7 +359,9 @@ export default function App() {
           path="customers"
           element={
             <RequireAuth roles={["admin", "showroom", "finance"]}>
-              <CustomersPage />
+              <LazyPage>
+                <CustomersPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -222,7 +369,9 @@ export default function App() {
           path="trash"
           element={
             <RequireAuth roles={["admin", "showroom", "factory"]}>
-              <TrashPage />
+              <LazyPage>
+                <TrashPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -230,7 +379,9 @@ export default function App() {
           path="inventory/:materialId"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <InventoryMaterialDetailPage />
+              <LazyPage>
+                <InventoryMaterialDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -238,7 +389,9 @@ export default function App() {
           path="inventory"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <InventoryPage />
+              <LazyPage>
+                <InventoryPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -246,7 +399,9 @@ export default function App() {
           path="equipment/tool/:toolId"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <ToolDetailPage />
+              <LazyPage>
+                <ToolDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -254,7 +409,9 @@ export default function App() {
           path="equipment/machine/:machineId"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <MachineDetailPage />
+              <LazyPage>
+                <MachineDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -262,7 +419,9 @@ export default function App() {
           path="equipment"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <EquipmentPage />
+              <LazyPage>
+                <EquipmentPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -270,7 +429,9 @@ export default function App() {
           path="production/materials"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <ProductionMaterialTrackingPage />
+              <LazyPage>
+                <ProductionMaterialTrackingPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -289,7 +450,9 @@ export default function App() {
           path="employee-details"
           element={
             <RequireAuth roles={["admin", "factory", "finance", "showroom"]}>
-              <EmployeeSelfPage />
+              <LazyPage>
+                <EmployeeSelfPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -297,23 +460,20 @@ export default function App() {
           path="profile"
           element={
             <RequireAuth roles={["staff"]}>
-              <StaffProfilePage />
+              <LazyPage>
+                <StaffProfilePage />
+              </LazyPage>
             </RequireAuth>
           }
         />
-        <Route
-          path="finance"
-          element={
-            <RequireAuth roles={["finance", "admin", "staff"]}>
-              <FinanceEntry />
-            </RequireAuth>
-          }
-        />
+        <Route path="finance" element={<RequireAuth roles={["finance", "admin", "staff"]}><FinanceEntry /></RequireAuth>} />
         <Route
           path="employees"
           element={
             <RequireAuth roles={["admin", "finance", "factory"]}>
-              <EmployeesPage />
+              <LazyPage>
+                <EmployeesPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -321,7 +481,9 @@ export default function App() {
           path="contract"
           element={
             <RequireAuth roles={["contract_employee"]}>
-              <ContractEmployeeDashboardPage />
+              <LazyPage>
+                <ContractEmployeeDashboardPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -329,7 +491,9 @@ export default function App() {
           path="contract/jobs/:jobId"
           element={
             <RequireAuth roles={["contract_employee"]}>
-              <ContractJobDetailPage />
+              <LazyPage>
+                <ContractJobDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -337,7 +501,9 @@ export default function App() {
           path="employees/new"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <EmployeeAdminPage />
+              <LazyPage>
+                <EmployeeAdminPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -345,7 +511,9 @@ export default function App() {
           path="employees/:employeeId/detail"
           element={
             <RequireAuth roles={["admin"]}>
-              <MonthlyEmployeeDetailPage />
+              <LazyPage>
+                <MonthlyEmployeeDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -353,7 +521,9 @@ export default function App() {
           path="attendance-records"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <AttendanceRecordsPage />
+              <LazyPage>
+                <AttendanceRecordsPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -361,7 +531,9 @@ export default function App() {
           path="attendance-records/:employeeId"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <EmployeeAttendanceDetailPage />
+              <LazyPage>
+                <EmployeeAttendanceDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -369,7 +541,9 @@ export default function App() {
           path="contract-employees/new"
           element={
             <RequireAuth roles={["admin", "factory"]}>
-              <ContractEmployeeCreatePage />
+              <LazyPage>
+                <ContractEmployeeCreatePage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -377,7 +551,9 @@ export default function App() {
           path="contract-employees/:contractEmployeeId"
           element={
             <RequireAuth roles={["admin"]}>
-              <ContractEmployeeDetailPage />
+              <LazyPage>
+                <ContractEmployeeDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -385,7 +561,9 @@ export default function App() {
           path="employees/:employeeId"
           element={
             <RequireAuth roles={["admin"]}>
-              <EmployeeLegacyRedirect />
+              <LazyPage>
+                <EmployeeLegacyRedirect />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -393,7 +571,9 @@ export default function App() {
           path="expenses"
           element={
             <RequireAuth roles={["admin", "finance"]}>
-              <ExpensesPage />
+              <LazyPage>
+                <ExpensesPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -401,7 +581,9 @@ export default function App() {
           path="admin/users"
           element={
             <RequireAuth roles={["admin"]}>
-              <AdminUsersPage />
+              <LazyPage>
+                <AdminUsersPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -409,7 +591,9 @@ export default function App() {
           path="admin/locations"
           element={
             <RequireAuth roles={["admin"]}>
-              <AdminCompanyLocationsPage />
+              <LazyPage>
+                <AdminCompanyLocationsPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -417,7 +601,9 @@ export default function App() {
           path="admin/jobs"
           element={
             <RequireAuth roles={["admin"]}>
-              <AdminJobsPage />
+              <LazyPage>
+                <AdminJobsPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -425,7 +611,9 @@ export default function App() {
           path="admin/jobs/:jobId"
           element={
             <RequireAuth roles={["admin"]}>
-              <AdminJobDetailPage />
+              <LazyPage>
+                <AdminJobDetailPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -433,7 +621,9 @@ export default function App() {
           path="admin/activity"
           element={
             <RequireAuth roles={["admin"]}>
-              <AdminActivityLogPage />
+              <LazyPage>
+                <AdminActivityLogPage />
+              </LazyPage>
             </RequireAuth>
           }
         />
@@ -443,4 +633,3 @@ export default function App() {
     </Routes>
   );
 }
-

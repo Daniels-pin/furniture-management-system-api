@@ -47,6 +47,34 @@ def _job_is_valid_for_financials(job: models.ContractJob) -> tuple[bool, str]:
     return False, "not_accepted_in_progress_or_completed"
 
 
+def _get_reversed_payment_ids_batch(db: Session, contract_employee_ids: list[int]) -> dict[int, set[int]]:
+    """Batch variant of _get_reversed_payment_ids for list endpoints."""
+    ce_ids = sorted({int(x) for x in contract_employee_ids if x})
+    out: dict[int, set[int]] = {cid: set() for cid in ce_ids}
+    if not ce_ids:
+        return out
+
+    rev = aliased(models.EmployeeTransaction)
+    orig = aliased(models.EmployeeTransaction)
+    rows = (
+        db.query(orig.contract_employee_id, rev.reversal_of_id)
+        .join(orig, rev.reversal_of_id == orig.id)
+        .filter(
+            rev.txn_type == "reversal",
+            rev.status == "paid",
+            rev.reversal_of_id.isnot(None),
+            orig.txn_type == "payment",
+            orig.contract_employee_id.in_(ce_ids),
+        )
+        .all()
+    )
+    for ce_id, reversal_of_id in rows:
+        if ce_id is None or reversal_of_id is None:
+            continue
+        out.setdefault(int(ce_id), set()).add(int(reversal_of_id))
+    return out
+
+
 def _get_reversed_payment_ids(db: Session, contract_employee_id: int) -> set[int]:
     """
     Identify payment transactions that have been reversed by a corresponding reversal row.

@@ -9,8 +9,16 @@ from app import models
 from app.auth.auth import require_role
 from app.database import get_db
 from app.schemas import CompanyLocationCreate, CompanyLocationOut, CompanyLocationUpdate
+from app.utils.ttl_cache import reference_cache
 
 router = APIRouter(prefix="/company-locations", tags=["CompanyLocations"])
+
+_LOCATIONS_CACHE_KEY = "company_locations:all"
+_LOCATIONS_CACHE_TTL = 60.0
+
+
+def _invalidate_locations_cache() -> None:
+    reference_cache.clear()
 
 
 @router.get("", response_model=list[CompanyLocationOut])
@@ -23,8 +31,13 @@ def list_locations(
     s = (search or "").strip()
     if s:
         q = q.filter(models.CompanyLocation.name.ilike(f"%{s}%"))
-    rows = q.order_by(models.CompanyLocation.name.asc(), models.CompanyLocation.id.asc()).all()
-    return [CompanyLocationOut.model_validate(r) for r in rows]
+    cache_key = f"{_LOCATIONS_CACHE_KEY}:{s}"
+
+    def _load() -> list[CompanyLocationOut]:
+        rows = q.order_by(models.CompanyLocation.name.asc(), models.CompanyLocation.id.asc()).all()
+        return [CompanyLocationOut.model_validate(r) for r in rows]
+
+    return reference_cache.get_or_set(cache_key, _LOCATIONS_CACHE_TTL, _load)
 
 
 @router.post("", response_model=CompanyLocationOut)
@@ -56,6 +69,7 @@ def create_location(
     db.add(row)
     db.commit()
     db.refresh(row)
+    _invalidate_locations_cache()
     return CompanyLocationOut.model_validate(row)
 
 
@@ -88,6 +102,7 @@ def update_location(
         setattr(row, k, v)
     db.commit()
     db.refresh(row)
+    _invalidate_locations_cache()
     return CompanyLocationOut.model_validate(row)
 
 
@@ -119,5 +134,6 @@ def delete_location(
 
     db.delete(row)
     db.commit()
+    _invalidate_locations_cache()
     return {"message": "Location deleted", "employees_unassigned": len(affected)}
 

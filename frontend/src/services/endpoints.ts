@@ -162,8 +162,12 @@ export const adminApi = {
 };
 
 export const customersApi = {
-  async list() {
-    const { data } = await api.get<Customer[]>("/customers");
+  async list(params?: { limit?: number; offset?: number; search?: string }) {
+    const qp: Record<string, string | number> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    if (params?.search?.trim()) qp.search = params.search.trim();
+    const { data } = await api.get<Paginated<Customer>>("/customers", { params: qp });
     return data;
   },
   async birthdaysToday() {
@@ -670,17 +674,21 @@ export const inventoryApi = {
     return data;
   },
   async list(params?: {
+    limit?: number;
+    offset?: number;
     search?: string;
     stock_level?: InventoryMaterial["stock_level"];
     supplier?: string;
     payment_status?: InventoryMaterial["payment_status"];
   }) {
-    const qp: Record<string, string> = {};
+    const qp: Record<string, string | number> = {};
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
     if (params?.search?.trim()) qp.search = params.search.trim();
     if (params?.stock_level) qp.stock_level = params.stock_level;
     if (params?.supplier?.trim()) qp.supplier = params.supplier.trim();
     if (params?.payment_status) qp.payment_status = params.payment_status;
-    const { data } = await api.get<InventoryMaterial[]>("/inventory", { params: qp });
+    const { data } = await api.get<Paginated<InventoryMaterial>>("/inventory", { params: qp });
     return data;
   },
   async getDetail(materialId: number) {
@@ -841,7 +849,12 @@ export const machinesApi = {
   }
 };
 
-export type EmployeePeriodParams = { period_year?: number; period_month?: number };
+export type EmployeePeriodParams = {
+  period_year?: number;
+  period_month?: number;
+  search?: string;
+  payment_status?: string;
+};
 
 export const companyLocationsApi = {
   async list(params?: { search?: string }) {
@@ -982,6 +995,8 @@ export const employeesApi = {
     search?: string;
     status?: import("../types/api").AttendanceMonitorFilterStatus;
     location_id?: number;
+    limit?: number;
+    offset?: number;
   }) {
     const { data } = await api.get<import("../types/api").AttendanceMonitorResponse>("/employees/attendance/monitor", {
       params
@@ -1222,8 +1237,18 @@ export const contractEmployeePortalApi = {
 };
 
 export const contractJobsApi = {
-  async listAdmin(params?: { employee_id?: number; status?: ContractJob["status"] }) {
-    const { data } = await api.get<ContractJob[]>("/contract-jobs", { params });
+  async listAdmin(params?: {
+    employee_id?: number;
+    status?: ContractJob["status"];
+    limit?: number;
+    offset?: number;
+  }) {
+    const qp: Record<string, string | number> = {};
+    if (typeof params?.employee_id === "number") qp.employee_id = params.employee_id;
+    if (params?.status) qp.status = params.status;
+    if (typeof params?.limit === "number") qp.limit = params.limit;
+    if (typeof params?.offset === "number") qp.offset = params.offset;
+    const { data } = await api.get<Paginated<ContractJob>>("/contract-jobs", { params: qp });
     return data;
   },
   async summaryAdmin() {

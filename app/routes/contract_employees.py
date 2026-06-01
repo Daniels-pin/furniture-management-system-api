@@ -40,6 +40,10 @@ router = APIRouter(prefix="/contract-employees", tags=["Contract Employees"])
 logger = logging.getLogger(__name__)
 
 
+def _as_decimal(v) -> Decimal:
+    return Decimal(str(v or 0))
+
+
 def _to_out(
     emp: models.ContractEmployee,
     *,
@@ -116,28 +120,35 @@ def list_contract_employees(
     unread_txn_ids = unread_payment_notification_txn_ids(
         db, user_id=user_id, role=role, transaction_ids=all_active_txn_ids
     )
-    # Enrich list rows with dashboard metrics.
-    out: list[ContractEmployeeListItemOut] = []
-    for r in rows:
-        derived, _debug = compute_contract_employee_financials(db, int(r.id))
-        if overpaid is True and derived.balance >= 0:
-            continue
-        if overpaid is False and derived.balance < 0:
-            continue
-        active_jobs = (
-            db.query(models.ContractJob)
+    active_job_counts: dict[int, int] = {}
+    if rows:
+        ce_row_ids = [int(r.id) for r in rows]
+        for ce_id, cnt in (
+            db.query(models.ContractJob.contract_employee_id, func.count())
             .filter(
-                models.ContractJob.contract_employee_id == r.id,
+                models.ContractJob.contract_employee_id.in_(ce_row_ids),
                 models.ContractJob.status.in_(["pending", "in_progress"]),
             )
-            .count()
-        )
+            .group_by(models.ContractJob.contract_employee_id)
+            .all()
+        ):
+            active_job_counts[int(ce_id)] = int(cnt)
+
+    # Enrich list rows with dashboard metrics (use denormalized ledger columns on the row).
+    out: list[ContractEmployeeListItemOut] = []
+    for r in rows:
+        bal = _as_decimal(r.balance)
+        if overpaid is True and bal >= 0:
+            continue
+        if overpaid is False and bal < 0:
+            continue
+        active_jobs = active_job_counts.get(int(r.id), 0)
         active_txn_ids = txn_ids_by_ce.get(int(r.id), [])
         pending_requests = len(active_txn_ids)
         unread_pending_requests = sum(1 for tid in active_txn_ids if tid in unread_txn_ids)
         item = ContractEmployeeListItemOut.model_validate(r)
-        item.total_paid = derived.total_paid
-        item.balance = derived.balance
+        item.total_paid = _as_decimal(r.total_paid)
+        item.balance = bal
         item.active_jobs_count = int(active_jobs)
         item.pending_requests = int(pending_requests)
         item.unread_pending_requests = int(unread_pending_requests)

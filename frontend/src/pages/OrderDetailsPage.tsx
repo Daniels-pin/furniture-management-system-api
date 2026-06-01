@@ -13,6 +13,7 @@ import { useAuth } from "../state/auth";
 import { formatMoney, parseMoneyNumber } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import type { OrderCreateItem, OrderStatus } from "../types/api";
+import { cloudinaryThumbnail } from "../utils/cloudinary";
 
 type Details = Awaited<ReturnType<typeof ordersApi.get>>;
 
@@ -630,7 +631,7 @@ export function OrderDetailsPage() {
                         }}
                       >
                         <img
-                          src={src}
+                          src={cloudinaryThumbnail(src, { w: 400, h: 300 })}
                           alt={`Order #${data.order_id} image ${idx + 1}`}
                           className="aspect-[4/3] w-full object-cover"
                         />

@@ -1362,6 +1362,7 @@ class AttendanceMonitorOut(BaseModel):
     attendance_date: date
     summary: AttendanceMonitorSummaryOut
     rows: list[AttendanceMonitorRowOut]
+    rows_total: int = 0
 
 
 class EmployeeAttendanceMonthSummaryOut(BaseModel):

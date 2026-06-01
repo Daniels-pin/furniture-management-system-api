@@ -7,6 +7,8 @@ import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { useToast } from "../state/toast";
 import { getErrorMessage } from "../services/api";
 import { companyLocationsApi } from "../services/endpoints";
+import { queryClient } from "../query/client";
+import { queryKeys } from "../query/hooks";
 import { getGeolocationPosition, getGeolocationUserMessage } from "../utils/attendance";
 import type { CompanyLocation } from "../types/api";
 import { formatCheckOutTime, formatLateAttendanceTime, toTimeInputValue } from "../utils/datetime";
@@ -96,6 +98,7 @@ export function AdminCompanyLocationsPage() {
   async function refresh() {
     const rows = await companyLocationsApi.list();
     setItems(rows);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.companyLocations() });
     return rows;
   }
 

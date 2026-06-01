@@ -5,6 +5,7 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { contractJobsApi, notificationsApi } from "../services/endpoints";
+import { cloudinaryFull, cloudinaryThumbnail } from "../utils/cloudinary";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import type { ContractJob, ContractJobNegotiationEvent, NotificationItem } from "../types/api";
@@ -194,16 +195,16 @@ export function ContractJobDetailPage() {
   }, [job, isLocked, needsBoth, adminAccepted, empAccepted, lastBy]);
 
   const canAccept =
-    Boolean(job) &&
+    job != null &&
     job.status === "pending" &&
     !isLocked &&
     job.price_offer != null &&
     (needsBoth ? !empAccepted : lastBy === "admin" && !empAccepted);
 
-  const canStart = Boolean(job) && job.status === "pending" && isLocked;
-  const canComplete = Boolean(job) && job.status === "in_progress";
-  const canRenegotiate = Boolean(job) && job.status !== "cancelled" && !isLocked;
-  const canCancel = Boolean(job) && job.status !== "cancelled";
+  const canStart = job != null && job.status === "pending" && isLocked;
+  const canComplete = job != null && job.status === "in_progress";
+  const canRenegotiate = job != null && job.status !== "cancelled" && !isLocked;
+  const canCancel = job != null && job.status !== "cancelled";
 
   if (loading) {
     return (
@@ -322,9 +323,9 @@ export function ContractJobDetailPage() {
         <Card className="!p-4">
           <div className="text-xs font-semibold text-black/55">Image preview</div>
           {job.image_url ? (
-            <a href={job.image_url} target="_blank" rel="noreferrer" className="block">
+            <a href={cloudinaryFull(job.image_url)} target="_blank" rel="noreferrer" className="block">
               <img
-                src={job.image_url}
+                src={cloudinaryThumbnail(job.image_url, { w: 720, h: 480 })}
                 alt={`Job #${job.id}`}
                 className="mt-3 w-full max-h-[360px] rounded-2xl border border-black/10 object-contain bg-white"
                 loading="lazy"

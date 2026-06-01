@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -24,6 +25,7 @@ from app.utils.financial_audit import log_financial_action
 from app.utils.notifications import create_notifications
 from app.utils.contract_financials import (
     _get_reversed_payment_ids,
+    _get_reversed_payment_ids_batch,
     compute_contract_employee_financials,
     recalculate_contract_employee_financials,
 )
@@ -114,6 +116,143 @@ def _job_out(db: Session, j: models.ContractJob, *, employee_name: str | None = 
         linked_transactions=[EmployeeTransactionOut.model_validate(t) for t in tx],
         negotiation_history=[models_to_schema_event(e) for e in events],
     )
+
+
+def _jobs_out_batch(
+    db: Session,
+    jobs: list[models.ContractJob],
+    *,
+    name_map: dict[int, str] | None = None,
+) -> list[ContractJobOut]:
+    if not jobs:
+        return []
+
+    job_ids = [int(j.id) for j in jobs]
+    ce_ids = sorted({int(j.contract_employee_id) for j in jobs})
+
+    if name_map is None:
+        name_map = {}
+        if ce_ids:
+            for ce_id, full_name in (
+                db.query(models.ContractEmployee.id, models.ContractEmployee.full_name)
+                .filter(models.ContractEmployee.id.in_(ce_ids))
+                .all()
+            ):
+                name_map[int(ce_id)] = (full_name or "").strip() or f"Employee #{int(ce_id)}"
+
+    reversed_by_ce = _get_reversed_payment_ids_batch(db, ce_ids)
+
+    tx_rows = (
+        db.query(models.EmployeeTransaction)
+        .filter(models.EmployeeTransaction.contract_job_id.in_(job_ids))
+        .order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
+        .all()
+    )
+    tx_by_job: dict[int, list[models.EmployeeTransaction]] = defaultdict(list)
+    for t in tx_rows:
+        if t.contract_job_id is not None:
+            tx_by_job[int(t.contract_job_id)].append(t)
+
+    paid_rows = (
+        db.query(
+            models.EmployeePaymentAllocation.contract_job_id,
+            models.EmployeePaymentAllocation.amount,
+            models.EmployeeTransaction.id,
+            models.EmployeeTransaction.contract_employee_id,
+        )
+        .join(
+            models.EmployeeTransaction,
+            models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id,
+        )
+        .filter(
+            models.EmployeePaymentAllocation.contract_job_id.in_(job_ids),
+            models.EmployeePaymentAllocation.voided_at.is_(None),
+            models.EmployeeTransaction.txn_type == "payment",
+            models.EmployeeTransaction.status == "paid",
+            or_(
+                models.EmployeeTransaction.processed_by_role == "finance",
+                models.EmployeeTransaction.receipt_url.isnot(None),
+            ),
+        )
+        .all()
+    )
+    paid_by_job: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    for job_id, amount, txn_id, ce_id in paid_rows:
+        if job_id is None:
+            continue
+        jid = int(job_id)
+        ce = int(ce_id) if ce_id is not None else 0
+        reversed_ids = reversed_by_ce.get(ce, set())
+        if txn_id is not None and int(txn_id) in reversed_ids:
+            continue
+        paid_by_job[jid] += _as_decimal(amount)
+
+    event_rows = (
+        db.query(models.ContractJobNegotiationEvent)
+        .filter(models.ContractJobNegotiationEvent.contract_job_id.in_(job_ids))
+        .order_by(
+            models.ContractJobNegotiationEvent.contract_job_id.asc(),
+            models.ContractJobNegotiationEvent.created_at.asc(),
+            models.ContractJobNegotiationEvent.id.asc(),
+        )
+        .all()
+    )
+    events_by_job: dict[int, list] = defaultdict(list)
+    for e in event_rows:
+        events_by_job[int(e.contract_job_id)].append(e)
+
+    out: list[ContractJobOut] = []
+    for j in jobs:
+        jid = int(j.id)
+        ce_id = int(j.contract_employee_id)
+        amount_paid = paid_by_job.get(jid, Decimal("0"))
+        bal = _as_decimal(j.final_price) - amount_paid if j.final_price is not None else None
+        payment_state = "not_paid"
+        if j.final_price is not None:
+            fp = _as_decimal(j.final_price)
+            if amount_paid <= 0:
+                payment_state = "not_paid"
+            elif amount_paid >= fp:
+                payment_state = "fully_paid"
+            else:
+                payment_state = "partially_paid"
+        employee_name = name_map.get(ce_id)
+        events = events_by_job.get(jid, [])
+        tx = tx_by_job.get(jid, [])
+        out.append(
+            ContractJobOut(
+                id=j.id,
+                contract_employee_id=j.contract_employee_id,
+                contract_employee_name=(employee_name or None),
+                description=(getattr(j, "description", "") or "").strip(),
+                image_url=j.image_url,
+                price_offer=_as_decimal(j.price_offer) if j.price_offer is not None else None,
+                last_offer_by_role=(getattr(j, "last_offer_by_role", None) or None),
+                offer_updated_at=getattr(j, "offer_updated_at", None),
+                offer_version=int(getattr(j, "offer_version", 0) or 0),
+                negotiation_occurred=bool(getattr(j, "negotiation_occurred", False)),
+                admin_accepted_at=getattr(j, "admin_accepted_at", None),
+                employee_accepted_at=getattr(j, "employee_accepted_at", None),
+                adminAccepted=bool(getattr(j, "admin_accepted_at", None)),
+                employeeAccepted=bool(getattr(j, "employee_accepted_at", None)),
+                hasNegotiation=bool(getattr(j, "negotiation_occurred", False)),
+                final_price=_as_decimal(j.final_price) if j.final_price is not None else None,
+                amount_paid=amount_paid,
+                balance=bal,
+                payment_state=payment_state,
+                price_accepted_at=j.price_accepted_at,
+                status=j.status,
+                created_at=j.created_at,
+                started_at=j.started_at,
+                completed_at=j.completed_at,
+                cancelled_at=j.cancelled_at,
+                cancelled_note=j.cancelled_note,
+                paid_flag=bool(getattr(j, "paid_flag", False) or amount_paid > 0),
+                linked_transactions=[EmployeeTransactionOut.model_validate(t) for t in tx],
+                negotiation_history=[models_to_schema_event(e) for e in events],
+            )
+        )
+    return out
 
 
 def models_to_schema_event(e: models.ContractJobNegotiationEvent):
@@ -461,19 +600,24 @@ def _reverse_paid_allocations_for_job(db: Session, job: models.ContractJob, acto
         )
 
 
-@router.get("", response_model=list[ContractJobOut])
+@router.get("")
 def list_jobs_admin(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
     employee_id: Optional[int] = Query(None, gt=0),
     status: Optional[str] = Query(None, description="pending | in_progress | completed | cancelled"),
+    limit: int = 50,
+    offset: int = 0,
 ):
+    lim = max(1, min(int(limit or 50), 200))
+    off = max(0, int(offset or 0))
     q = db.query(models.ContractJob)
     if employee_id:
         q = q.filter(models.ContractJob.contract_employee_id == int(employee_id))
     if status:
         q = q.filter(models.ContractJob.status == status)
-    rows = q.order_by(models.ContractJob.id.desc()).all()
+    total = q.count()
+    rows = q.order_by(models.ContractJob.id.desc()).offset(off).limit(lim).all()
     ce_ids = sorted({int(j.contract_employee_id) for j in rows})
     name_map: dict[int, str] = {}
     if ce_ids:
@@ -483,7 +627,8 @@ def list_jobs_admin(
             .all()
         ):
             name_map[int(ce_id)] = (full_name or "").strip() or f"Employee #{int(ce_id)}"
-    return [_job_out(db, j, employee_name=name_map.get(int(j.contract_employee_id))) for j in rows]
+    items = _jobs_out_batch(db, rows, name_map=name_map)
+    return {"items": items, "total": total}
 
 
 @router.get("/summary")
@@ -496,13 +641,15 @@ def admin_jobs_summary(
     total_pending = db.query(models.ContractJob).filter(models.ContractJob.status == "pending").count()
     total_in_progress = db.query(models.ContractJob).filter(models.ContractJob.status == "in_progress").count()
 
-    # Financial totals are derived from valid jobs + finance-confirmed payments only.
-    total_owed = Decimal("0")
-    total_paid = Decimal("0")
-    for (cid,) in db.query(models.ContractEmployee.id).all():
-        derived, _debug = compute_contract_employee_financials(db, int(cid), debug=False)
-        total_owed += derived.total_owed
-        total_paid += derived.total_paid
+    # Denormalized ledger totals on contract_employees (kept in sync by recalculate_contract_employee_financials).
+    total_owed_raw, total_paid_raw = (
+        db.query(
+            func.coalesce(func.sum(models.ContractEmployee.total_owed), 0),
+            func.coalesce(func.sum(models.ContractEmployee.total_paid), 0),
+        ).one()
+    )
+    total_owed = _as_decimal(total_owed_raw)
+    total_paid = _as_decimal(total_paid_raw)
     balance = total_owed - total_paid
     return {
         "jobs": {
@@ -609,7 +756,8 @@ def list_jobs_me(
     if status:
         q = q.filter(models.ContractJob.status == status)
     rows = q.order_by(models.ContractJob.id.desc()).all()
-    return [_job_out(db, j) for j in rows]
+    emp_name = (ce.full_name or "").strip() or f"Employee #{int(ce.id)}"
+    return _jobs_out_batch(db, rows, name_map={int(ce.id): emp_name})
 
 
 @router.post("/me", response_model=ContractJobOut)

@@ -22,14 +22,15 @@ if not DATABASE_URL:
         f"(expected at {_PROJECT_ROOT / '.env'}) or export it in your environment."
     )
 
-# QueuePool defaults are fine for a single worker; pre_ping/recycle avoid stale connections on Render.
+# Sized for ~25 concurrent users on a single web worker (35–70 total users).
+# pre_ping/recycle avoid stale connections on Render; keep transactions short to avoid pool exhaustion.
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
+    pool_recycle=280,
+    pool_size=8,
+    max_overflow=12,
+    pool_timeout=20,
 )
 
 # Session

@@ -271,7 +271,8 @@ def test_inventory_payments_and_financial_summary(client, admin_token):
 
     lst = client.get("/inventory", headers=headers)
     assert lst.status_code == 200
-    row = next(x for x in lst.json() if x["id"] == mid)
+    items = lst.json()["items"] if isinstance(lst.json(), dict) else lst.json()
+    row = next(x for x in items if x["id"] == mid)
     assert row["payment_status"] == "partial"
     assert row["balance"] in ("120.00", 120, "120")
 

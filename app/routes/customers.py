@@ -5,6 +5,7 @@ from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -20,27 +21,45 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
-from app.utils.user_account import historical_attribution_label
+from app.utils.user_labels import user_label, user_labels_by_id
 
 router = APIRouter()
 
 
 def _creator_username(db: Session, customer: models.Customer) -> str | None:
-    if not getattr(customer, "creator_id", None):
-        return None
-    u = db.query(models.User).filter(models.User.id == customer.creator_id).first()
-    return historical_attribution_label(u)
+    cid = getattr(customer, "creator_id", None)
+    return user_label(db, int(cid) if cid else None)
 
 
-@router.get("/customers", response_model=List[CustomerPublicResponse], response_model_exclude_none=True)
+@router.get("/customers")
 def get_customers(
+    limit: int = 20,
+    offset: int = 0,
+    search: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
     user=Depends(forbid_factory),
 ):
-    customers = db.query(models.Customer).filter(customer_alive()).order_by(models.Customer.id.desc()).all()
+    lim = max(1, min(int(limit or 20), 100))
+    off = max(0, int(offset or 0))
+    q = db.query(models.Customer).filter(customer_alive())
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        q = q.filter(
+            or_(
+                models.Customer.name.ilike(term),
+                models.Customer.phone.ilike(term),
+                models.Customer.email.ilike(term),
+            )
+        )
+    total = q.count()
+    customers = q.order_by(models.Customer.id.desc()).offset(off).limit(lim).all()
+
+    creator_labels: dict[int, str | None] = {}
+    if user.role in ("admin", "showroom"):
+        creator_ids = {int(c.creator_id) for c in customers if getattr(c, "creator_id", None)}
+        creator_labels = user_labels_by_id(db, creator_ids)
 
     result = []
-
     for c in customers:
         row = {
             "id": c.id,
@@ -52,10 +71,11 @@ def get_customers(
             "birth_month": c.birth_month,
         }
         if user.role in ("admin", "showroom"):
-            row["created_by"] = _creator_username(db, c)
+            cid = getattr(c, "creator_id", None)
+            row["created_by"] = creator_labels.get(int(cid)) if cid else None
         result.append(row)
 
-    return result
+    return {"items": result, "total": total}
 
 
 @router.get("/customers/export")

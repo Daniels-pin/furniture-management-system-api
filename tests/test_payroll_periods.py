@@ -37,6 +37,29 @@ def _create_employee(client, admin_token: str) -> int:
     return r.json()["id"]
 
 
+def _assign_work_location(client, admin_token: str, employee_id: int) -> None:
+    r = client.post(
+        "/company-locations",
+        json={
+            "name": f"Payroll Site {uuid.uuid4().hex[:6]}",
+            "latitude": 6.5244,
+            "longitude": 3.3792,
+            "allowed_radius_meters": 100,
+            "late_attendance_time": "08:15",
+            "check_out_time": "17:00",
+        },
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    loc_id = r.json()["id"]
+    assign = client.patch(
+        f"/employees/{employee_id}/work-location",
+        json={"location_id": loc_id},
+        headers=_auth(admin_token),
+    )
+    assert assign.status_code == 200, assign.text
+
+
 def test_periods_nav_includes_month_payment_status(client, admin_token):
     r = client.get("/employees/periods", headers=_auth(admin_token))
     assert r.status_code == 200, r.text
@@ -126,6 +149,7 @@ def test_ensure_payroll_periods_current_advances_month(db_session):
 
 def test_payroll_adjustment_lateness_override_preserves_count(client, admin_token):
     emp_id = _create_employee(client, admin_token)
+    _assign_work_location(client, admin_token, emp_id)
     nav = client.get("/employees/periods", headers=_auth(admin_token)).json()
     ap = nav["active_period"]
     period = {"period_year": ap["year"], "period_month": ap["month"]}

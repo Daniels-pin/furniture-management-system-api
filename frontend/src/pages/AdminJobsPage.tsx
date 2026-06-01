@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { PaginationFooter } from "../components/ui/Pagination";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { Modal } from "../components/ui/Modal";
 import { Input } from "../components/ui/Input";
@@ -74,6 +75,8 @@ function AcceptanceIndicator({ label }: { label: string | null }) {
     </span>
   );
 }
+
+const JOBS_PAGE_SIZE = 50;
 
 function firstNameFromFullName(fullName: string | null | undefined): string | null {
   const s = String(fullName || "").trim();
@@ -394,11 +397,32 @@ export function AdminJobsPage() {
   const [renegotiating, setRenegotiating] = useState(false);
   const [expandedEmp, setExpandedEmp] = useState<Record<string, boolean>>({});
   const [jobSearchQuery, setJobSearchQuery] = useState("");
+  const [jobsPage, setJobsPage] = useState(1);
+  const [jobsTotal, setJobsTotal] = useState(0);
 
   usePageHeader({
     title: "Jobs",
     subtitle: "All contract jobs across all employees."
   });
+
+  const listStatusParam = (): ContractJob["status"] | undefined => {
+    if (statusFilter === "pending" || statusFilter === "in_progress" || statusFilter === "completed") {
+      return statusFilter;
+    }
+    return undefined;
+  };
+
+  const fetchJobsPage = async (page: number) => {
+    return contractJobsApi.listAdmin({
+      limit: JOBS_PAGE_SIZE,
+      offset: (page - 1) * JOBS_PAGE_SIZE,
+      status: listStatusParam()
+    });
+  };
+
+  useEffect(() => {
+    setJobsPage(1);
+  }, [statusFilter]);
 
   useEffect(() => {
     let alive = true;
@@ -407,12 +431,13 @@ export function AdminJobsPage() {
       try {
         const [s, j, n] = await Promise.all([
           contractJobsApi.summaryAdmin(),
-          contractJobsApi.listAdmin(),
+          fetchJobsPage(jobsPage),
           notificationsApi.my({ unread_only: true, limit: 200 })
         ]);
         if (!alive) return;
         setSummary(s);
-        setJobs(Array.isArray(j) ? j : []);
+        setJobs(Array.isArray(j.items) ? j.items : []);
+        setJobsTotal(typeof j.total === "number" ? j.total : 0);
         setUnreadNotifs(Array.isArray(n?.items) ? (n.items as NotificationItem[]) : []);
       } catch (e) {
         toast.push("error", getErrorMessage(e));
@@ -427,16 +452,17 @@ export function AdminJobsPage() {
     return () => {
       alive = false;
     };
-  }, [toast]);
+  }, [toast, jobsPage, statusFilter]);
 
   async function refresh() {
     const [s, j, n] = await Promise.all([
       contractJobsApi.summaryAdmin(),
-      contractJobsApi.listAdmin(),
+      fetchJobsPage(jobsPage),
       notificationsApi.my({ unread_only: true, limit: 200 })
     ]);
     setSummary(s);
-    setJobs(Array.isArray(j) ? j : []);
+    setJobs(Array.isArray(j.items) ? j.items : []);
+    setJobsTotal(typeof j.total === "number" ? j.total : 0);
     setUnreadNotifs(Array.isArray(n?.items) ? (n.items as NotificationItem[]) : []);
   }
 
@@ -493,11 +519,12 @@ export function AdminJobsPage() {
     async function tick() {
       try {
         const [j, n] = await Promise.all([
-          contractJobsApi.listAdmin(),
+          fetchJobsPage(jobsPage),
           notificationsApi.my({ unread_only: true, limit: 200 })
         ]);
         if (!alive) return;
-        setJobs(Array.isArray(j) ? j : []);
+        setJobs(Array.isArray(j.items) ? j.items : []);
+        setJobsTotal(typeof j.total === "number" ? j.total : 0);
         setUnreadNotifs(Array.isArray(n?.items) ? (n.items as NotificationItem[]) : []);
       } catch {
         // ignore (non-critical; manual refresh still available)
@@ -511,7 +538,7 @@ export function AdminJobsPage() {
       window.removeEventListener("furniture:notifications-updated", onNotifUpdated as any);
       window.clearInterval(iv);
     };
-  }, []);
+  }, [jobsPage, statusFilter]);
 
   useEffect(() => {
     if (!assignOpen) return;
@@ -569,7 +596,7 @@ export function AdminJobsPage() {
         employeeId,
         employeeName,
         jobs: jobsSorted,
-        maxActivity,
+        maxActivityMs: maxActivity,
         hasUnread: summary.hasUnread || hasPersistedAttention,
         newJobCount: summary.newJobCount,
         negotiationCount: summary.negotiationCount,
@@ -960,6 +987,9 @@ export function AdminJobsPage() {
               </table>
             </div>
           </>
+        ) : null}
+        {!loading && jobsTotal > 0 ? (
+          <PaginationFooter page={jobsPage} pageSize={JOBS_PAGE_SIZE} total={jobsTotal} onPageChange={setJobsPage} />
         ) : null}
       </Card>
 

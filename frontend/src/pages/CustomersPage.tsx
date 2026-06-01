@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Customer } from "../types/api";
 import { customersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
@@ -8,6 +8,9 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
+import { PaginationFooter } from "../components/ui/Pagination";
+
+const PAGE_SIZE = 20;
 
 export function CustomersPage() {
   const auth = useAuth();
@@ -15,9 +18,9 @@ export function CustomersPage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
-  const limit = 10;
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -40,42 +43,27 @@ export function CustomersPage() {
   const [editBirthMonth, setEditBirthMonth] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
 
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return customers;
-    return customers.filter((c) => {
-      const name = c.name?.toLowerCase?.() ?? "";
-      return String(c.id).includes(query) || name.includes(query);
-    });
-  }, [customers, q]);
-
-  const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filtered.length / limit));
-  }, [filtered.length]);
-
-  const safePage = useMemo(() => Math.min(Math.max(1, page), totalPages), [page, totalPages]);
-
-  const pageRows = useMemo(() => {
-    const start = (safePage - 1) * limit;
-    return filtered.slice(start, start + limit);
-  }, [filtered, safePage]);
-
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await customersApi.list();
-      setCustomers(Array.isArray(data) ? data : []);
+      const data = await customersApi.list({
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+        search: q.trim() || undefined
+      });
+      setCustomers(Array.isArray(data.items) ? data.items : []);
+      setTotal(typeof data.total === "number" ? data.total : 0);
     } catch (err) {
       toast.push("error", getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [page, q, toast]);
 
   useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const t = window.setTimeout(() => void refresh(), q.trim() ? 300 : 0);
+    return () => window.clearTimeout(t);
+  }, [refresh]);
 
   useEffect(() => {
     setPage(1);
@@ -236,11 +224,11 @@ export function CustomersPage() {
           <div className="mt-4 space-y-3 md:hidden">
             {isLoading ? (
               <div className="text-sm text-black/60">Loading…</div>
-            ) : filtered.length === 0 ? (
+            ) : customers.length === 0 ? (
               <div className="text-sm text-black/60">No customers found.</div>
             ) : (
-              pageRows.map((c, idx) => {
-                const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+              customers.map((c, idx) => {
+                const displayNumber = String((page - 1) * PAGE_SIZE + idx + 1).padStart(3, "0");
                 return <CustomerCard key={c.id} c={c} displayNumber={displayNumber} />;
               })
             )}
@@ -275,7 +263,7 @@ export function CustomersPage() {
                       Loading…
                     </td>
                   </tr>
-                ) : filtered.length === 0 ? (
+                ) : customers.length === 0 ? (
                   <tr>
                     <td
                       className="py-6 text-black/60"
@@ -285,8 +273,8 @@ export function CustomersPage() {
                     </td>
                   </tr>
                 ) : (
-                  pageRows.map((c, idx) => {
-                    const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+                  customers.map((c, idx) => {
+                    const displayNumber = String((page - 1) * PAGE_SIZE + idx + 1).padStart(3, "0");
                     return (
                       <tr key={c.id} className="border-b border-black/5">
                         <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
@@ -333,33 +321,14 @@ export function CustomersPage() {
             </table>
           </div>
 
-          <div className="mt-4 flex items-center justify-between">
-            <div className="text-xs font-semibold text-black/50">
-              Page {safePage} of {totalPages}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                disabled={safePage <= 1 || isLoading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={safePage >= totalPages || isLoading}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+          <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
         </Card>
 
         {auth.role !== "factory" && canCreate ? (
           <CreateCustomerCard
-            onCreated={(c) => {
-              setCustomers((xs) => [c, ...xs]);
+            onCreated={() => {
+              setPage(1);
+              void refresh();
             }}
           />
         ) : (

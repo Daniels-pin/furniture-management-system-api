@@ -5,6 +5,7 @@ import io
 import logging
 import uuid
 import math
+from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
@@ -993,7 +994,17 @@ def _build_attendance_history(
     limit: int,
     offset: int,
 ) -> list[EmployeeAttendanceHistoryOut]:
-    items = _collect_attendance_history_items(db, employee_id, sync_absences=True)
+    # Cap to ~13 months of history (max API limit is 366) instead of loading all lifetime rows.
+    today = lagos_today()
+    window_start = today - timedelta(days=400)
+    end = today + timedelta(days=1)
+    items = _attendance_history_items_for_range(
+        db,
+        employee_id,
+        start=window_start,
+        end=end,
+        sync_absences=True,
+    )
     return items[offset : offset + limit]
 
 
@@ -1323,6 +1334,8 @@ def _build_attendance_monitor(
     search: str = "",
     status_filter: str | None = None,
     location_id: int | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> AttendanceMonitorOut:
     today = lagos_today()
     employees = _attendance_assigned_employees(db)
@@ -1357,23 +1370,6 @@ def _build_attendance_monitor(
     att_by_emp = {r.employee_id: r for r in att_rows}
     abs_by_emp = {r.employee_id: r for r in abs_rows}
 
-    rows: list[AttendanceMonitorRowOut] = []
-    for emp in employees:
-        row = _monitor_row_for_employee(
-            db,
-            emp,
-            target_date=target_date,
-            today=today,
-            att_by_emp=att_by_emp,
-            abs_by_emp=abs_by_emp,
-        )
-        if row is None:
-            continue
-        if status_filter and status_filter in MONITOR_FILTER_STATUSES:
-            if row.monitor_filter_status != status_filter:
-                continue
-        rows.append(row)
-
     summary_counts = {
         "expected_employees": 0,
         "present": 0,
@@ -1383,6 +1379,7 @@ def _build_attendance_monitor(
         "checked_in_only": 0,
         "incomplete_day": 0,
     }
+    filtered_rows: list[AttendanceMonitorRowOut] = []
     for emp in employees:
         row = _monitor_row_for_employee(
             db,
@@ -1408,9 +1405,26 @@ def _build_attendance_monitor(
             summary_counts["checked_in_only"] += 1
         elif key == "incomplete_day":
             summary_counts["incomplete_day"] += 1
+        if status_filter and status_filter in MONITOR_FILTER_STATUSES:
+            if row.monitor_filter_status != status_filter:
+                continue
+        filtered_rows.append(row)
+
+    rows_total = len(filtered_rows)
+    off = max(0, int(offset or 0))
+    if limit is not None:
+        lim = max(1, min(int(limit), 500))
+        page_rows = filtered_rows[off : off + lim]
+    else:
+        page_rows = filtered_rows[off:] if off else filtered_rows
 
     summary = AttendanceMonitorSummaryOut(attendance_date=target_date, **summary_counts)
-    return AttendanceMonitorOut(attendance_date=target_date, summary=summary, rows=rows)
+    return AttendanceMonitorOut(
+        attendance_date=target_date,
+        summary=summary,
+        rows=page_rows,
+        rows_total=rows_total,
+    )
 
 
 def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -1841,6 +1855,219 @@ def _batch_count_map(
     return {int(eid): int(c) for eid, c in rows}
 
 
+def _assigned_date_groups(emps: list[models.Employee]) -> dict[date_type, list[int]]:
+    by_date: dict[date_type, list[int]] = defaultdict(list)
+    for emp in emps:
+        assigned = _work_location_assigned_date(emp)
+        if assigned is not None:
+            by_date[assigned].append(emp.id)
+    return dict(by_date)
+
+
+def _attendance_linked_on_or_after_assigned(assigned: date_type, entry_model, attendance_fk):
+    return or_(
+        models.EmployeeAttendanceEntry.attendance_date >= assigned,
+        and_(
+            attendance_fk.is_(None),
+            func.date(entry_model.created_at) >= assigned,
+        ),
+    )
+
+
+def _batch_lateness_ded_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, Decimal]:
+    result: dict[int, Decimal] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(
+                models.EmployeeLatenessEntry.employee_id,
+                func.coalesce(func.sum(models.EmployeeLatenessEntry.deduction_amount_naira), 0),
+            )
+            .outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeLatenessEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            )
+            .filter(
+                models.EmployeeLatenessEntry.period_id == period_id,
+                models.EmployeeLatenessEntry.employee_id.in_(eids),
+                models.EmployeeLatenessEntry.voided_at.is_(None),
+                _attendance_linked_on_or_after_assigned(
+                    assigned,
+                    models.EmployeeLatenessEntry,
+                    models.EmployeeLatenessEntry.attendance_id,
+                ),
+            )
+            .group_by(models.EmployeeLatenessEntry.employee_id)
+            .all()
+        )
+        for eid, total in rows:
+            result[int(eid)] = _decimal_fee(total)
+        for eid in eids:
+            result.setdefault(int(eid), Decimal("0"))
+    return result
+
+
+def _batch_lateness_count_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, int]:
+    result: dict[int, int] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(models.EmployeeLatenessEntry.employee_id, func.count(models.EmployeeLatenessEntry.id))
+            .outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeLatenessEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            )
+            .filter(
+                models.EmployeeLatenessEntry.period_id == period_id,
+                models.EmployeeLatenessEntry.employee_id.in_(eids),
+                models.EmployeeLatenessEntry.voided_at.is_(None),
+                _attendance_linked_on_or_after_assigned(
+                    assigned,
+                    models.EmployeeLatenessEntry,
+                    models.EmployeeLatenessEntry.attendance_id,
+                ),
+            )
+            .group_by(models.EmployeeLatenessEntry.employee_id)
+            .all()
+        )
+        for eid, count in rows:
+            result[int(eid)] = int(count)
+        for eid in eids:
+            result.setdefault(int(eid), 0)
+    return result
+
+
+def _batch_early_sign_out_ded_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, Decimal]:
+    result: dict[int, Decimal] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(
+                models.EmployeeEarlySignOutEntry.employee_id,
+                func.coalesce(func.sum(models.EmployeeEarlySignOutEntry.deduction_amount_naira), 0),
+            )
+            .outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeEarlySignOutEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            )
+            .filter(
+                models.EmployeeEarlySignOutEntry.period_id == period_id,
+                models.EmployeeEarlySignOutEntry.employee_id.in_(eids),
+                models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+                _attendance_linked_on_or_after_assigned(
+                    assigned,
+                    models.EmployeeEarlySignOutEntry,
+                    models.EmployeeEarlySignOutEntry.attendance_id,
+                ),
+            )
+            .group_by(models.EmployeeEarlySignOutEntry.employee_id)
+            .all()
+        )
+        for eid, total in rows:
+            result[int(eid)] = _decimal_fee(total)
+        for eid in eids:
+            result.setdefault(int(eid), Decimal("0"))
+    return result
+
+
+def _batch_early_sign_out_count_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, int]:
+    result: dict[int, int] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(
+                models.EmployeeEarlySignOutEntry.employee_id,
+                func.count(models.EmployeeEarlySignOutEntry.id),
+            )
+            .outerjoin(
+                models.EmployeeAttendanceEntry,
+                models.EmployeeEarlySignOutEntry.attendance_id == models.EmployeeAttendanceEntry.id,
+            )
+            .filter(
+                models.EmployeeEarlySignOutEntry.period_id == period_id,
+                models.EmployeeEarlySignOutEntry.employee_id.in_(eids),
+                models.EmployeeEarlySignOutEntry.voided_at.is_(None),
+                _attendance_linked_on_or_after_assigned(
+                    assigned,
+                    models.EmployeeEarlySignOutEntry,
+                    models.EmployeeEarlySignOutEntry.attendance_id,
+                ),
+            )
+            .group_by(models.EmployeeEarlySignOutEntry.employee_id)
+            .all()
+        )
+        for eid, count in rows:
+            result[int(eid)] = int(count)
+        for eid in eids:
+            result.setdefault(int(eid), 0)
+    return result
+
+
+def _batch_absence_ded_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, Decimal]:
+    result: dict[int, Decimal] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(
+                models.EmployeeAbsenceEntry.employee_id,
+                func.coalesce(func.sum(models.EmployeeAbsenceEntry.deduction_amount_naira), 0),
+            )
+            .filter(
+                models.EmployeeAbsenceEntry.period_id == period_id,
+                models.EmployeeAbsenceEntry.employee_id.in_(eids),
+                models.EmployeeAbsenceEntry.voided_at.is_(None),
+                models.EmployeeAbsenceEntry.absence_date >= assigned,
+            )
+            .group_by(models.EmployeeAbsenceEntry.employee_id)
+            .all()
+        )
+        for eid, total in rows:
+            result[int(eid)] = _decimal_fee(total)
+        for eid in eids:
+            result.setdefault(int(eid), Decimal("0"))
+    return result
+
+
+def _batch_absence_count_assigned_map(
+    db: Session,
+    period_id: int,
+    emps: list[models.Employee],
+) -> dict[int, int]:
+    result: dict[int, int] = {}
+    for assigned, eids in _assigned_date_groups(emps).items():
+        rows = (
+            db.query(models.EmployeeAbsenceEntry.employee_id, func.count(models.EmployeeAbsenceEntry.id))
+            .filter(
+                models.EmployeeAbsenceEntry.period_id == period_id,
+                models.EmployeeAbsenceEntry.employee_id.in_(eids),
+                models.EmployeeAbsenceEntry.voided_at.is_(None),
+                models.EmployeeAbsenceEntry.absence_date >= assigned,
+            )
+            .group_by(models.EmployeeAbsenceEntry.employee_id)
+            .all()
+        )
+        for eid, count in rows:
+            result[int(eid)] = int(count)
+        for eid in eids:
+            result.setdefault(int(eid), 0)
+    return result
+
+
 @dataclass
 class _PayrollListContext:
     db: Session
@@ -1856,9 +2083,11 @@ class _PayrollListContext:
     _apply_att: dict[int, bool] = field(default_factory=dict)
     _loc_rates: dict[int, tuple[Decimal, Decimal, Decimal]] = field(default_factory=dict)
     _lateness_ded: dict[int, Decimal] = field(default_factory=dict)
+    _lateness_count_assigned: dict[int, int] = field(default_factory=dict)
     _early_count: dict[int, int] = field(default_factory=dict)
     _early_ded: dict[int, Decimal] = field(default_factory=dict)
     _absence_ded: dict[int, Decimal] = field(default_factory=dict)
+    _absence_count_assigned: dict[int, int] = field(default_factory=dict)
     _deductions_loaded: bool = False
 
     @classmethod
@@ -1954,39 +2183,49 @@ class _PayrollListContext:
             pid,
             emp_ids,
         )
-        for emp in self.emps:
-            if not _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
-                continue
-            eid = emp.id
-            if self._apply_att.get(eid):
-                self._lateness_ded[eid] = _lateness_deduction_sum_for_payroll(self.db, emp, pid)
-                self._early_count[eid] = _early_sign_out_count_for_payroll(self.db, emp, pid)
-                self._early_ded[eid] = _early_sign_out_deduction_sum_for_payroll(self.db, emp, pid)
-                self._absence_ded[eid] = _absence_deduction_sum_for_payroll(self.db, emp, self.period)
+        assigned_emps = [
+            e
+            for e in self.emps
+            if _employee_needs_assigned_payroll_filter(e, period_paid=self._paid[e.id])
+            and self._apply_att.get(e.id)
+        ]
+        if assigned_emps:
+            lat_ded = _batch_lateness_ded_assigned_map(self.db, pid, assigned_emps)
+            lat_cnt = _batch_lateness_count_assigned_map(self.db, pid, assigned_emps)
+            early_ded = _batch_early_sign_out_ded_assigned_map(self.db, pid, assigned_emps)
+            early_cnt = _batch_early_sign_out_count_assigned_map(self.db, pid, assigned_emps)
+            abs_ded = _batch_absence_ded_assigned_map(self.db, pid, assigned_emps)
+            abs_cnt = _batch_absence_count_assigned_map(self.db, pid, assigned_emps)
+            for emp in assigned_emps:
+                eid = emp.id
+                self._lateness_ded[eid] = lat_ded.get(eid, Decimal("0"))
+                self._lateness_count_assigned[eid] = lat_cnt.get(eid, 0)
+                self._early_ded[eid] = early_ded.get(eid, Decimal("0"))
+                self._early_count[eid] = early_cnt.get(eid, 0)
+                self._absence_ded[eid] = abs_ded.get(eid, Decimal("0"))
+                self._absence_count_assigned[eid] = abs_cnt.get(eid, 0)
         self._deductions_loaded = True
 
     def _lateness_count(self, emp: models.Employee) -> int:
         if not self._apply_att.get(emp.id):
             return 0
         if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
-            return _lateness_count_for_payroll(self.db, emp, self.period.id)
+            self._ensure_batch_deductions()
+            return self._lateness_count_assigned.get(emp.id, 0)
         return self.lateness_map.get(emp.id, 0)
 
     def _early_sign_out_count(self, emp: models.Employee) -> int:
         if not self._apply_att.get(emp.id):
             return 0
         self._ensure_batch_deductions()
-        if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
-            return _early_sign_out_count_for_payroll(self.db, emp, self.period.id)
         return self._early_count.get(emp.id, 0)
 
     def _absence_count(self, emp: models.Employee) -> int:
         if not self._paid[emp.id] and emp.work_location_id is None:
             return 0
         if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
-            return _absence_count_for_period(
-                self.db, emp.id, self.period, skip_sync=True
-            )
+            self._ensure_batch_deductions()
+            return self._absence_count_assigned.get(emp.id, 0)
         return self.absence_map.get(emp.id, 0)
 
     def salary_for(
@@ -3079,6 +3318,8 @@ def attendance_monitor(
     search: str = Query("", max_length=200),
     status: Optional[str] = Query(None, description="present | late | early_sign_out | absent | checked_in | incomplete_day"),
     location_id: Optional[int] = Query(None, ge=1),
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
     _require_attendance_oversight(current_user)
     day = target_date or lagos_today()
@@ -3091,6 +3332,8 @@ def attendance_monitor(
         search=search,
         status_filter=status_filter,
         location_id=location_id,
+        limit=limit,
+        offset=offset,
     )
 
 

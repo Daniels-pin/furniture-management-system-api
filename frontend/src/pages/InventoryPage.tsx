@@ -23,6 +23,9 @@ import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, sanitizeMoneyInput } from "../utils/moneyInput";
 import { formatLagosDateTime } from "../utils/datetime";
+import { PaginationFooter } from "../components/ui/Pagination";
+
+const PAGE_SIZE = 30;
 
 function fmtNum(v: string | number | null | undefined) {
   if (v === null || v === undefined || v === "") return "—";
@@ -61,6 +64,8 @@ export function InventoryPage() {
   const [units, setUnits] = useState<string[]>([]);
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
   const [rows, setRows] = useState<InventoryMaterial[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [fStock, setFStock] = useState<"" | InventoryStockLevel>("");
   const [fSupplier, setFSupplier] = useState("");
@@ -120,6 +125,8 @@ export function InventoryPage() {
     try {
       const [list, sup] = await Promise.all([
         inventoryApi.list({
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
           search: search.trim() || undefined,
           stock_level: fStock || undefined,
           supplier: fSupplier.trim() || undefined,
@@ -127,7 +134,8 @@ export function InventoryPage() {
         }),
         inventoryApi.suppliers().catch(() => ({ suppliers: [] as string[] }))
       ]);
-      setRows(Array.isArray(list) ? list : []);
+      setRows(Array.isArray(list.items) ? list.items : []);
+      setTotal(typeof list.total === "number" ? list.total : 0);
       setSupplierOptions(Array.isArray(sup.suppliers) ? sup.suppliers : []);
       if (auth.role === "admin") {
         try {
@@ -150,7 +158,11 @@ export function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, fStock, fSupplier, fPayment, toast, auth.role]);
+  }, [page, search, fStock, fSupplier, fPayment, toast, auth.role]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, fStock, fSupplier, fPayment]);
 
   useEffect(() => {
     void (async () => {
@@ -804,6 +816,9 @@ export function InventoryPage() {
             </table>
           </>
         )}
+        {!loading && total > 0 ? (
+          <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+        ) : null}
       </Card>
 
       <Modal open={formOpen} title={editing ? "Edit material" : "Add material"} onClose={() => setFormOpen(false)}>

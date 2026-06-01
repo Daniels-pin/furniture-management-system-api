@@ -5,6 +5,7 @@ import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
 import { Input } from "../components/ui/Input";
 import { contractJobsApi, notificationsApi } from "../services/endpoints";
+import { cloudinaryFull, cloudinaryThumbnail } from "../utils/cloudinary";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { formatLagosDateTime } from "../utils/datetime";
@@ -257,9 +258,9 @@ export function AdminJobDetailPage() {
         <Card className="!p-4">
           <div className="text-xs font-semibold text-black/55">Image preview</div>
           {job.image_url ? (
-            <a href={job.image_url} target="_blank" rel="noreferrer" className="block">
+            <a href={cloudinaryFull(job.image_url)} target="_blank" rel="noreferrer" className="block">
               <img
-                src={job.image_url}
+                src={cloudinaryThumbnail(job.image_url, { w: 720, h: 480 })}
                 alt={`Job #${job.id}`}
                 className="mt-3 w-full max-h-[360px] rounded-2xl border border-black/10 object-contain bg-white"
                 loading="lazy"

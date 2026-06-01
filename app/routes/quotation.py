@@ -41,7 +41,7 @@ from app.utils.activity_log import (
     QUOTATION_UPDATED,
     log_activity,
 )
-from app.utils.user_account import historical_attribution_label
+from app.utils.user_labels import user_label, user_labels_by_id
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.presales_order import (
@@ -72,11 +72,8 @@ def _money(v: object) -> str:
         return escape(str(v))
 
 
-def _user_label(db: Session, user_id: int | None) -> str | None:
-    if user_id is None:
-        return None
-    u = db.query(models.User).filter(models.User.id == user_id).first()
-    return historical_attribution_label(u)
+def _user_label(db: Session, user_id: int | None, cache: dict[int, str | None] | None = None) -> str | None:
+    return user_label(db, user_id, cache)
 
 
 def _reset_quotation_conversion_if_link_missing(db: Session, q: models.Quotation, *, actor_user_id: int | None) -> bool:
@@ -350,6 +347,11 @@ def list_quotations(
     )
     total = q.count()
     rows = q.order_by(models.Quotation.id.desc()).offset(off).limit(lim).all()
+    user_ids: set[int] = set()
+    for p in rows:
+        if p.created_by is not None:
+            user_ids.add(int(p.created_by))
+    label_map = user_labels_by_id(db, user_ids)
     out = []
     for p in rows:
         out.append(
@@ -360,7 +362,7 @@ def list_quotations(
                 "customer_name": p.customer_name,
                 "grand_total": p.grand_total,
                 "created_at": p.created_at,
-                "created_by": _user_label(db, p.created_by),
+                "created_by": label_map.get(int(p.created_by)) if p.created_by is not None else None,
             }
         )
     return {"items": out, "total": total}

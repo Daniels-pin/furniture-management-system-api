@@ -6,6 +6,7 @@ import { Input } from "../components/ui/Input";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { employeesApi, type EmployeePeriodParams } from "../services/endpoints";
 import { companyLocationsApi } from "../services/endpoints";
+import { useCompanyLocations } from "../query/hooks";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
@@ -50,8 +51,9 @@ export function MonthlyEmployeeDetailPage() {
   const [attLoading, setAttLoading] = useState(false);
   const [attHistoryExpanded, setAttHistoryExpanded] = useState(false);
 
-  const [locs, setLocs] = useState<CompanyLocation[]>([]);
-  const [locsLoading, setLocsLoading] = useState(false);
+  const companyLocsQuery = useCompanyLocations();
+  const locs = companyLocsQuery.data ?? [];
+  const locsLoading = companyLocsQuery.isLoading;
   const [workLocId, setWorkLocId] = useState<number | "none">("none");
   const [locSaving, setLocSaving] = useState(false);
 
@@ -131,26 +133,6 @@ export function MonthlyEmployeeDetailPage() {
       alive = false;
     };
   }, [idNum, periodParams, nav, toast]);
-
-  useEffect(() => {
-    if (auth.role !== "admin") return;
-    let alive = true;
-    (async () => {
-      setLocsLoading(true);
-      try {
-        const rows = await companyLocationsApi.list();
-        if (!alive) return;
-        setLocs(rows);
-      } catch (e) {
-        // non-fatal
-      } finally {
-        if (alive) setLocsLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [auth.role]);
 
   async function saveWorkLocation() {
     if (!detail) return;

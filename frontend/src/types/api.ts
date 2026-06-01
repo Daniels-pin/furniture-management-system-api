@@ -680,6 +680,7 @@ export type AttendanceMonitorResponse = {
   attendance_date: string;
   summary: AttendanceMonitorSummary;
   rows: AttendanceMonitorRow[];
+  rows_total?: number;
 };
 
 export type EmployeeAttendanceMonthSummary = {

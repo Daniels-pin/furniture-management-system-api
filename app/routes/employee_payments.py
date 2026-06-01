@@ -110,72 +110,138 @@ def _is_employee_initiated_payment(db: Session, t: models.EmployeeTransaction) -
     return req_log is not None
 
 
+def _employee_initiated_payment_ids(db: Session, txn_ids: list[int]) -> set[int]:
+    ids = sorted({int(x) for x in txn_ids if x})
+    if not ids:
+        return set()
+    rows = (
+        db.query(models.FinancialAuditLog.entity_id)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id.in_(ids),
+            models.FinancialAuditLog.action == "contract_employee_payment_requested",
+        )
+        .distinct()
+        .all()
+    )
+    return {int(r[0]) for r in rows if r[0] is not None}
+
+
+def _sent_to_finance_at_by_txn(db: Session, txn_ids: list[int]) -> dict[int, datetime]:
+    ids = sorted({int(x) for x in txn_ids if x})
+    if not ids:
+        return {}
+    rows = (
+        db.query(models.FinancialAuditLog)
+        .filter(
+            models.FinancialAuditLog.entity_type == "employee_transaction",
+            models.FinancialAuditLog.entity_id.in_(ids),
+            models.FinancialAuditLog.action.in_(["payment_sent_to_finance", "send_to_finance_bulk"]),
+        )
+        .order_by(models.FinancialAuditLog.entity_id.asc(), models.FinancialAuditLog.id.desc())
+        .all()
+    )
+    out: dict[int, datetime] = {}
+    for log in rows:
+        eid = int(log.entity_id)
+        if eid not in out and log.created_at is not None:
+            out[eid] = log.created_at
+    return out
+
+
+def _txn_to_items(
+    db: Session,
+    rows: list[models.EmployeeTransaction],
+    *,
+    unread_txn_ids: set[int] | None = None,
+) -> list[PendingEmployeePaymentItem]:
+    if not rows:
+        return []
+
+    txn_ids = [int(t.id) for t in rows]
+    employee_initiated = _employee_initiated_payment_ids(db, txn_ids)
+    sent_at_map = _sent_to_finance_at_by_txn(db, txn_ids)
+
+    ce_ids = sorted({int(t.contract_employee_id) for t in rows if t.contract_employee_id is not None})
+    emp_ids = sorted({int(t.employee_id) for t in rows if t.employee_id is not None})
+    period_ids = sorted({int(t.period_id) for t in rows if t.period_id is not None})
+
+    ce_map: dict[int, models.ContractEmployee] = {}
+    if ce_ids:
+        for ce in db.query(models.ContractEmployee).filter(models.ContractEmployee.id.in_(ce_ids)).all():
+            ce_map[int(ce.id)] = ce
+    emp_map: dict[int, models.Employee] = {}
+    if emp_ids:
+        for emp in db.query(models.Employee).filter(models.Employee.id.in_(emp_ids)).all():
+            emp_map[int(emp.id)] = emp
+    period_map: dict[int, models.SalaryPeriod] = {}
+    if period_ids:
+        for p in db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id.in_(period_ids)).all():
+            period_map[int(p.id)] = p
+
+    items: list[PendingEmployeePaymentItem] = []
+    for t in rows:
+        processed_by = None
+        if getattr(t, "processed_by_user", None) is not None:
+            email = getattr(t.processed_by_user, "email", None)
+            if email:
+                processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
+        setattr(t, "processed_by", processed_by)
+
+        initiated_by: Optional[str] = None
+        if t.txn_type == "payment":
+            initiated_by = "employee" if int(t.id) in employee_initiated else "admin"
+
+        sent_to_finance_at = sent_at_map.get(int(t.id)) or getattr(t, "created_at", None)
+        notification_unread = bool(unread_txn_ids and int(t.id) in unread_txn_ids)
+
+        if t.contract_employee_id is not None:
+            ce = ce_map.get(int(t.contract_employee_id))
+            items.append(
+                PendingEmployeePaymentItem(
+                    transaction=EmployeeTransactionOut.model_validate(t),
+                    employee_kind="contract",
+                    employee_id=int(t.contract_employee_id),
+                    employee_name=ce.full_name if ce else "Contract employee",
+                    account_number=(ce.account_number if ce else None),
+                    phone=(ce.phone if ce else None),
+                    period_label=None,
+                    sent_to_finance_at=sent_to_finance_at,
+                    initiated_by=initiated_by,
+                    notification_unread=notification_unread,
+                )
+            )
+            continue
+
+        emp = emp_map.get(int(t.employee_id or 0))
+        period_label: Optional[str] = None
+        if t.period_id:
+            p = period_map.get(int(t.period_id))
+            period_label = p.label if p else None
+        items.append(
+            PendingEmployeePaymentItem(
+                transaction=EmployeeTransactionOut.model_validate(t),
+                employee_kind="monthly",
+                employee_id=int(t.employee_id or 0),
+                employee_name=emp.full_name if emp else "Employee",
+                account_number=(emp.account_number if emp else None),
+                phone=(emp.phone if emp else None),
+                period_label=period_label,
+                sent_to_finance_at=sent_to_finance_at,
+                initiated_by=initiated_by,
+                notification_unread=notification_unread,
+            )
+        )
+    return items
+
+
 def _txn_to_item(
     db: Session,
     t: models.EmployeeTransaction,
     *,
     unread_txn_ids: set[int] | None = None,
 ) -> PendingEmployeePaymentItem:
-    # Expose "processed_by" as a friendly username (email local-part) when available.
-    processed_by = None
-    if getattr(t, "processed_by_user", None) is not None:
-        email = getattr(t.processed_by_user, "email", None)
-        if email:
-            processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
-    setattr(t, "processed_by", processed_by)
-
-    initiated_by: Optional[str] = None
-    if t.txn_type == "payment":
-        # Distinguish employee-requested vs admin-initiated:
-        # - Employee requests always create an audit log entry with action=contract_employee_payment_requested
-        # - Admin initiated payments (direct send-to-finance, bulk send, payroll, etc.) do not.
-        initiated_by = "employee" if _is_employee_initiated_payment(db, t) else "admin"
-
-    # Prefer the audit log timestamp for when it was sent to Finance.
-    sent_log = (
-        db.query(models.FinancialAuditLog)
-        .filter(
-            models.FinancialAuditLog.entity_type == "employee_transaction",
-            models.FinancialAuditLog.entity_id == t.id,
-            models.FinancialAuditLog.action.in_(["payment_sent_to_finance", "send_to_finance_bulk"]),
-        )
-        .order_by(models.FinancialAuditLog.id.desc())
-        .first()
-    )
-    sent_to_finance_at = getattr(sent_log, "created_at", None) or getattr(t, "created_at", None)
-
-    notification_unread = bool(unread_txn_ids and int(t.id) in unread_txn_ids)
-    if t.contract_employee_id is not None:
-        ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == t.contract_employee_id).first()
-        return PendingEmployeePaymentItem(
-            transaction=EmployeeTransactionOut.model_validate(t),
-            employee_kind="contract",
-            employee_id=int(t.contract_employee_id),
-            employee_name=ce.full_name if ce else "Contract employee",
-            account_number=(ce.account_number if ce else None),
-            phone=(ce.phone if ce else None),
-            period_label=None,
-            sent_to_finance_at=sent_to_finance_at,
-            initiated_by=initiated_by,
-            notification_unread=notification_unread,
-        )
-    emp = db.query(models.Employee).filter(models.Employee.id == t.employee_id).first()
-    period_label: Optional[str] = None
-    if t.period_id:
-        p = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == t.period_id).first()
-        period_label = p.label if p else None
-    return PendingEmployeePaymentItem(
-        transaction=EmployeeTransactionOut.model_validate(t),
-        employee_kind="monthly",
-        employee_id=int(t.employee_id or 0),
-        employee_name=emp.full_name if emp else "Employee",
-        account_number=(emp.account_number if emp else None),
-        phone=(emp.phone if emp else None),
-        period_label=period_label,
-        sent_to_finance_at=sent_to_finance_at,
-        initiated_by=initiated_by,
-        notification_unread=notification_unread,
-    )
+    return _txn_to_items(db, [t], unread_txn_ids=unread_txn_ids)[0]
 
 
 @router.get("/pending", response_model=PendingEmployeePaymentsOut)
@@ -235,19 +301,56 @@ def list_pending_payments(
     else:
         q = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
 
-    rows = q.all()
+    needs_python_filter = overpaid is not None or prioritize_employee_requests
 
-    # Filter overpaid for contract employees (post-query because it depends on joined employee data).
+    if overpaid is not None and kind != "monthly":
+        ce_q = db.query(models.ContractEmployee.id).filter(models.ContractEmployee.id.isnot(None))
+        if overpaid is True:
+            ce_q = ce_q.filter(models.ContractEmployee.balance < 0)
+        else:
+            ce_q = ce_q.filter(models.ContractEmployee.balance >= 0)
+        matching_ce_ids = [int(x) for (x,) in ce_q.all()]
+        if not matching_ce_ids:
+            return PendingEmployeePaymentsOut(
+                total_pending_amount=Decimal("0"),
+                total=0,
+                limit=limit,
+                offset=offset,
+                items=[],
+            )
+        q = q.filter(models.EmployeeTransaction.contract_employee_id.in_(matching_ce_ids))
+
+    if not needs_python_filter:
+        total_count = q.count()
+        total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
+        total = _as_decimal(total_amt_raw)
+        page_rows = q.offset(offset).limit(limit).all()
+        unread_txn_ids = unread_payment_notification_txn_ids(
+            db,
+            user_id=int(current_user.id),
+            role=role,
+            transaction_ids=[int(t.id) for t in page_rows],
+        )
+        items = _txn_to_items(db, page_rows, unread_txn_ids=unread_txn_ids)
+        return PendingEmployeePaymentsOut(
+            total_pending_amount=total,
+            total=int(total_count),
+            limit=limit,
+            offset=offset,
+            items=items,
+        )
+
+    rows = q.all()
     filtered: list[models.EmployeeTransaction] = []
     total = Decimal("0")
-    derived_balance_cache: dict[int, Decimal] = {}
     for t in rows:
         if t.contract_employee_id is not None and overpaid is not None:
-            ce_id = int(t.contract_employee_id)
-            if ce_id not in derived_balance_cache:
-                derived, _debug = compute_contract_employee_financials(db, ce_id, debug=False)
-                derived_balance_cache[ce_id] = derived.balance
-            bal = derived_balance_cache[ce_id]
+            ce = (
+                db.query(models.ContractEmployee.balance)
+                .filter(models.ContractEmployee.id == int(t.contract_employee_id))
+                .first()
+            )
+            bal = _as_decimal(ce[0]) if ce else Decimal("0")
             if overpaid is True and bal >= 0:
                 continue
             if overpaid is False and bal < 0:
@@ -266,13 +369,10 @@ def list_pending_payments(
         return 0 if int(txn.id) in unread_txn_ids else 1
 
     if prioritize_employee_requests:
-        employee_initiated_cache: dict[int, bool] = {}
+        employee_initiated = _employee_initiated_payment_ids(db, [int(t.id) for t in filtered])
 
         def _employee_priority(txn: models.EmployeeTransaction) -> int:
-            txn_id = int(txn.id)
-            if txn_id not in employee_initiated_cache:
-                employee_initiated_cache[txn_id] = _is_employee_initiated_payment(db, txn)
-            return 0 if employee_initiated_cache[txn_id] else 1
+            return 0 if int(txn.id) in employee_initiated else 1
 
         def _sort_key(txn: models.EmployeeTransaction, *, newest: bool, amount_key: int = 0) -> tuple:
             unread_rank = 0 if int(txn.id) in unread_txn_ids else 1
@@ -315,7 +415,7 @@ def list_pending_payments(
             )
 
     page_rows = filtered[offset : offset + limit]
-    items = [_txn_to_item(db, t, unread_txn_ids=unread_txn_ids) for t in page_rows]
+    items = _txn_to_items(db, page_rows, unread_txn_ids=unread_txn_ids)
 
     return PendingEmployeePaymentsOut(
         total_pending_amount=total,
@@ -375,16 +475,15 @@ def list_payment_history(
     else:
         q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
 
-    rows = q.all()
-    total_amt = Decimal("0")
-    for t in rows:
-        total_amt += _as_decimal(t.amount)
-    page_rows = rows[offset : offset + limit]
-    items = [_txn_to_item(db, t) for t in page_rows]
+    total_count = q.count()
+    total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
+    total_amt = _as_decimal(total_amt_raw)
+    page_rows = q.offset(offset).limit(limit).all()
+    items = _txn_to_items(db, page_rows)
 
     return PendingEmployeePaymentsOut(
         total_pending_amount=total_amt,
-        total=len(rows),
+        total=int(total_count),
         limit=limit,
         offset=offset,
         items=items,

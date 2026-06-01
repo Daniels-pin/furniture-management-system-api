@@ -42,6 +42,7 @@ from app.utils.activity_log import (
 from app.utils.production_materials import (
     SECTION_LABELS,
     build_display_material_columns,
+    compute_all_employee_material_totals_map,
     compute_employee_material_totals,
     compute_section_material_totals,
     transaction_effective_quantity,
@@ -413,14 +414,14 @@ def get_section_overview(
         )
         .all()
     )
+    ce_ids = [int(a.contract_employee_id) for a in assignments]
+    totals_by_emp = compute_all_employee_material_totals_map(
+        db, section=section, contract_employee_ids=ce_ids
+    )
     employee_rows: list[ProductionMaterialEmployeeRowOut] = []
     for assignment in assignments:
         emp = assignment.contract_employee
-        totals = compute_employee_material_totals(
-            db,
-            section=section,
-            contract_employee_id=int(assignment.contract_employee_id),
-        )
+        totals = totals_by_emp.get(int(assignment.contract_employee_id), [])
         employee_rows.append(
             ProductionMaterialEmployeeRowOut(
                 assignment_id=assignment.id,

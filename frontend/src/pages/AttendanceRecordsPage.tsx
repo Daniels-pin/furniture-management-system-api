@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
-import { companyLocationsApi, employeesApi } from "../services/endpoints";
+import { PaginationFooter } from "../components/ui/Pagination";
+import { employeesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { usePageHeader } from "../components/layout/pageHeader";
-import type {
-  AttendanceMonitorFilterStatus,
-  AttendanceMonitorResponse,
-  CompanyLocation
-} from "../types/api";
+import { useCompanyLocations } from "../query/hooks";
+import type { AttendanceMonitorFilterStatus } from "../types/api";
 import {
   attendanceMonitorStatusBadgeClass,
   attendanceMonitorStatusLabel,
@@ -19,7 +18,9 @@ import {
 } from "../utils/attendance";
 import { formatLagosTime } from "../utils/datetime";
 
-const POLL_MS = 15_000;
+const POLL_VISIBLE_MS = 15_000;
+const POLL_HIDDEN_MS = 60_000;
+const PAGE_SIZE = 50;
 
 const STATUS_OPTIONS: { value: "" | AttendanceMonitorFilterStatus; label: string }[] = [
   { value: "", label: "All statuses" },
@@ -40,6 +41,11 @@ function SummaryMetric({ label, count }: { label: string; count: number }) {
   );
 }
 
+function monitorPollMs(): number {
+  if (typeof document === "undefined") return POLL_VISIBLE_MS;
+  return document.visibilityState === "hidden" ? POLL_HIDDEN_MS : POLL_VISIBLE_MS;
+}
+
 export function AttendanceRecordsPage() {
   const toast = useToast();
   const todayKey = useMemo(() => attendanceTodayKey(), []);
@@ -47,9 +53,9 @@ export function AttendanceRecordsPage() {
   const [searchDebounced, setSearchDebounced] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | AttendanceMonitorFilterStatus>("");
   const [locationFilter, setLocationFilter] = useState<string>("");
-  const [locations, setLocations] = useState<CompanyLocation[]>([]);
-  const [monitor, setMonitor] = useState<AttendanceMonitorResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+
+  const { data: locations = [] } = useCompanyLocations();
 
   usePageHeader({
     title: "Attendance Records",
@@ -62,59 +68,42 @@ export function AttendanceRecordsPage() {
   }, [search]);
 
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const rows = await companyLocationsApi.list();
-        if (!alive) return;
-        setLocations(rows);
-      } catch {
-        // non-fatal
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+    setPage(1);
+  }, [searchDebounced, statusFilter, locationFilter]);
+
+  const monitorQuery = useQuery({
+    queryKey: [
+      "attendance-monitor",
+      todayKey,
+      searchDebounced,
+      statusFilter,
+      locationFilter,
+      page
+    ],
+    queryFn: () =>
+      employeesApi.attendanceMonitor({
+        date: todayKey,
+        search: searchDebounced || undefined,
+        status: statusFilter || undefined,
+        location_id: locationFilter ? Number(locationFilter) : undefined,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE
+      }),
+    staleTime: 5_000,
+    refetchInterval: monitorPollMs
+  });
 
   useEffect(() => {
-    let alive = true;
-    let timer: number | undefined;
-
-    async function load() {
-      try {
-        const data = await employeesApi.attendanceMonitor({
-          date: todayKey,
-          search: searchDebounced || undefined,
-          status: statusFilter || undefined,
-          location_id: locationFilter ? Number(locationFilter) : undefined
-        });
-        if (!alive) return;
-        setMonitor(data);
-      } catch (e) {
-        if (alive) toast.push("error", getErrorMessage(e));
-      } finally {
-        if (alive) setLoading(false);
-      }
+    if (monitorQuery.error) {
+      toast.push("error", getErrorMessage(monitorQuery.error));
     }
+  }, [monitorQuery.error, toast]);
 
-    const refresh = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-
-    void load();
-    timer = window.setInterval(refresh, POLL_MS);
-    document.addEventListener("visibilitychange", refresh);
-
-    return () => {
-      alive = false;
-      if (timer) window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [todayKey, searchDebounced, statusFilter, locationFilter, toast]);
-
+  const monitor = monitorQuery.data ?? null;
+  const loading = monitorQuery.isLoading && !monitor;
   const summary = monitor?.summary;
   const rows = monitor?.rows ?? [];
+  const rowsTotal = monitor?.rows_total ?? rows.length;
 
   const locationOptions = useMemo(
     () => [
@@ -132,6 +121,9 @@ export function AttendanceRecordsPage() {
             <h2 className="text-lg font-bold tracking-tight">Today&apos;s Attendance</h2>
             <p className="mt-1 text-sm text-black/60">
               {summary?.attendance_date ?? todayKey} · updates automatically
+              {typeof document !== "undefined" && document.visibilityState === "hidden"
+                ? " (slower refresh while tab is hidden)"
+                : null}
             </p>
           </div>
         </div>
@@ -228,6 +220,9 @@ export function AttendanceRecordsPage() {
             </tbody>
           </table>
         </div>
+        {rowsTotal > PAGE_SIZE ? (
+          <PaginationFooter page={page} pageSize={PAGE_SIZE} total={rowsTotal} onPageChange={setPage} />
+        ) : null}
       </Card>
     </div>
   );

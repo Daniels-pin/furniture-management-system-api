@@ -1,6 +1,7 @@
 """Helpers for production material tracking totals and ledger integrity."""
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 
 from sqlalchemy import case, func
@@ -111,6 +112,44 @@ def compute_employee_material_totals(
         .all()
     )
     return _merge_material_total_rows(rows)
+
+
+def compute_all_employee_material_totals_map(
+    db: Session,
+    *,
+    section: str,
+    contract_employee_ids: list[int],
+) -> dict[int, list[dict[str, object]]]:
+    """One grouped query for all assignments in a section (avoids per-employee aggregates)."""
+    if not contract_employee_ids:
+        return {}
+    voided, superseded = active_transaction_filter()
+    rows = (
+        db.query(
+            models.ProductionMaterialTransaction.contract_employee_id,
+            models.ProductionMaterialTransaction.material_type_id,
+            models.ProductionMaterialTransaction.material_name,
+            models.ProductionMaterialTransaction.unit,
+            func.coalesce(func.sum(signed_quantity_expr()), 0).label("total_quantity"),
+        )
+        .filter(
+            models.ProductionMaterialTransaction.section == section,
+            models.ProductionMaterialTransaction.contract_employee_id.in_(contract_employee_ids),
+            voided,
+            superseded,
+        )
+        .group_by(
+            models.ProductionMaterialTransaction.contract_employee_id,
+            models.ProductionMaterialTransaction.material_type_id,
+            models.ProductionMaterialTransaction.material_name,
+            models.ProductionMaterialTransaction.unit,
+        )
+        .all()
+    )
+    by_emp: dict[int, list[tuple]] = defaultdict(list)
+    for ce_id, material_type_id, material_name, unit, total_quantity in rows:
+        by_emp[int(ce_id)].append((material_type_id, material_name, unit, total_quantity))
+    return {ce_id: _merge_material_total_rows(emp_rows) for ce_id, emp_rows in by_emp.items()}
 
 
 def compute_section_material_totals(
