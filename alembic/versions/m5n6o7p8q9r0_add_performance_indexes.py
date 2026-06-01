@@ -20,6 +20,12 @@ def upgrade() -> None:
     op.create_index("ix_employee_transactions_status", "employee_transactions", ["status"], unique=False)
     op.create_index("ix_employee_transactions_txn_type_status", "employee_transactions", ["txn_type", "status"], unique=False)
     op.create_index(
+        "ix_employee_transactions_history_sort",
+        "employee_transactions",
+        ["txn_type", "status", "created_at"],
+        unique=False,
+    )
+    op.create_index(
         "ix_financial_audit_logs_entity_action",
         "financial_audit_logs",
         ["entity_type", "entity_id", "action"],
@@ -43,6 +49,7 @@ def downgrade() -> None:
     op.drop_index("ix_employee_payment_allocations_job_void", table_name="employee_payment_allocations")
     op.drop_index("ix_notifications_recipient_read", table_name="notifications")
     op.drop_index("ix_financial_audit_logs_entity_action", table_name="financial_audit_logs")
+    op.drop_index("ix_employee_transactions_history_sort", table_name="employee_transactions")
     op.drop_index("ix_employee_transactions_txn_type_status", table_name="employee_transactions")
     op.drop_index("ix_employee_transactions_status", table_name="employee_transactions")
     op.drop_index("ix_contract_jobs_status", table_name="contract_jobs")

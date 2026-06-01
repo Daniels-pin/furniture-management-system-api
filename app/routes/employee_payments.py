@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import normalize_role, require_role
@@ -131,22 +131,80 @@ def _sent_to_finance_at_by_txn(db: Session, txn_ids: list[int]) -> dict[int, dat
     ids = sorted({int(x) for x in txn_ids if x})
     if not ids:
         return {}
-    rows = (
-        db.query(models.FinancialAuditLog)
+    latest_log_id = (
+        db.query(
+            models.FinancialAuditLog.entity_id.label("entity_id"),
+            func.max(models.FinancialAuditLog.id).label("max_log_id"),
+        )
         .filter(
             models.FinancialAuditLog.entity_type == "employee_transaction",
             models.FinancialAuditLog.entity_id.in_(ids),
             models.FinancialAuditLog.action.in_(["payment_sent_to_finance", "send_to_finance_bulk"]),
         )
-        .order_by(models.FinancialAuditLog.entity_id.asc(), models.FinancialAuditLog.id.desc())
+        .group_by(models.FinancialAuditLog.entity_id)
+        .subquery()
+    )
+    rows = (
+        db.query(models.FinancialAuditLog)
+        .join(latest_log_id, models.FinancialAuditLog.id == latest_log_id.c.max_log_id)
         .all()
     )
-    out: dict[int, datetime] = {}
-    for log in rows:
-        eid = int(log.entity_id)
-        if eid not in out and log.created_at is not None:
-            out[eid] = log.created_at
-    return out
+    return {
+        int(log.entity_id): log.created_at
+        for log in rows
+        if log.entity_id is not None and log.created_at is not None
+    }
+
+
+def _employee_ids_for_name_search(db: Session, search: str) -> tuple[list[int], list[int]]:
+    s = (search or "").strip()
+    if not s:
+        return [], []
+    emp_ids = [int(x) for (x,) in db.query(models.Employee.id).filter(models.Employee.full_name.ilike(f"%{s}%")).all()]
+    ce_ids = [
+        int(x)
+        for (x,) in db.query(models.ContractEmployee.id).filter(models.ContractEmployee.full_name.ilike(f"%{s}%")).all()
+    ]
+    return emp_ids, ce_ids
+
+
+def _apply_transaction_name_search(q, db: Session, search: str):
+    """Filter by employee name; return None when search is set but matches nobody."""
+    s = (search or "").strip()
+    if not s:
+        return q
+    emp_ids, ce_ids = _employee_ids_for_name_search(db, s)
+    if not emp_ids and not ce_ids:
+        return None
+    clauses = []
+    if emp_ids:
+        clauses.append(models.EmployeeTransaction.employee_id.in_(emp_ids))
+    if ce_ids:
+        clauses.append(models.EmployeeTransaction.contract_employee_id.in_(ce_ids))
+    return q.filter(or_(*clauses))
+
+
+def _empty_payments_page(*, limit: int, offset: int) -> PendingEmployeePaymentsOut:
+    return PendingEmployeePaymentsOut(
+        total_pending_amount=Decimal("0"),
+        total=0,
+        limit=limit,
+        offset=offset,
+        items=[],
+    )
+
+
+def _fetch_transactions_by_ids(db: Session, txn_ids: list[int]) -> list[models.EmployeeTransaction]:
+    if not txn_ids:
+        return []
+    rows = (
+        db.query(models.EmployeeTransaction)
+        .options(joinedload(models.EmployeeTransaction.processed_by_user))
+        .filter(models.EmployeeTransaction.id.in_(txn_ids))
+        .all()
+    )
+    by_id = {int(t.id): t for t in rows}
+    return [by_id[i] for i in txn_ids if i in by_id]
 
 
 def _txn_to_items(
@@ -278,19 +336,9 @@ def list_pending_payments(
     elif kind == "monthly":
         q = q.filter(models.EmployeeTransaction.employee_id.isnot(None))
 
-    s = (search or "").strip()
-    if s:
-        emp_ids = [int(x) for (x,) in db.query(models.Employee.id).filter(models.Employee.full_name.ilike(f"%{s}%")).all()]
-        ce_ids = [
-            int(x)
-            for (x,) in db.query(models.ContractEmployee.id).filter(models.ContractEmployee.full_name.ilike(f"%{s}%")).all()
-        ]
-        q = q.filter(
-            or_(
-                models.EmployeeTransaction.employee_id.in_(emp_ids) if emp_ids else False,
-                models.EmployeeTransaction.contract_employee_id.in_(ce_ids) if ce_ids else False,
-            )
-        )
+    q = _apply_transaction_name_search(q, db, search)
+    if q is None:
+        return _empty_payments_page(limit=limit, offset=offset)
 
     if sort == "newest":
         q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
@@ -324,7 +372,12 @@ def list_pending_payments(
         total_count = q.count()
         total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
         total = _as_decimal(total_amt_raw)
-        page_rows = q.offset(offset).limit(limit).all()
+        page_rows = (
+            q.options(joinedload(models.EmployeeTransaction.processed_by_user))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
         unread_txn_ids = unread_payment_notification_txn_ids(
             db,
             user_id=int(current_user.id),
@@ -340,81 +393,109 @@ def list_pending_payments(
             items=items,
         )
 
-    rows = q.all()
-    filtered: list[models.EmployeeTransaction] = []
+    # Lightweight rows for in-memory filter/sort (avoids loading full ORM graphs for every queue item).
+    slim_rows = q.with_entities(
+        models.EmployeeTransaction.id,
+        models.EmployeeTransaction.amount,
+        models.EmployeeTransaction.created_at,
+        models.EmployeeTransaction.contract_employee_id,
+    ).all()
+
+    balance_by_ce: dict[int, Decimal] = {}
+    if overpaid is not None:
+        ce_ids = sorted({int(r.contract_employee_id) for r in slim_rows if r.contract_employee_id is not None})
+        if ce_ids:
+            for ce_id, bal in (
+                db.query(models.ContractEmployee.id, models.ContractEmployee.balance)
+                .filter(models.ContractEmployee.id.in_(ce_ids))
+                .all()
+            ):
+                balance_by_ce[int(ce_id)] = _as_decimal(bal)
+
+    filtered: list[tuple[int, Decimal, Optional[datetime], Optional[int]]] = []
     total = Decimal("0")
-    for t in rows:
-        if t.contract_employee_id is not None and overpaid is not None:
-            ce = (
-                db.query(models.ContractEmployee.balance)
-                .filter(models.ContractEmployee.id == int(t.contract_employee_id))
-                .first()
-            )
-            bal = _as_decimal(ce[0]) if ce else Decimal("0")
+    for row in slim_rows:
+        txn_id = int(row.id)
+        amt = _as_decimal(row.amount)
+        ce_id = int(row.contract_employee_id) if row.contract_employee_id is not None else None
+        if ce_id is not None and overpaid is not None:
+            bal = balance_by_ce.get(ce_id, Decimal("0"))
             if overpaid is True and bal >= 0:
                 continue
             if overpaid is False and bal < 0:
                 continue
-        filtered.append(t)
-        total += _as_decimal(t.amount)
+        filtered.append((txn_id, amt, row.created_at, ce_id))
+        total += amt
 
+    filtered_ids = [t[0] for t in filtered]
     unread_txn_ids = unread_payment_notification_txn_ids(
         db,
         user_id=int(current_user.id),
         role=role,
-        transaction_ids=[int(t.id) for t in filtered],
+        transaction_ids=filtered_ids,
     )
 
-    def _unread_rank(txn: models.EmployeeTransaction) -> int:
-        return 0 if int(txn.id) in unread_txn_ids else 1
+    def _unread_rank(txn_id: int) -> int:
+        return 0 if txn_id in unread_txn_ids else 1
 
     if prioritize_employee_requests:
-        employee_initiated = _employee_initiated_payment_ids(db, [int(t.id) for t in filtered])
+        employee_initiated = _employee_initiated_payment_ids(db, filtered_ids)
 
-        def _employee_priority(txn: models.EmployeeTransaction) -> int:
-            return 0 if int(txn.id) in employee_initiated else 1
+        def _employee_priority(txn_id: int) -> int:
+            return 0 if txn_id in employee_initiated else 1
 
-        def _sort_key(txn: models.EmployeeTransaction, *, newest: bool, amount_key: int = 0) -> tuple:
-            unread_rank = 0 if int(txn.id) in unread_txn_ids else 1
-            emp_rank = _employee_priority(txn)
+        def _sort_key(
+            row: tuple[int, Decimal, Optional[datetime], Optional[int]],
+            *,
+            newest: bool,
+            amount_key: int = 0,
+        ) -> tuple:
+            txn_id, amt, created_at, _ce_id = row
+            unread_rank = _unread_rank(txn_id)
+            emp_rank = _employee_priority(txn_id)
             if amount_key == -1:
-                return (unread_rank, emp_rank, -_as_decimal(txn.amount), -int(txn.id))
+                return (unread_rank, emp_rank, -amt, -txn_id)
             if amount_key == 1:
-                return (unread_rank, emp_rank, _as_decimal(txn.amount), int(txn.id))
-            ts = txn.created_at.timestamp() if txn.created_at else 0
-            return (unread_rank, emp_rank, -ts if newest else ts, -int(txn.id) if newest else int(txn.id))
+                return (unread_rank, emp_rank, amt, txn_id)
+            ts = created_at.timestamp() if created_at else 0
+            return (unread_rank, emp_rank, -ts if newest else ts, -txn_id if newest else txn_id)
 
         if sort == "newest":
-            filtered.sort(key=lambda t: _sort_key(t, newest=True))
+            filtered.sort(key=lambda r: _sort_key(r, newest=True))
         elif sort == "amount_desc":
-            filtered.sort(key=lambda t: _sort_key(t, newest=False, amount_key=-1))
+            filtered.sort(key=lambda r: _sort_key(r, newest=False, amount_key=-1))
         elif sort == "amount_asc":
-            filtered.sort(key=lambda t: _sort_key(t, newest=False, amount_key=1))
+            filtered.sort(key=lambda r: _sort_key(r, newest=False, amount_key=1))
         else:
-            filtered.sort(key=lambda t: _sort_key(t, newest=False))
+            filtered.sort(key=lambda r: _sort_key(r, newest=False))
     elif unread_txn_ids:
-        if sort == "newest":
-            filtered.sort(
-                key=lambda t: (
-                    _unread_rank(t),
-                    -(t.created_at.timestamp() if t.created_at else 0),
-                    -int(t.id),
-                )
-            )
-        elif sort == "amount_desc":
-            filtered.sort(key=lambda t: (_unread_rank(t), -_as_decimal(t.amount), -int(t.id)))
-        elif sort == "amount_asc":
-            filtered.sort(key=lambda t: (_unread_rank(t), _as_decimal(t.amount), int(t.id)))
-        else:
-            filtered.sort(
-                key=lambda t: (
-                    _unread_rank(t),
-                    t.created_at.timestamp() if t.created_at else 0,
-                    int(t.id),
-                )
-            )
 
-    page_rows = filtered[offset : offset + limit]
+        def _row_sort_key(
+            row: tuple[int, Decimal, Optional[datetime], Optional[int]],
+            *,
+            newest: bool,
+            amount_key: int = 0,
+        ) -> tuple:
+            txn_id, amt, created_at, _ce_id = row
+            ur = _unread_rank(txn_id)
+            if amount_key == -1:
+                return (ur, -amt, -txn_id)
+            if amount_key == 1:
+                return (ur, amt, txn_id)
+            ts = created_at.timestamp() if created_at else 0
+            return (ur, -ts if newest else ts, -txn_id if newest else txn_id)
+
+        if sort == "newest":
+            filtered.sort(key=lambda r: _row_sort_key(r, newest=True))
+        elif sort == "amount_desc":
+            filtered.sort(key=lambda r: _row_sort_key(r, newest=False, amount_key=-1))
+        elif sort == "amount_asc":
+            filtered.sort(key=lambda r: _row_sort_key(r, newest=False, amount_key=1))
+        else:
+            filtered.sort(key=lambda r: _row_sort_key(r, newest=False))
+
+    page_ids = [t[0] for t in filtered[offset : offset + limit]]
+    page_rows = _fetch_transactions_by_ids(db, page_ids)
     items = _txn_to_items(db, page_rows, unread_txn_ids=unread_txn_ids)
 
     return PendingEmployeePaymentsOut(
@@ -452,19 +533,13 @@ def list_payment_history(
     elif kind == "monthly":
         q = q.filter(models.EmployeeTransaction.employee_id.isnot(None))
 
-    s = (search or "").strip()
-    if s:
-        emp_ids = [int(x) for (x,) in db.query(models.Employee.id).filter(models.Employee.full_name.ilike(f"%{s}%")).all()]
-        ce_ids = [
-            int(x)
-            for (x,) in db.query(models.ContractEmployee.id).filter(models.ContractEmployee.full_name.ilike(f"%{s}%")).all()
-        ]
-        q = q.filter(
-            or_(
-                models.EmployeeTransaction.employee_id.in_(emp_ids) if emp_ids else False,
-                models.EmployeeTransaction.contract_employee_id.in_(ce_ids) if ce_ids else False,
-            )
-        )
+    q = _apply_transaction_name_search(q, db, search)
+    if q is None:
+        return _empty_payments_page(limit=limit, offset=offset)
+
+    total_count = q.count()
+    total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
+    total_amt = _as_decimal(total_amt_raw)
 
     if sort == "oldest":
         q = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
@@ -475,10 +550,12 @@ def list_payment_history(
     else:
         q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
 
-    total_count = q.count()
-    total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
-    total_amt = _as_decimal(total_amt_raw)
-    page_rows = q.offset(offset).limit(limit).all()
+    page_rows = (
+        q.options(joinedload(models.EmployeeTransaction.processed_by_user))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     items = _txn_to_items(db, page_rows)
 
     return PendingEmployeePaymentsOut(

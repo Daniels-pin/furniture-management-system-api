@@ -5,6 +5,25 @@ import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
 import { contractEmployeesApi, employeePaymentsApi, expensesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
+
+function financeListErrorMessage(err: unknown, section: "pending" | "history"): string {
+  const raw = getErrorMessage(err);
+  if (raw === "Request failed" || /^Request failed \(\d+\)$/.test(raw)) {
+    return section === "history"
+      ? "Unable to load transaction history. Please try again."
+      : "Unable to load pending payments. Please try again.";
+  }
+  return raw;
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return v;
+}
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import type { ExpenseEntry, ExpenseSummary, PendingEmployeePayments } from "../types/api";
@@ -26,12 +45,16 @@ export function FinanceDashboardPage() {
   const [tab, setTab] = useState<"contract" | "monthly">("contract");
   const [pendingLoading, setPendingLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingEmployeePayments | null>(null);
   const [history, setHistory] = useState<PendingEmployeePayments | null>(null);
   const [pendingSort, setPendingSort] = useState<"oldest" | "newest" | "amount_desc" | "amount_asc">("oldest");
   const [historySort, setHistorySort] = useState<"oldest" | "newest" | "amount_desc" | "amount_asc">("newest");
   const [pendingSearch, setPendingSearch] = useState("");
   const [historySearch, setHistorySearch] = useState("");
+  const debouncedPendingSearch = useDebouncedValue(pendingSearch, 300);
+  const debouncedHistorySearch = useDebouncedValue(historySearch, 300);
   const [pendingOffset, setPendingOffset] = useState(0);
   const [historyOffset, setHistoryOffset] = useState(0);
   const pageLimit = 20;
@@ -224,13 +247,15 @@ export function FinanceDashboardPage() {
     const res = await employeePaymentsApi.pending({
       kind: kindForTab,
       queue_only: true,
-      search: pendingSearch.trim() || undefined,
+      search: debouncedPendingSearch.trim() || undefined,
       sort: pendingSort,
       prioritize_employee_requests: moneyRequestsView,
       limit: pageLimit,
       offset
     });
     setPending(res);
+    setPendingError(null);
+    return res;
   }
 
   async function performCancelTransfer(transactionId: number) {
@@ -257,12 +282,14 @@ export function FinanceDashboardPage() {
     const offset = typeof next?.offset === "number" ? next.offset : historyOffset;
     const res = await employeePaymentsApi.history({
       kind: kindForTab,
-      search: historySearch.trim() || undefined,
+      search: debouncedHistorySearch.trim() || undefined,
       sort: historySort,
       limit: pageLimit,
       offset
     });
     setHistory(res);
+    setHistoryError(null);
+    return res;
   }
 
   function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -301,28 +328,50 @@ export function FinanceDashboardPage() {
   }
 
   useEffect(() => {
+    setPendingOffset(0);
+  }, [tab, pendingSort, debouncedPendingSearch, moneyRequestsView]);
+
+  useEffect(() => {
+    setHistoryOffset(0);
+  }, [tab, historySort, debouncedHistorySearch]);
+
+  useEffect(() => {
     let alive = true;
     (async () => {
       setPendingLoading(true);
-      setHistoryLoading(true);
+      setPendingError(null);
       try {
-        await Promise.all([refreshPending({ offset: 0 }), refreshHistory({ offset: 0 })]);
+        await refreshPending({ offset: pendingOffset });
       } catch (e) {
-        toast.push("error", getErrorMessage(e));
+        if (alive) setPendingError(financeListErrorMessage(e, "pending"));
       } finally {
-        if (alive) {
-          setPendingOffset(0);
-          setHistoryOffset(0);
-          setPendingLoading(false);
-          setHistoryLoading(false);
-        }
+        if (alive) setPendingLoading(false);
       }
     })();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, tab, pendingSort, pendingSearch, historySort, historySearch, moneyRequestsView]);
+  }, [tab, pendingSort, debouncedPendingSearch, moneyRequestsView, pendingOffset]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setHistoryLoading(true);
+      setHistoryError(null);
+      try {
+        await refreshHistory({ offset: historyOffset });
+      } catch (e) {
+        if (alive) setHistoryError(financeListErrorMessage(e, "history"));
+      } finally {
+        if (alive) setHistoryLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, historySort, debouncedHistorySearch, historyOffset]);
 
   useEffect(() => {
     const onUpdated = () => {
@@ -688,7 +737,7 @@ export function FinanceDashboardPage() {
                   onClick={() => {
                     setPendingLoading(true);
                     void refreshPending({ offset: pendingOffset })
-                      .catch((e) => toast.push("error", getErrorMessage(e)))
+                      .catch((e) => setPendingError(financeListErrorMessage(e, "pending")))
                       .finally(() => setPendingLoading(false));
                   }}
                 >
@@ -698,7 +747,12 @@ export function FinanceDashboardPage() {
             </div>
 
             {pendingLoading ? (
-              <div className="mt-3 text-sm text-black/60">Loading…</div>
+              <div className="mt-3 flex items-center gap-2 text-sm text-black/60">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/15 border-t-black/60" aria-hidden />
+                Loading pending payments…
+              </div>
+            ) : pendingError ? (
+              <div className="mt-3 text-sm font-semibold text-red-700">{pendingError}</div>
             ) : !pending || pending.items.length === 0 ? (
               <div className="mt-3 text-sm text-black/60">No payments available</div>
             ) : (
@@ -864,7 +918,7 @@ export function FinanceDashboardPage() {
                         setPendingOffset(next);
                         setPendingLoading(true);
                         void refreshPending({ offset: next })
-                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .catch((e) => setPendingError(financeListErrorMessage(e, "pending")))
                           .finally(() => setPendingLoading(false));
                       }}
                     >
@@ -878,7 +932,7 @@ export function FinanceDashboardPage() {
                         setPendingOffset(next);
                         setPendingLoading(true);
                         void refreshPending({ offset: next })
-                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .catch((e) => setPendingError(financeListErrorMessage(e, "pending")))
                           .finally(() => setPendingLoading(false));
                       }}
                     >
@@ -928,7 +982,7 @@ export function FinanceDashboardPage() {
                   onClick={() => {
                     setHistoryLoading(true);
                     void refreshHistory({ offset: historyOffset })
-                      .catch((e) => toast.push("error", getErrorMessage(e)))
+                      .catch((e) => setHistoryError(financeListErrorMessage(e, "history")))
                       .finally(() => setHistoryLoading(false));
                   }}
                 >
@@ -938,9 +992,14 @@ export function FinanceDashboardPage() {
             </div>
 
             {historyLoading ? (
-              <div className="mt-3 text-sm text-black/60">Loading…</div>
+              <div className="mt-3 flex items-center gap-2 text-sm text-black/60">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/15 border-t-black/60" aria-hidden />
+                Loading transaction history…
+              </div>
+            ) : historyError ? (
+              <div className="mt-3 text-sm font-semibold text-red-700">{historyError}</div>
             ) : !history || history.items.length === 0 ? (
-              <div className="mt-3 text-sm text-black/60">No payments available</div>
+              <div className="mt-3 text-sm text-black/60">No transactions found.</div>
             ) : (
               <>
                 <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
@@ -1011,7 +1070,7 @@ export function FinanceDashboardPage() {
                         setHistoryOffset(next);
                         setHistoryLoading(true);
                         void refreshHistory({ offset: next })
-                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .catch((e) => setHistoryError(financeListErrorMessage(e, "history")))
                           .finally(() => setHistoryLoading(false));
                       }}
                     >
@@ -1025,7 +1084,7 @@ export function FinanceDashboardPage() {
                         setHistoryOffset(next);
                         setHistoryLoading(true);
                         void refreshHistory({ offset: next })
-                          .catch((e) => toast.push("error", getErrorMessage(e)))
+                          .catch((e) => setHistoryError(financeListErrorMessage(e, "history")))
                           .finally(() => setHistoryLoading(false));
                       }}
                     >
