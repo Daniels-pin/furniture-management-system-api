@@ -5,6 +5,7 @@ import io
 import logging
 import uuid
 import math
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 from datetime import date as date_type, datetime, time, timedelta
@@ -12,7 +13,7 @@ from datetime import date as date_type, datetime, time, timedelta
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, extract, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import get_current_user, normalize_role, require_role
@@ -189,7 +190,7 @@ def _employees_for_period(db: Session, period: models.SalaryPeriod) -> list[mode
     q = db.query(models.Employee).filter(models.Employee.id.in_(emp_ids))
     if period.is_active:
         q = q.filter(models.Employee.deleted_at.is_(None))
-    return q.order_by(models.Employee.id.asc()).all()
+    return q.options(joinedload(models.Employee.work_location)).order_by(models.Employee.id.asc()).all()
 
 
 def _snapshot_period_roster(db: Session, period: models.SalaryPeriod) -> None:
@@ -578,14 +579,24 @@ def _remove_absence_for_date(db: Session, employee_id: int, day: date_type) -> N
     ).delete(synchronize_session=False)
 
 
-def _absence_count_for_period(db: Session, employee_id: int, period: models.SalaryPeriod) -> int:
+def _absence_count_for_period(
+    db: Session,
+    employee_id: int,
+    period: models.SalaryPeriod,
+    *,
+    skip_sync: bool = False,
+) -> int:
     emp = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if emp is None:
         return 0
     paid = _period_paid(db, employee_id, period.id)
     if not paid and emp.work_location_id is None:
         return 0
-    if period.is_active and (paid or emp.work_location_id is not None):
+    if (
+        not skip_sync
+        and period.is_active
+        and (paid or emp.work_location_id is not None)
+    ):
         _sync_absence_entries_for_period(db, employee_id, period)
     q = (
         db.query(models.EmployeeAbsenceEntry)
@@ -1010,6 +1021,7 @@ def _monitor_filter_status(raw_status: str) -> str:
 def _attendance_assigned_employees(db: Session) -> list[models.Employee]:
     return (
         db.query(models.Employee)
+        .options(joinedload(models.Employee.work_location))
         .filter(
             models.Employee.deleted_at.is_(None),
             models.Employee.work_location_id.isnot(None),
@@ -1537,6 +1549,8 @@ def _period_ids_with_any_data(db: Session) -> set[int]:
         s.add(int(pid))
     for (pid,) in db.query(models.EmployeePeriodPayroll.period_id).distinct():
         s.add(int(pid))
+    for (pid,) in db.query(models.EmployeeEarlySignOutEntry.period_id).distinct():
+        s.add(int(pid))
     return s
 
 
@@ -1555,7 +1569,7 @@ def _periods_for_nav(db: Session) -> list[models.SalaryPeriod]:
     for p in all_p:
         if not _ym_on_or_after(p.year, p.month, first):
             continue
-        if p.is_active or p.id in data_ids or _employee_ids_with_period_footprint(db, p.id):
+        if p.is_active or p.id in data_ids:
             out.append(p)
     return out
 
@@ -1752,11 +1766,12 @@ def _payroll_salary_for_employee(
     *,
     lateness_extra: int = 0,
     payroll: Optional[models.EmployeePeriodPayroll] = None,
+    skip_absence_sync: bool = False,
 ) -> EmployeeSalaryBreakdown:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
     lc = _lateness_count_for_payroll(db, emp, period.id) + lateness_extra
     esc = _early_sign_out_count_for_payroll(db, emp, period.id)
-    ac = _absence_count_for_period(db, emp.id, period)
+    ac = _absence_count_for_period(db, emp.id, period, skip_sync=skip_absence_sync)
     apply_att = _attendance_deductions_apply(db, emp, period.id)
     late_rate, early_rate, abs_rate = _location_rates_for_employee(db, emp)
     return _salary_breakdown(
@@ -1775,6 +1790,242 @@ def _payroll_salary_for_employee(
         apply_attendance_deductions=apply_att,
         **_payroll_breakdown_kwargs(payroll),
     )
+
+
+def _employee_needs_assigned_payroll_filter(emp: models.Employee, *, period_paid: bool) -> bool:
+    if period_paid:
+        return False
+    return _work_location_assigned_date(emp) is not None
+
+
+def _batch_sum_map(
+    db: Session,
+    model,
+    sum_column,
+    period_id: int,
+    employee_ids: list[int],
+) -> dict[int, Decimal]:
+    if not employee_ids:
+        return {}
+    rows = (
+        db.query(model.employee_id, func.coalesce(func.sum(sum_column), 0))
+        .filter(
+            model.period_id == period_id,
+            model.employee_id.in_(employee_ids),
+            model.voided_at.is_(None),
+        )
+        .group_by(model.employee_id)
+        .all()
+    )
+    return {int(eid): _decimal_fee(total) for eid, total in rows}
+
+
+def _batch_count_map(
+    db: Session,
+    model,
+    period_id: int,
+    employee_ids: list[int],
+) -> dict[int, int]:
+    if not employee_ids:
+        return {}
+    rows = (
+        db.query(model.employee_id, func.count(model.id))
+        .filter(
+            model.period_id == period_id,
+            model.employee_id.in_(employee_ids),
+            model.voided_at.is_(None),
+        )
+        .group_by(model.employee_id)
+        .all()
+    )
+    return {int(eid): int(c) for eid, c in rows}
+
+
+@dataclass
+class _PayrollListContext:
+    db: Session
+    period: models.SalaryPeriod
+    period_out: SalaryPeriodOut
+    emps: list[models.Employee]
+    lateness_map: dict[int, int]
+    absence_map: dict[int, int]
+    pen_map: dict[int, Decimal]
+    bon_map: dict[int, Decimal]
+    payroll_map: dict[int, models.EmployeePeriodPayroll]
+    _paid: dict[int, bool] = field(default_factory=dict)
+    _apply_att: dict[int, bool] = field(default_factory=dict)
+    _loc_rates: dict[int, tuple[Decimal, Decimal, Decimal]] = field(default_factory=dict)
+    _lateness_ded: dict[int, Decimal] = field(default_factory=dict)
+    _early_count: dict[int, int] = field(default_factory=dict)
+    _early_ded: dict[int, Decimal] = field(default_factory=dict)
+    _absence_ded: dict[int, Decimal] = field(default_factory=dict)
+    _deductions_loaded: bool = False
+
+    @classmethod
+    def build(
+        cls,
+        db: Session,
+        period: models.SalaryPeriod,
+        *,
+        search: str = "",
+        payment_status: Optional[str] = None,
+    ) -> _PayrollListContext:
+        lateness_map, absence_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
+        payroll_map = _payroll_map_for_period(db, period.id)
+        emps = _employees_for_period(db, period)
+        s = (search or "").strip()
+        if s:
+            emps = [e for e in emps if s.lower() in (e.full_name or "").lower()]
+        if payment_status is not None:
+            emps = [
+                e
+                for e in emps
+                if (
+                    (payroll_map.get(e.id).payment_status if payroll_map.get(e.id) else "unpaid")
+                    == payment_status
+                )
+            ]
+        ctx = cls(
+            db=db,
+            period=period,
+            period_out=_salary_period_out(db, period),
+            emps=emps,
+            lateness_map=lateness_map,
+            absence_map=absence_map,
+            pen_map=pen_map,
+            bon_map=bon_map,
+            payroll_map=payroll_map,
+        )
+        ctx._init_employee_caches()
+        return ctx
+
+    def _init_employee_caches(self) -> None:
+        loc_ids = {int(e.work_location_id) for e in self.emps if e.work_location_id is not None}
+        if loc_ids:
+            locs = (
+                self.db.query(models.CompanyLocation)
+                .filter(models.CompanyLocation.id.in_(loc_ids))
+                .all()
+            )
+            for loc in locs:
+                self._loc_rates[int(loc.id)] = (
+                    _location_late_fee(loc),
+                    _location_early_sign_out_fee(loc),
+                    _location_absence_fee(loc),
+                )
+        for emp in self.emps:
+            pr = self.payroll_map.get(emp.id)
+            paid = pr is not None and pr.payment_status == "paid"
+            self._paid[emp.id] = paid
+            self._apply_att[emp.id] = paid or emp.work_location_id is not None
+
+    def _rates_for(self, emp: models.Employee) -> tuple[Decimal, Decimal, Decimal]:
+        wid = getattr(emp, "work_location_id", None)
+        if wid is not None and int(wid) in self._loc_rates:
+            return self._loc_rates[int(wid)]
+        return _location_rates_for_employee(self.db, emp)
+
+    def _ensure_batch_deductions(self) -> None:
+        if self._deductions_loaded:
+            return
+        emp_ids = [e.id for e in self.emps]
+        pid = self.period.id
+        self._lateness_ded = _batch_sum_map(
+            self.db,
+            models.EmployeeLatenessEntry,
+            models.EmployeeLatenessEntry.deduction_amount_naira,
+            pid,
+            emp_ids,
+        )
+        self._early_count = _batch_count_map(
+            self.db, models.EmployeeEarlySignOutEntry, pid, emp_ids
+        )
+        self._early_ded = _batch_sum_map(
+            self.db,
+            models.EmployeeEarlySignOutEntry,
+            models.EmployeeEarlySignOutEntry.deduction_amount_naira,
+            pid,
+            emp_ids,
+        )
+        self._absence_ded = _batch_sum_map(
+            self.db,
+            models.EmployeeAbsenceEntry,
+            models.EmployeeAbsenceEntry.deduction_amount_naira,
+            pid,
+            emp_ids,
+        )
+        for emp in self.emps:
+            if not _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
+                continue
+            eid = emp.id
+            if self._apply_att.get(eid):
+                self._lateness_ded[eid] = _lateness_deduction_sum_for_payroll(self.db, emp, pid)
+                self._early_count[eid] = _early_sign_out_count_for_payroll(self.db, emp, pid)
+                self._early_ded[eid] = _early_sign_out_deduction_sum_for_payroll(self.db, emp, pid)
+                self._absence_ded[eid] = _absence_deduction_sum_for_payroll(self.db, emp, self.period)
+        self._deductions_loaded = True
+
+    def _lateness_count(self, emp: models.Employee) -> int:
+        if not self._apply_att.get(emp.id):
+            return 0
+        if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
+            return _lateness_count_for_payroll(self.db, emp, self.period.id)
+        return self.lateness_map.get(emp.id, 0)
+
+    def _early_sign_out_count(self, emp: models.Employee) -> int:
+        if not self._apply_att.get(emp.id):
+            return 0
+        self._ensure_batch_deductions()
+        if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
+            return _early_sign_out_count_for_payroll(self.db, emp, self.period.id)
+        return self._early_count.get(emp.id, 0)
+
+    def _absence_count(self, emp: models.Employee) -> int:
+        if not self._paid[emp.id] and emp.work_location_id is None:
+            return 0
+        if _employee_needs_assigned_payroll_filter(emp, period_paid=self._paid[emp.id]):
+            return _absence_count_for_period(
+                self.db, emp.id, self.period, skip_sync=True
+            )
+        return self.absence_map.get(emp.id, 0)
+
+    def salary_for(
+        self,
+        emp: models.Employee,
+        penalties_total: Decimal,
+        bonuses_total: Decimal,
+        payroll: Optional[models.EmployeePeriodPayroll],
+    ) -> EmployeeSalaryBreakdown:
+        base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+        apply_att = self._apply_att.get(emp.id, False)
+        if not apply_att:
+            return _salary_breakdown(
+                base,
+                0,
+                penalties_total,
+                bonuses_total,
+                apply_attendance_deductions=False,
+                **_payroll_breakdown_kwargs(payroll),
+            )
+        self._ensure_batch_deductions()
+        late_rate, early_rate, abs_rate = self._rates_for(emp)
+        eid = emp.id
+        return _salary_breakdown(
+            base,
+            self._lateness_count(emp),
+            penalties_total,
+            bonuses_total,
+            lateness_auto=self._lateness_ded.get(eid, Decimal("0")),
+            early_sign_out_count=self._early_sign_out_count(emp),
+            early_sign_out_auto=self._early_ded.get(eid, Decimal("0")),
+            absence_count=self._absence_count(emp),
+            absence_auto=self._absence_ded.get(eid, Decimal("0")),
+            lateness_rate=late_rate,
+            early_sign_out_rate=early_rate,
+            absence_rate=abs_rate,
+            apply_attendance_deductions=True,
+            **_payroll_breakdown_kwargs(payroll),
+        )
 
 
 def _log_payroll(db: Session, action: str, entity_id: Optional[int], user, meta: dict) -> None:
@@ -1873,17 +2124,14 @@ def _employee_to_out(
 
 
 def _list_item(
-    db: Session,
+    ctx: _PayrollListContext,
     emp: models.Employee,
-    period: models.SalaryPeriod,
-    lateness_count: int,
-    absence_count: int,
     penalties_total: Decimal,
     bonuses_total: Decimal,
     payroll: Optional[models.EmployeePeriodPayroll],
 ) -> EmployeeListItemOut:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
-    salary = _payroll_salary_for_employee(db, emp, period, penalties_total, bonuses_total, payroll=payroll)
+    salary = ctx.salary_for(emp, penalties_total, bonuses_total, payroll)
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -1898,7 +2146,7 @@ def _list_item(
         account_number=emp.account_number,
         base_salary=base,
         user_id=emp.user_id,
-        period=_salary_period_out(db, period),
+        period=ctx.period_out,
         payment=pay,
         salary=salary,
     )
@@ -2060,9 +2308,7 @@ def payroll_summary(
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
     period = resolve_period(db, period_year, period_month)
-    emps = _employees_for_period(db, period)
-    lateness_map, absence_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
-    payroll_map = _payroll_map_for_period(db, period.id)
+    ctx = _PayrollListContext.build(db, period)
     total_base = Decimal("0")
     total_lat = Decimal("0")
     total_early = Decimal("0")
@@ -2071,11 +2317,10 @@ def payroll_summary(
     total_bon = Decimal("0")
     total_net = Decimal("0")
     total_ded = Decimal("0")
-    for e in emps:
-        base = e.base_salary if e.base_salary is not None else Decimal("0")
-        pt = pen_map.get(e.id, Decimal("0"))
-        bt = bon_map.get(e.id, Decimal("0"))
-        br = _payroll_salary_for_employee(db, e, period, pt, bt, payroll=payroll_map.get(e.id))
+    for e in ctx.emps:
+        pt = ctx.pen_map.get(e.id, Decimal("0"))
+        bt = ctx.bon_map.get(e.id, Decimal("0"))
+        br = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id))
         total_base += br.base_salary_used
         total_lat += br.lateness_deduction
         total_early += br.early_sign_out_deduction
@@ -2085,8 +2330,8 @@ def payroll_summary(
         total_net += br.final_payable
         total_ded += br.total_deductions
     return PayrollSummaryOut(
-        period=_salary_period_out(db, period),
-        employee_count=len(emps),
+        period=ctx.period_out,
+        employee_count=len(ctx.emps),
         total_base_salary=total_base,
         total_lateness_deductions=total_lat,
         total_early_sign_out_deductions=total_early,
@@ -2108,26 +2353,17 @@ def list_employees(
     payment_status: Optional[str] = Query(None, description="paid | unpaid"),
 ):
     period = resolve_period(db, period_year, period_month)
-    lateness_map, absence_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
-    payroll_map = _payroll_map_for_period(db, period.id)
-    emps = _employees_for_period(db, period)
-    s = (search or "").strip()
-    if s:
-        emps = [e for e in emps if s.lower() in (e.full_name or "").lower()]
-    emps = sorted(emps, key=lambda e: e.id, reverse=True)
+    ctx = _PayrollListContext.build(db, period, search=search, payment_status=payment_status)
+    emps = sorted(ctx.emps, key=lambda e: e.id, reverse=True)
     return [
         _list_item(
-            db,
+            ctx,
             e,
-            period,
-            lateness_map.get(e.id, 0),
-            absence_map.get(e.id, 0),
-            pen_map.get(e.id, Decimal("0")),
-            bon_map.get(e.id, Decimal("0")),
-            payroll_map.get(e.id) if payment_status is None else (payroll_map.get(e.id) if (payroll_map.get(e.id).payment_status if payroll_map.get(e.id) else "unpaid") == payment_status else None),
+            ctx.pen_map.get(e.id, Decimal("0")),
+            ctx.bon_map.get(e.id, Decimal("0")),
+            ctx.payroll_map.get(e.id),
         )
         for e in emps
-        if payment_status is None or ((payroll_map.get(e.id).payment_status if payroll_map.get(e.id) else "unpaid") == payment_status)
     ]
 
 
@@ -2139,9 +2375,8 @@ def export_employees_csv(
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
     period = resolve_period(db, period_year, period_month)
-    lateness_map, absence_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
-    payroll_map = _payroll_map_for_period(db, period.id)
-    emps = sorted(_employees_for_period(db, period), key=lambda e: (e.full_name or "").lower())
+    ctx = _PayrollListContext.build(db, period)
+    emps = sorted(ctx.emps, key=lambda e: (e.full_name or "").lower())
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(
@@ -2163,10 +2398,10 @@ def export_employees_csv(
         ]
     )
     for e in emps:
-        pt = pen_map.get(e.id, Decimal("0"))
-        bt = bon_map.get(e.id, Decimal("0"))
-        s = _payroll_salary_for_employee(db, e, period, pt, bt, payroll=payroll_map.get(e.id))
-        pr = payroll_map.get(e.id)
+        pt = ctx.pen_map.get(e.id, Decimal("0"))
+        bt = ctx.bon_map.get(e.id, Decimal("0"))
+        s = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id))
+        pr = ctx.payroll_map.get(e.id)
         w.writerow(
             [
                 period.label,

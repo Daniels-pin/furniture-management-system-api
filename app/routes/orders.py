@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
+from app.utils.route_db import route_db_session
 from app import models
 from app.auth.auth import get_current_user, is_factory_user, normalize_role, reject_staff, require_role
 from app.db.alive import customer_alive, order_alive
@@ -1227,34 +1228,36 @@ def update_order_status_patch(
 @router.post("/orders/{order_id}/send-email")
 def send_order_email(
     order_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    order = (
-        db.query(models.Order)
-        .options(joinedload(models.Order.customer))
-        .filter(models.Order.id == order_id)
-        .filter(order_alive())
-        .first()
-    )
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    cust = order.customer
-    if not cust or not (cust.email or "").strip():
-        raise HTTPException(status_code=400, detail="Customer has no email on file")
+    with route_db_session() as db:
+        order = (
+            db.query(models.Order)
+            .options(joinedload(models.Order.customer))
+            .filter(models.Order.id == order_id)
+            .filter(order_alive())
+            .first()
+        )
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        cust = order.customer
+        if not cust or not (cust.email or "").strip():
+            raise HTTPException(status_code=400, detail="Customer has no email on file")
 
-    items = (
-        db.query(models.OrderItem)
-        .filter(models.OrderItem.order_id == order.id)
-        .order_by(models.OrderItem.id.asc())
-        .all()
-    )
+        items = (
+            db.query(models.OrderItem)
+            .filter(models.OrderItem.order_id == order.id)
+            .order_by(models.OrderItem.id.asc())
+            .all()
+        )
 
-    to_email = cust.email.strip()
-    subject = f"{APP_NAME} - Order #{order.id}"
-    html = _render_order_document_html(order, cust, items)
+        oid = order.id
+        to_email = cust.email.strip()
+        subject = f"{APP_NAME} - Order #{oid}"
+        html = _render_order_document_html(order, cust, items)
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("order", "order", order.id)
+        pdf_bytes = document_pdf_bytes_via_ui("order", "order", oid)
     except Exception as e:
         logger.exception("PDF generation failed for order email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
@@ -1264,7 +1267,7 @@ def send_order_email(
             subject,
             html,
             pdf_bytes,
-            f"order-{order.id}.pdf",
+            f"order-{oid}.pdf",
         )
     except EmailConfigError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1278,29 +1281,31 @@ def send_order_email(
         logger.exception("SMTP error for order email")
         raise HTTPException(status_code=502, detail="SMTP error") from e
 
-    log_activity(
-        db,
-        action=ORDER_EMAIL_SENT,
-        entity_type="order",
-        entity_id=order.id,
-        actor_user=user,
-        meta={"order_id": order.id, "to": to_email},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=ORDER_EMAIL_SENT,
+            entity_type="order",
+            entity_id=oid,
+            actor_user=user,
+            meta={"order_id": oid, "to": to_email},
+        )
     return {"message": "Order sent"}
 
 
 @router.post("/orders/{order_id}/download")
 def download_order_pdf(
     order_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+    with route_db_session() as db:
+        order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        oid = order.id
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("order", "order", order.id)
+        pdf_bytes = document_pdf_bytes_via_ui("order", "order", oid)
     except RuntimeError as e:
         logger.exception("Order PDF download failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1308,15 +1313,15 @@ def download_order_pdf(
         logger.exception("Order PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    log_activity(
-        db,
-        action=ORDER_DOWNLOADED,
-        entity_type="order",
-        entity_id=order.id,
-        actor_user=user,
-        meta={"order_id": order.id},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=ORDER_DOWNLOADED,
+            entity_type="order",
+            entity_id=oid,
+            actor_user=user,
+            meta={"order_id": oid},
+        )
 
     return Response(
         content=pdf_bytes,

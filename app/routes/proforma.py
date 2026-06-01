@@ -19,6 +19,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_proforma_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
+from app.utils.route_db import route_db_session
 from app.db.alive import customer_alive, proforma_alive
 from app.schemas import ConvertPresalesToInvoiceRequest, ProformaCreate, ProformaDetailResponse, ProformaItemIn, ProformaUpdate
 from app.utils.activity_log import (
@@ -509,26 +510,29 @@ def finalize_proforma(
 @router.post("/proforma/{proforma_id}/send-email")
 def send_proforma_email(
     proforma_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = (
-        db.query(models.ProformaInvoice)
-        .options(joinedload(models.ProformaInvoice.items))
-        .filter(models.ProformaInvoice.id == proforma_id)
-        .filter(proforma_alive())
-        .first()
-    )
-    if not p:
-        raise HTTPException(status_code=404, detail="Proforma not found")
-    if not (p.email or "").strip():
-        raise HTTPException(status_code=400, detail="Customer has no email")
+    with route_db_session() as db:
+        p = (
+            db.query(models.ProformaInvoice)
+            .options(joinedload(models.ProformaInvoice.items))
+            .filter(models.ProformaInvoice.id == proforma_id)
+            .filter(proforma_alive())
+            .first()
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="Proforma not found")
+        if not (p.email or "").strip():
+            raise HTTPException(status_code=400, detail="Customer has no email")
 
-    to_email = p.email.strip()
-    subject = f"{APP_NAME} - Proforma {p.proforma_number}"
-    html = _render_proforma_email_html(p)
+        pid = p.id
+        to_email = p.email.strip()
+        subject = f"{APP_NAME} - Proforma {p.proforma_number}"
+        html = _render_proforma_email_html(p)
+        safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", p.id)
+        pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", pid)
     except RuntimeError as e:
         logger.exception("Proforma PDF generation failed for email")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -536,7 +540,6 @@ def send_proforma_email(
         logger.exception("Proforma PDF generation failed for email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
 
-    safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
     try:
         send_email_html_with_pdf_attachment(
             to_email,
@@ -560,15 +563,15 @@ def send_proforma_email(
         logger.exception("Failed to send proforma email")
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
-    log_activity(
-        db,
-        action=PROFORMA_SENT,
-        entity_type="proforma",
-        entity_id=p.id,
-        actor_user=user,
-        meta={"to": to_email},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=PROFORMA_SENT,
+            entity_type="proforma",
+            entity_id=pid,
+            actor_user=user,
+            meta={"to": to_email},
+        )
     return {"message": "Proforma sent"}
 
 
@@ -601,21 +604,23 @@ def record_proforma_print(
 @router.post("/proforma/{proforma_id}/download")
 def download_proforma_pdf(
     proforma_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = (
-        db.query(models.ProformaInvoice)
-        .options(joinedload(models.ProformaInvoice.items))
-        .filter(models.ProformaInvoice.id == proforma_id)
-        .filter(proforma_alive())
-        .first()
-    )
-    if not p:
-        raise HTTPException(status_code=404, detail="Proforma not found")
+    with route_db_session() as db:
+        p = (
+            db.query(models.ProformaInvoice)
+            .options(joinedload(models.ProformaInvoice.items))
+            .filter(models.ProformaInvoice.id == proforma_id)
+            .filter(proforma_alive())
+            .first()
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="Proforma not found")
+        pid = p.id
+        proforma_number = p.proforma_number
 
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", p.id)
+        pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", pid)
     except RuntimeError as e:
         logger.exception("Proforma PDF download failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -623,17 +628,17 @@ def download_proforma_pdf(
         logger.exception("Proforma PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    log_activity(
-        db,
-        action=PROFORMA_DOWNLOADED,
-        entity_type="proforma",
-        entity_id=p.id,
-        actor_user=user,
-        meta={"proforma_number": p.proforma_number},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=PROFORMA_DOWNLOADED,
+            entity_type="proforma",
+            entity_id=pid,
+            actor_user=user,
+            meta={"proforma_number": proforma_number},
+        )
 
-    safe = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
+    safe = re.sub(r"[^\w.\-]+", "_", proforma_number or "proforma")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

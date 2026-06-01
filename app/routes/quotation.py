@@ -19,6 +19,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_quotation_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
 from app.database import get_db
+from app.utils.route_db import route_db_session
 from app.db.alive import customer_alive, invoice_alive, order_alive, proforma_alive, quotation_alive
 from app.schemas import (
     ConvertPresalesToInvoiceRequest,
@@ -570,26 +571,29 @@ def finalize_quotation(
 @router.post("/quotations/{quotation_id}/send-email")
 def send_quotation_email(
     quotation_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = (
-        db.query(models.Quotation)
-        .options(joinedload(models.Quotation.items))
-        .filter(models.Quotation.id == quotation_id)
-        .filter(quotation_alive())
-        .first()
-    )
-    if not p:
-        raise HTTPException(status_code=404, detail="Quotation not found")
-    if not (p.email or "").strip():
-        raise HTTPException(status_code=400, detail="Customer has no email")
+    with route_db_session() as db:
+        p = (
+            db.query(models.Quotation)
+            .options(joinedload(models.Quotation.items))
+            .filter(models.Quotation.id == quotation_id)
+            .filter(quotation_alive())
+            .first()
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="Quotation not found")
+        if not (p.email or "").strip():
+            raise HTTPException(status_code=400, detail="Customer has no email")
 
-    to_email = p.email.strip()
-    subject = f"{APP_NAME} - Quotation {p.quote_number}"
-    html = _render_quotation_email_html(p)
+        qid = p.id
+        to_email = p.email.strip()
+        subject = f"{APP_NAME} - Quotation {p.quote_number}"
+        html = _render_quotation_email_html(p)
+        safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", p.id)
+        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", qid)
     except RuntimeError as e:
         logger.exception("Quotation PDF generation failed for email")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -597,7 +601,6 @@ def send_quotation_email(
         logger.exception("Quotation PDF generation failed for email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
 
-    safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
     try:
         send_email_html_with_pdf_attachment(
             to_email,
@@ -621,15 +624,15 @@ def send_quotation_email(
         logger.exception("Failed to send proforma email")
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
-    log_activity(
-        db,
-        action=QUOTATION_SENT,
-        entity_type="quotation",
-        entity_id=p.id,
-        actor_user=user,
-        meta={"to": to_email},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=QUOTATION_SENT,
+            entity_type="quotation",
+            entity_id=qid,
+            actor_user=user,
+            meta={"to": to_email},
+        )
     return {"message": "Quotation sent"}
 
 
@@ -662,21 +665,23 @@ def record_quotation_print(
 @router.post("/quotations/{quotation_id}/download")
 def download_quotation_pdf(
     quotation_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    p = (
-        db.query(models.Quotation)
-        .options(joinedload(models.Quotation.items))
-        .filter(models.Quotation.id == quotation_id)
-        .filter(quotation_alive())
-        .first()
-    )
-    if not p:
-        raise HTTPException(status_code=404, detail="Quotation not found")
+    with route_db_session() as db:
+        p = (
+            db.query(models.Quotation)
+            .options(joinedload(models.Quotation.items))
+            .filter(models.Quotation.id == quotation_id)
+            .filter(quotation_alive())
+            .first()
+        )
+        if not p:
+            raise HTTPException(status_code=404, detail="Quotation not found")
+        qid = p.id
+        quote_number = p.quote_number
 
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", p.id)
+        pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", qid)
     except RuntimeError as e:
         logger.exception("Quotation PDF download failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -684,17 +689,17 @@ def download_quotation_pdf(
         logger.exception("Quotation PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    log_activity(
-        db,
-        action=QUOTATION_DOWNLOADED,
-        entity_type="quotation",
-        entity_id=p.id,
-        actor_user=user,
-        meta={"quote_number": p.quote_number},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=QUOTATION_DOWNLOADED,
+            entity_type="quotation",
+            entity_id=qid,
+            actor_user=user,
+            meta={"quote_number": quote_number},
+        )
 
-    safe = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
+    safe = re.sub(r"[^\w.\-]+", "_", quote_number or "quotation")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

@@ -16,6 +16,7 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.auth.pdf_access import require_invoice_reader
 from app.database import get_db
+from app.utils.route_db import route_db_session
 from app.db.alive import invoice_alive, order_alive
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
@@ -520,36 +521,39 @@ def delete_invoice(
 @router.post("/invoices/{invoice_id}/send-email")
 def send_invoice_email(
     invoice_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    inv = (
-        db.query(models.Invoice)
-        .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
-        .filter(models.Invoice.id == invoice_id)
-        .filter(invoice_alive())
-        .first()
-    )
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    if not inv.customer or not (inv.customer.email or "").strip():
-        raise HTTPException(status_code=400, detail="Customer has no email")
+    with route_db_session() as db:
+        inv = (
+            db.query(models.Invoice)
+            .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
+            .filter(models.Invoice.id == invoice_id)
+            .filter(invoice_alive())
+            .first()
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if not inv.customer or not (inv.customer.email or "").strip():
+            raise HTTPException(status_code=400, detail="Customer has no email")
 
-    order = inv.order
-    if not order or order.deleted_at is not None:
-        raise HTTPException(status_code=404, detail="Order not found")
-    items = (
-        db.query(models.OrderItem)
-        .filter(models.OrderItem.order_id == order.id)
-        .order_by(models.OrderItem.id.asc())
-        .all()
-    )
+        order = inv.order
+        if not order or order.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Order not found")
+        items = (
+            db.query(models.OrderItem)
+            .filter(models.OrderItem.order_id == order.id)
+            .order_by(models.OrderItem.id.asc())
+            .all()
+        )
 
-    to_email = inv.customer.email.strip()
-    subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
-    html = _render_invoice_email(inv, items)
+        inv_id = inv.id
+        to_email = inv.customer.email.strip()
+        subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
+        html = _render_invoice_email(inv, items)
+        safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv.id)
+        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv_id)
     except RuntimeError as e:
         logger.exception("Invoice PDF generation failed for email")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -557,7 +561,6 @@ def send_invoice_email(
         logger.exception("Invoice PDF generation failed for email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
 
-    safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
     try:
         send_email_html_with_pdf_attachment(
             to_email,
@@ -582,17 +585,16 @@ def send_invoice_email(
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
     try:
-        log_activity(
-            db,
-            action=INVOICE_EMAIL_SENT,
-            entity_type="invoice",
-            entity_id=inv.id,
-            actor_user=user,
-            meta={"to": to_email},
-        )
-        db.commit()
+        with route_db_session(commit=True) as db:
+            log_activity(
+                db,
+                action=INVOICE_EMAIL_SENT,
+                entity_type="invoice",
+                entity_id=inv_id,
+                actor_user=user,
+                meta={"to": to_email},
+            )
     except Exception:
-        db.rollback()
         logger.exception("Failed to write action log for invoice email")
 
     return {"message": "Invoice sent"}
@@ -627,19 +629,22 @@ def record_invoice_print(
 @router.post("/invoices/{invoice_id}/download")
 def download_invoice_pdf(
     invoice_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    inv = (
-        db.query(models.Invoice)
-        .filter(models.Invoice.id == invoice_id)
-        .filter(invoice_alive())
-        .first()
-    )
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
+    with route_db_session() as db:
+        inv = (
+            db.query(models.Invoice)
+            .filter(models.Invoice.id == invoice_id)
+            .filter(invoice_alive())
+            .first()
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        inv_id = inv.id
+        inv_number = inv.invoice_number
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv.id)
+        pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv_id)
     except RuntimeError as e:
         logger.exception("Invoice PDF download failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -647,17 +652,17 @@ def download_invoice_pdf(
         logger.exception("Invoice PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    log_activity(
-        db,
-        action=INVOICE_DOWNLOADED,
-        entity_type="invoice",
-        entity_id=inv.id,
-        actor_user=user,
-        meta={"invoice_number": inv.invoice_number},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=INVOICE_DOWNLOADED,
+            entity_type="invoice",
+            entity_id=inv_id,
+            actor_user=user,
+            meta={"invoice_number": inv_number},
+        )
 
-    safe = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
+    safe = re.sub(r"[^\w.\-]+", "_", inv_number or "invoice")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

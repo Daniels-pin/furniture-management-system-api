@@ -18,6 +18,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_waybill_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.database import get_db
+from app.utils.route_db import route_db_session
 from app.db.alive import order_alive, waybill_alive
 from app.schemas import WaybillCreate, WaybillLogisticsUpdate, WaybillStatusUpdate
 from app.utils.activity_log import (
@@ -425,29 +426,33 @@ def update_waybill_status(
 @router.post("/waybills/{waybill_id}/send-email")
 def send_waybill_email(
     waybill_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = (
-        db.query(models.Waybill)
-        .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
-        .filter(models.Waybill.id == waybill_id)
-        .filter(waybill_alive())
-        .first()
-    )
-    if not wb:
-        raise HTTPException(status_code=404, detail="Waybill not found")
-    if not _waybill_driver_ready(wb):
-        raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
-    cust = wb.order.customer if wb.order else None
-    if not cust or not (cust.email or "").strip():
-        raise HTTPException(status_code=400, detail="Customer has no email on file")
+    with route_db_session() as db:
+        wb = (
+            db.query(models.Waybill)
+            .options(joinedload(models.Waybill.order).joinedload(models.Order.customer))
+            .filter(models.Waybill.id == waybill_id)
+            .filter(waybill_alive())
+            .first()
+        )
+        if not wb:
+            raise HTTPException(status_code=404, detail="Waybill not found")
+        if not _waybill_driver_ready(wb):
+            raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
+        cust = wb.order.customer if wb.order else None
+        if not cust or not (cust.email or "").strip():
+            raise HTTPException(status_code=400, detail="Customer has no email on file")
 
-    to_email = cust.email.strip()
-    subject = f"{APP_NAME} - Waybill {wb.waybill_number}"
-    html = _render_waybill_html(db, wb)
+        wb_id = wb.id
+        waybill_number = wb.waybill_number
+        to_email = cust.email.strip()
+        subject = f"{APP_NAME} - Waybill {waybill_number}"
+        html = _render_waybill_html(db, wb)
+        safe_n = re.sub(r"[^\w.\-]+", "_", waybill_number or "waybill")
+
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb.id)
+        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb_id)
     except RuntimeError as e:
         logger.exception("Waybill PDF generation failed for email")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -455,7 +460,6 @@ def send_waybill_email(
         logger.exception("Waybill PDF generation failed for email")
         raise HTTPException(status_code=500, detail="Could not generate PDF attachment") from e
 
-    safe_n = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
     try:
         send_email_html_with_pdf_attachment(
             to_email,
@@ -479,15 +483,15 @@ def send_waybill_email(
         logger.exception("Failed to send waybill email")
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
-    log_activity(
-        db,
-        action=WAYBILL_SENT,
-        entity_type="waybill",
-        entity_id=wb.id,
-        actor_user=user,
-        meta={"waybill_number": wb.waybill_number, "to": to_email},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=WAYBILL_SENT,
+            entity_type="waybill",
+            entity_id=wb_id,
+            actor_user=user,
+            meta={"waybill_number": waybill_number, "to": to_email},
+        )
     return {"message": "Waybill sent"}
 
 
@@ -517,23 +521,25 @@ def record_waybill_print(
 @router.post("/waybills/{waybill_id}/download")
 def download_waybill(
     waybill_id: int,
-    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    wb = (
-        db.query(models.Waybill)
-        .options(joinedload(models.Waybill.order))
-        .filter(models.Waybill.id == waybill_id)
-        .filter(waybill_alive())
-        .first()
-    )
-    if not wb:
-        raise HTTPException(status_code=404, detail="Waybill not found")
-    if not _waybill_driver_ready(wb):
-        raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
+    with route_db_session() as db:
+        wb = (
+            db.query(models.Waybill)
+            .options(joinedload(models.Waybill.order))
+            .filter(models.Waybill.id == waybill_id)
+            .filter(waybill_alive())
+            .first()
+        )
+        if not wb:
+            raise HTTPException(status_code=404, detail="Waybill not found")
+        if not _waybill_driver_ready(wb):
+            raise HTTPException(status_code=400, detail=WAYBILL_LOGISTICS_REQUIRED)
+        wb_id = wb.id
+        waybill_number = wb.waybill_number
 
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb.id)
+        pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb_id)
     except RuntimeError as e:
         logger.exception("Waybill PDF download failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -541,17 +547,17 @@ def download_waybill(
         logger.exception("Waybill PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    log_activity(
-        db,
-        action=WAYBILL_DOWNLOADED,
-        entity_type="waybill",
-        entity_id=wb.id,
-        actor_user=user,
-        meta={"waybill_number": wb.waybill_number},
-    )
-    db.commit()
+    with route_db_session(commit=True) as db:
+        log_activity(
+            db,
+            action=WAYBILL_DOWNLOADED,
+            entity_type="waybill",
+            entity_id=wb_id,
+            actor_user=user,
+            meta={"waybill_number": waybill_number},
+        )
 
-    safe = re.sub(r"[^\w.\-]+", "_", wb.waybill_number or "waybill")
+    safe = re.sub(r"[^\w.\-]+", "_", waybill_number or "waybill")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

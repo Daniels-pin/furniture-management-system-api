@@ -22,8 +22,15 @@ if not DATABASE_URL:
         f"(expected at {_PROJECT_ROOT / '.env'}) or export it in your environment."
     )
 
-# Create engine
-engine = create_engine(DATABASE_URL)
+# QueuePool defaults are fine for a single worker; pre_ping/recycle avoid stale connections on Render.
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+)
 
 # Session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -40,4 +47,3 @@ def get_db():
         yield db
     finally:
         db.close()
-        

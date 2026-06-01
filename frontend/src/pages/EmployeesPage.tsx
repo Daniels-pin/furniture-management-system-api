@@ -56,6 +56,7 @@ export function EmployeesPage() {
   const [nav, setNav] = useState<PayrollPeriodsNav | null>(null);
   const [rows, setRows] = useState<EmployeeListItem[]>([]);
   const [monthlySearch, setMonthlySearch] = useState("");
+  const [monthlySearchDebounced, setMonthlySearchDebounced] = useState("");
   const [monthlySelectedIds, setMonthlySelectedIds] = useState<number[]>([]);
   const [bulkNote, setBulkNote] = useState("");
   const [bulkSending, setBulkSending] = useState(false);
@@ -208,6 +209,11 @@ export function EmployeesPage() {
   }, [contractSearch]);
 
   useEffect(() => {
+    const t = window.setTimeout(() => setMonthlySearchDebounced(monthlySearch), 350);
+    return () => window.clearTimeout(t);
+  }, [monthlySearch]);
+
+  useEffect(() => {
     let alive = true;
     if (auth.role !== "admin") return;
     if (!periodParams) {
@@ -217,24 +223,25 @@ export function EmployeesPage() {
     (async () => {
       setLoading(true);
       try {
-        const [listData, sum] = await Promise.all([
-          employeesApi.list({ ...periodParams, search: monthlySearch.trim() || undefined }),
-          employeesApi.payrollSummary(periodParams)
-        ]);
-        if (alive) {
-          setRows(listData);
-          setSummary(sum);
-        }
+        const listData = await employeesApi.list({
+          ...periodParams,
+          search: monthlySearchDebounced.trim() || undefined
+        });
+        if (!alive) return;
+        setRows(listData);
+        setLoading(false);
+        const sum = await employeesApi.payrollSummary(periodParams);
+        if (!alive) return;
+        setSummary(sum);
       } catch (e) {
         toast.push("error", getErrorMessage(e));
-      } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => {
       alive = false;
     };
-  }, [toast, periodParams, auth.role, monthlySearch]);
+  }, [toast, periodParams, auth.role, monthlySearchDebounced]);
 
   useEffect(() => {
     if (auth.role !== "finance") return;
