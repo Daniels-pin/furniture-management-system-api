@@ -1036,6 +1036,7 @@ class CompanyLocationOut(BaseModel):
     allowed_radius_meters: int
     shift_mode_enabled: bool = False
     late_attendance_time: time
+    attendance_cutoff_time: Optional[time] = None
     check_out_time: time
     morning_shift_late_time: Optional[time] = None
     morning_shift_closing_time: Optional[time] = None
@@ -1048,6 +1049,7 @@ class CompanyLocationOut(BaseModel):
 
     @field_serializer(
         "late_attendance_time",
+        "attendance_cutoff_time",
         "check_out_time",
         "morning_shift_late_time",
         "morning_shift_closing_time",
@@ -1089,6 +1091,7 @@ class CompanyLocationCreate(BaseModel):
     allowed_radius_meters: int = Field(..., ge=1, le=200_000)
     shift_mode_enabled: bool = False
     late_attendance_time: time = Field(default=time(8, 15))
+    attendance_cutoff_time: Optional[time] = None
     check_out_time: time = Field(default=time(17, 0))
     morning_shift_late_time: Optional[time] = None
     morning_shift_closing_time: Optional[time] = None
@@ -1107,6 +1110,7 @@ class CompanyLocationCreate(BaseModel):
 
     @field_validator(
         "late_attendance_time",
+        "attendance_cutoff_time",
         "check_out_time",
         "morning_shift_late_time",
         "morning_shift_closing_time",
@@ -1148,6 +1152,7 @@ class CompanyLocationUpdate(BaseModel):
     allowed_radius_meters: Optional[int] = Field(None, ge=1, le=200_000)
     shift_mode_enabled: Optional[bool] = None
     late_attendance_time: Optional[time] = None
+    attendance_cutoff_time: Optional[time] = None
     check_out_time: Optional[time] = None
     morning_shift_late_time: Optional[time] = None
     morning_shift_closing_time: Optional[time] = None
@@ -1167,6 +1172,7 @@ class CompanyLocationUpdate(BaseModel):
 
     @field_validator(
         "late_attendance_time",
+        "attendance_cutoff_time",
         "check_out_time",
         "morning_shift_late_time",
         "morning_shift_closing_time",

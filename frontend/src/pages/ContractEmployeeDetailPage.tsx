@@ -134,12 +134,15 @@ export function ContractEmployeeDetailPage() {
   const { contractEmployeeId } = useParams();
   const id = Number(contractEmployeeId);
   const tab = (searchParams.get("tab") || "finances") as "jobs" | "finances";
-  const selectedJobId = Number(searchParams.get("jobId") || "");
+  const jobsView = (searchParams.get("jobsView") || "active") as "active" | "completed" | "all";
+  const jobsPage = Math.max(1, Number(searchParams.get("jobsPage") || "1") || 1);
+  const JOBS_PAGE_SIZE = 10;
 
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<ContractEmployeeDetail | null>(null);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobs, setJobs] = useState<ContractJob[]>([]);
+  const [jobsTotal, setJobsTotal] = useState(0);
   const [unreadNotifs, setUnreadNotifs] = useState<NotificationItem[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignDesc, setAssignDesc] = useState("");
@@ -187,13 +190,9 @@ export function ContractEmployeeDetailPage() {
     (async () => {
       setLoading(true);
       try {
-        const [d, j] = await Promise.all([
-          contractEmployeesApi.get(id),
-          contractJobsApi.listAdmin({ employee_id: id, limit: 500 })
-        ]);
+        const d = await contractEmployeesApi.get(id);
         if (!alive) return;
         setDetail(d);
-        setJobs(Array.isArray(j.items) ? j.items : []);
         window.dispatchEvent(new Event("furniture:notifications-updated"));
       } catch (err) {
         toast.push("error", getErrorMessage(err));
@@ -257,8 +256,6 @@ export function ContractEmployeeDetailPage() {
   const title = useMemo(() => detail?.full_name ?? "Contract employee", [detail?.full_name]);
   const jobsSorted = useMemo(() => sortJobsByAttention(jobs, unreadNotifs), [jobs, unreadNotifs]);
   const jobsUnreadSummary = useMemo(() => getEmployeeUnreadSummary(jobs, unreadNotifs), [jobs, unreadNotifs]);
-  const inProgressJobs = useMemo(() => jobsSorted.filter((j) => j.status === "in_progress"), [jobsSorted]);
-  const completedJobs = useMemo(() => jobsSorted.filter((j) => j.status === "completed"), [jobsSorted]);
   const eligiblePaymentRequests = useMemo(() => {
     const txns = Array.isArray(detail?.transactions) ? detail!.transactions : [];
     return txns
@@ -292,24 +289,50 @@ export function ContractEmployeeDetailPage() {
     }
     setPayNowAmt(String(selectedPayRequest.amount ?? ""));
   }, [selectedPayRequest?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const selectedJob = useMemo(
-    () => (Number.isFinite(selectedJobId) ? jobs.find((j) => j.id === selectedJobId) ?? null : null),
-    [jobs, selectedJobId]
-  );
 
   function setTab(next: "jobs" | "finances") {
     const sp = new URLSearchParams(searchParams);
     sp.set("tab", next);
-    if (next !== "jobs") sp.delete("jobId");
+    if (next !== "jobs") {
+      sp.delete("jobsView");
+      sp.delete("jobsPage");
+    }
     setSearchParams(sp, { replace: true });
+  }
+
+  function setJobsView(next: "active" | "completed" | "all") {
+    const sp = new URLSearchParams(searchParams);
+    sp.set("tab", "jobs");
+    sp.set("jobsView", next);
+    sp.set("jobsPage", "1");
+    setSearchParams(sp);
+  }
+
+  function setJobsPage(nextPage: number) {
+    const sp = new URLSearchParams(searchParams);
+    sp.set("tab", "jobs");
+    sp.set("jobsView", jobsView);
+    sp.set("jobsPage", String(Math.max(1, nextPage)));
+    setSearchParams(sp);
   }
 
   async function refreshJobs() {
     if (!Number.isFinite(id)) return;
     setJobsLoading(true);
     try {
-      const j = await contractJobsApi.listAdmin({ employee_id: id, limit: 500 });
+      const offset = (jobsPage - 1) * JOBS_PAGE_SIZE;
+      const j = await contractJobsApi.listAdmin({
+        employee_id: id,
+        limit: JOBS_PAGE_SIZE,
+        offset,
+        ...(jobsView === "active"
+          ? { statuses: ["pending", "in_progress"] as Array<ContractJob["status"]>, sort: "newest" as const }
+          : jobsView === "completed"
+            ? { statuses: ["completed"] as Array<ContractJob["status"]>, sort: "completed_newest" as const }
+            : { sort: "newest" as const })
+      });
       setJobs(Array.isArray(j.items) ? j.items : []);
+      setJobsTotal(Number(j.total ?? 0) || 0);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
@@ -317,31 +340,48 @@ export function ContractEmployeeDetailPage() {
     }
   }
 
-  // Keep jobs synchronized with the Jobs page:
-  // - refresh periodically (covers background changes, reassignment, payment updates)
-  // - refresh on notification updates (covers negotiation / assignment events)
   useEffect(() => {
     if (auth.role !== "admin") return;
     if (!Number.isFinite(id)) return;
+    if (tab !== "jobs") return;
     let alive = true;
     async function tick() {
       try {
-        const j = await contractJobsApi.listAdmin({ employee_id: id, limit: 500 });
+        const offset = (jobsPage - 1) * JOBS_PAGE_SIZE;
+        const j = await contractJobsApi.listAdmin({
+          employee_id: id,
+          limit: JOBS_PAGE_SIZE,
+          offset,
+          ...(jobsView === "active"
+            ? { statuses: ["pending", "in_progress"] as Array<ContractJob["status"]>, sort: "newest" as const }
+            : jobsView === "completed"
+              ? { statuses: ["completed"] as Array<ContractJob["status"]>, sort: "completed_newest" as const }
+              : { sort: "newest" as const })
+        });
         if (!alive) return;
         setJobs(Array.isArray(j.items) ? j.items : []);
+        setJobsTotal(Number(j.total ?? 0) || 0);
       } catch {
         // ignore (non-critical; manual refresh still available)
       }
     }
     const onNotifUpdated = () => void tick();
     window.addEventListener("furniture:notifications-updated", onNotifUpdated as any);
+    void tick();
     const iv = window.setInterval(() => void tick(), 10_000);
     return () => {
       alive = false;
       window.removeEventListener("furniture:notifications-updated", onNotifUpdated as any);
       window.clearInterval(iv);
     };
-  }, [auth.role, id]);
+  }, [auth.role, id, tab, jobsView, jobsPage]);
+
+  useEffect(() => {
+    if (tab !== "jobs") return;
+    if (!Number.isFinite(id)) return;
+    void refreshJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, id, jobsView, jobsPage]);
 
   return (
     <div className="space-y-6">
@@ -461,7 +501,10 @@ export function ContractEmployeeDetailPage() {
             <>
               <Card className="!p-4">
                 <div className="flex flex-wrap items-end justify-between gap-2">
-                  <div className="text-sm font-semibold text-black">Job preview</div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-black">Jobs</div>
+                    <div className="mt-0.5 text-xs text-black/55">Click any job row/card to open details.</div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {auth.role === "admin" ? (
                       <Button onClick={() => setAssignOpen(true)}>Assign Job</Button>
@@ -471,159 +514,132 @@ export function ContractEmployeeDetailPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <div>
-                    <div className="text-xs font-semibold text-black/55">In progress</div>
-                    {inProgressJobs.length === 0 ? (
-                      <div className="mt-2 text-sm text-black/60">No jobs in progress.</div>
-                    ) : (
-                      <ul className="mt-2 divide-y divide-black/10 rounded-2xl border border-black/10">
-                        {inProgressJobs.slice(0, 6).map((j) => (
-                          <li key={j.id} className="px-3 py-2 text-sm">
-                            <button
-                              type="button"
-                              className="w-full text-left"
-                              onClick={() => {
-                                const sp = new URLSearchParams(searchParams);
-                                sp.set("tab", "jobs");
-                                sp.set("jobId", String(j.id));
-                                setSearchParams(sp);
-                              }}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="font-semibold">Job #{j.id}</div>
-                                <div className="flex flex-wrap items-center justify-end gap-2">
-                                  <JobStatusBadge status={j.status} />
-                                  <JobAlertBadge
-                                    label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(j.id, unreadNotifs), "admin")}
-                                  />
-                                </div>
-                              </div>
-                              {(() => {
-                                const ui = getNegotiationUi(j);
-                                if (ui.state === "none") return null;
-                                return (
-                                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                                    <NegotiationBadge state={ui.state} />
-                                    <AcceptanceIndicator label={ui.acceptanceLabel} />
-                                  </div>
-                                );
-                              })()}
-                              <div className="mt-1 text-xs text-black/60">
-                                {j.description ? `Desc: ${j.description}` : ""}
-                                {j.description ? " • " : ""}
-                                Price: {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
-                              </div>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                <div className="mt-3 flex flex-col gap-3">
+                  <div className="inline-flex w-full flex-wrap gap-2 rounded-2xl border border-black/10 bg-white p-1">
+                    <button
+                      type="button"
+                      onClick={() => setJobsView("active")}
+                      className={[
+                        "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                        jobsView === "active" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                      ].join(" ")}
+                    >
+                      Pending + In Progress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJobsView("completed")}
+                      className={[
+                        "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                        jobsView === "completed" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                      ].join(" ")}
+                    >
+                      Completed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJobsView("all")}
+                      className={[
+                        "min-h-10 rounded-xl px-3 text-sm font-semibold",
+                        jobsView === "all" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                      ].join(" ")}
+                    >
+                      All
+                    </button>
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold text-black/55">Completed</div>
-                    {completedJobs.length === 0 ? (
-                      <div className="mt-2 text-sm text-black/60">No completed jobs yet.</div>
-                    ) : (
-                      <ul className="mt-2 divide-y divide-black/10 rounded-2xl border border-black/10">
-                        {completedJobs.slice(0, 6).map((j) => (
-                          <li key={j.id} className="px-3 py-2 text-sm">
-                            <button
-                              type="button"
-                              className="w-full text-left"
-                              onClick={() => {
-                                const sp = new URLSearchParams(searchParams);
-                                sp.set("tab", "jobs");
-                                sp.set("jobId", String(j.id));
-                                setSearchParams(sp);
-                              }}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="font-semibold">Job #{j.id}</div>
-                                <div className="flex flex-wrap items-center justify-end gap-2">
-                                  <JobStatusBadge status={j.status} />
-                                  <JobAlertBadge
-                                    label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(j.id, unreadNotifs), "admin")}
-                                  />
-                                </div>
-                              </div>
-                              {(() => {
-                                const ui = getNegotiationUi(j);
-                                if (ui.state === "none") return null;
-                                return (
-                                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                                    <NegotiationBadge state={ui.state} />
-                                    <AcceptanceIndicator label={ui.acceptanceLabel} />
-                                  </div>
-                                );
-                              })()}
-                              <div className="mt-1 text-xs text-black/60">
-                                {j.description ? `Desc: ${j.description}` : ""}
-                                {j.description ? " • " : ""}
-                                Price: {j.final_price ? formatMoney(j.final_price) : "—"}
-                              </div>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              </Card>
 
-              <Card className="!p-4">
-                <div className="flex flex-wrap items-end justify-between gap-2">
-                  <div className="text-sm font-semibold text-black">Open job details</div>
-                  <Button
-                    variant="secondary"
-                    disabled={!selectedJob}
-                    onClick={() => {
-                      if (!selectedJob) return;
-                      nav(`/admin/jobs/${selectedJob.id}`);
-                    }}
-                  >
-                    View selected job
-                  </Button>
-                </div>
-                {!selectedJob ? (
-                  <div className="mt-2 text-sm text-black/60">Select a job above, then open it in the full job detail page.</div>
-                ) : (
-                  <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-semibold">Job #{selectedJob.id}</div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <JobStatusBadge status={selectedJob.status} />
-                        <JobAlertBadge
-                          label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(selectedJob.id, unreadNotifs), "admin")}
-                        />
-                      </div>
+                  {jobsSorted.length === 0 ? (
+                    <div className="text-sm text-black/60">No jobs found.</div>
+                  ) : (
+                    <ul className="divide-y divide-black/10 rounded-2xl border border-black/10">
+                      {jobsSorted.map((j) => (
+                        <li key={j.id} className="text-sm">
+                          <button
+                            type="button"
+                            className="group w-full text-left"
+                            onClick={() => nav(`/admin/jobs/${j.id}`)}
+                          >
+                            <div
+                              className={[
+                                "px-3 py-3",
+                                "cursor-pointer",
+                                "transition-colors",
+                                "hover:bg-black/[0.03]",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                              ].join(" ")}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-semibold">Job #{j.id}</div>
+                                  <div className="mt-1 text-xs text-black/60 line-clamp-2">{(j.description || "").trim() || "—"}</div>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  <JobStatusBadge status={j.status} />
+                                  <JobAlertBadge label={getPrimaryJobAlertLabel(getUnreadNotifsForJob(j.id, unreadNotifs), "admin")} />
+                                </div>
+                              </div>
+
+                              {(() => {
+                                const ui = getNegotiationUi(j);
+                                if (ui.state === "none") return null;
+                                return (
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <NegotiationBadge state={ui.state} />
+                                    <AcceptanceIndicator label={ui.acceptanceLabel} />
+                                  </div>
+                                );
+                              })()}
+
+                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-black/60">
+                                <div>
+                                  Price:{" "}
+                                  <span className="font-semibold text-black tabular-nums">
+                                    {j.final_price ? formatMoney(j.final_price) : j.price_offer ? formatMoney(j.price_offer) : "—"}
+                                  </span>
+                                </div>
+                                {j.status === "completed" ? (
+                                  <div>
+                                    Payment:{" "}
+                                    <span className="font-semibold text-black">
+                                      {(j as any).payment_state === "fully_paid"
+                                        ? "Fully paid"
+                                        : (j as any).payment_state === "partially_paid"
+                                          ? "Partially paid"
+                                          : "Not paid"}
+                                    </span>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-black/55">
+                      Page {jobsPage} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}
+                      {jobsTotal ? ` • ${jobsTotal} total` : ""}
                     </div>
-                    <div className="mt-1 text-xs text-black/60 line-clamp-2">{(selectedJob.description || "").trim() || "—"}</div>
-                    {(() => {
-                      const ui = getNegotiationUi(selectedJob);
-                      if (ui.state === "none") return null;
-                      return (
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <NegotiationBadge state={ui.state} />
-                          <AcceptanceIndicator label={ui.acceptanceLabel} />
-                        </div>
-                      );
-                    })()}
-                    <div className="mt-2 text-xs text-black/60">
-                      Price:{" "}
-                      <span className="font-semibold text-black tabular-nums">
-                        {selectedJob.final_price
-                          ? formatMoney(selectedJob.final_price)
-                          : selectedJob.price_offer
-                            ? formatMoney(selectedJob.price_offer)
-                            : "—"}
-                      </span>
-                    </div>
-                    <div className="mt-2 text-xs text-black/55">
-                      All job actions (renegotiate, accept, cancel, override) are handled on the full job detail page.
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        disabled={jobsLoading || jobsPage <= 1}
+                        onClick={() => setJobsPage(jobsPage - 1)}
+                      >
+                        Prev
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        disabled={jobsLoading || jobsPage >= Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}
+                        onClick={() => setJobsPage(jobsPage + 1)}
+                      >
+                        Next
+                      </Button>
                     </div>
                   </div>
-                )}
+                </div>
               </Card>
             </>
           ) : (

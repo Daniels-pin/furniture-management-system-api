@@ -575,6 +575,7 @@ export type CompanyLocation = {
   allowed_radius_meters: number;
   shift_mode_enabled: boolean;
   late_attendance_time: string;
+  attendance_cutoff_time?: string | null;
   check_out_time: string;
   morning_shift_late_time?: string | null;
   morning_shift_closing_time?: string | null;

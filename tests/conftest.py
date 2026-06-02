@@ -12,6 +12,8 @@ os.environ["DATABASE_URL"] = "sqlite:///./_pytest_app_dummy.db"
 os.environ.setdefault("SECRET_KEY", "pytest-secret-key-at-least-32-characters-long")
 os.environ.setdefault("ALGORITHM", "HS256")
 os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+# Background workers should be off for deterministic tests.
+os.environ.setdefault("ATTENDANCE_CUTOFF_WORKER_ENABLED", "0")
 
 import pytest
 from sqlalchemy import create_engine

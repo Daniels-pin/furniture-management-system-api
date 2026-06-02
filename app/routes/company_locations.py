@@ -56,6 +56,7 @@ def create_location(
         allowed_radius_meters=int(body.allowed_radius_meters),
         shift_mode_enabled=bool(body.shift_mode_enabled),
         late_attendance_time=body.late_attendance_time,
+        attendance_cutoff_time=body.attendance_cutoff_time,
         check_out_time=body.check_out_time,
         morning_shift_late_time=body.morning_shift_late_time,
         morning_shift_closing_time=body.morning_shift_closing_time,

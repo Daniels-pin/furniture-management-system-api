@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Activity log (action_logs) retention: purge rows older than 30 days, checked every 24h.
 _ACTION_LOG_CLEANUP_INTERVAL_SEC = 86_400
+_ATTENDANCE_CUTOFF_POLL_INTERVAL_SEC = 20
 
 
 async def _action_log_cleanup_worker() -> None:
@@ -59,13 +60,48 @@ async def _action_log_cleanup_worker() -> None:
         await asyncio.sleep(_ACTION_LOG_CLEANUP_INTERVAL_SEC)
 
 
+async def _attendance_cutoff_worker() -> None:
+    """Poll for due location cutoffs and auto-generate absences.
+
+    Disabled in tests by setting ATTENDANCE_CUTOFF_WORKER_ENABLED=0.
+    """
+    enabled = os.getenv("ATTENDANCE_CUTOFF_WORKER_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        return
+    from app.database import SessionLocal
+    from app.utils.attendance_cutoff import process_due_attendance_cutoffs
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                res = process_due_attendance_cutoffs(db)
+                if res.locations_processed or res.employees_marked_absent:
+                    logger.info(
+                        "Attendance cutoff processed: day=%s locations=%s absent=%s",
+                        res.attendance_date,
+                        res.locations_processed,
+                        res.employees_marked_absent,
+                    )
+                db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.exception("Attendance cutoff worker failed")
+        await asyncio.sleep(_ATTENDANCE_CUTOFF_POLL_INTERVAL_SEC)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_action_log_cleanup_worker(), name="action_log_retention")
+    cutoff_task = asyncio.create_task(_attendance_cutoff_worker(), name="attendance_cutoff_worker")
     try:
         yield
     finally:
+        cutoff_task.cancel()
         task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cutoff_task
         with contextlib.suppress(asyncio.CancelledError):
             await task
 

@@ -606,6 +606,8 @@ def list_jobs_admin(
     current_user=Depends(require_role(["admin"])),
     employee_id: Optional[int] = Query(None, gt=0),
     status: Optional[str] = Query(None, description="pending | in_progress | completed | cancelled"),
+    statuses: Optional[str] = Query(None, description="Comma-separated list of statuses"),
+    sort: Optional[str] = Query(None, description="newest | completed_newest"),
     limit: int = 50,
     offset: int = 0,
 ):
@@ -614,10 +616,27 @@ def list_jobs_admin(
     q = db.query(models.ContractJob)
     if employee_id:
         q = q.filter(models.ContractJob.contract_employee_id == int(employee_id))
-    if status:
+    status_list: list[str] = []
+    if statuses:
+        status_list = [s.strip() for s in str(statuses).split(",") if s.strip()]
+    if status_list:
+        q = q.filter(models.ContractJob.status.in_(status_list))
+    elif status:
         q = q.filter(models.ContractJob.status == status)
     total = q.count()
-    rows = q.order_by(models.ContractJob.id.desc()).offset(off).limit(lim).all()
+    sort_key = (sort or "").strip() or "newest"
+    if sort_key == "completed_newest":
+        rows = (
+            q.order_by(
+                models.ContractJob.completed_at.desc(),
+                models.ContractJob.id.desc(),
+            )
+            .offset(off)
+            .limit(lim)
+            .all()
+        )
+    else:
+        rows = q.order_by(models.ContractJob.id.desc()).offset(off).limit(lim).all()
     ce_ids = sorted({int(j.contract_employee_id) for j in rows})
     name_map: dict[int, str] = {}
     if ce_ids:

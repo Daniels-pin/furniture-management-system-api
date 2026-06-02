@@ -868,6 +868,7 @@ export const companyLocationsApi = {
     allowed_radius_meters: number;
     shift_mode_enabled?: boolean;
     late_attendance_time?: string;
+    attendance_cutoff_time?: string | null;
     check_out_time?: string;
     morning_shift_late_time?: string;
     morning_shift_closing_time?: string;
@@ -889,6 +890,7 @@ export const companyLocationsApi = {
       allowed_radius_meters: number;
       shift_mode_enabled: boolean;
       late_attendance_time: string;
+      attendance_cutoff_time: string | null;
       check_out_time: string;
       morning_shift_late_time: string;
       morning_shift_closing_time: string;
@@ -1240,12 +1242,16 @@ export const contractJobsApi = {
   async listAdmin(params?: {
     employee_id?: number;
     status?: ContractJob["status"];
+    statuses?: Array<ContractJob["status"]>;
+    sort?: "newest" | "completed_newest";
     limit?: number;
     offset?: number;
   }) {
     const qp: Record<string, string | number> = {};
     if (typeof params?.employee_id === "number") qp.employee_id = params.employee_id;
     if (params?.status) qp.status = params.status;
+    if (Array.isArray(params?.statuses) && params!.statuses!.length) qp.statuses = params!.statuses!.join(",");
+    if (params?.sort) qp.sort = params.sort;
     if (typeof params?.limit === "number") qp.limit = params.limit;
     if (typeof params?.offset === "number") qp.offset = params.offset;
     const { data } = await api.get<Paginated<ContractJob>>("/contract-jobs", { params: qp });

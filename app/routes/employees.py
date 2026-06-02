@@ -2797,6 +2797,15 @@ def clock_in_my_attendance(
     loc = None
     if emp.work_location_id is not None:
         loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
+    cutoff_t = getattr(loc, "attendance_cutoff_time", None) if loc is not None else None
+    if cutoff_t is not None and now.time() >= cutoff_t:
+        display = datetime(2000, 1, 1, cutoff_t.hour, cutoff_t.minute).strftime("%I:%M %p").lstrip("0")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Attendance cannot be marked. Today's attendance closed at {display} and you have already been recorded as absent."
+            ),
+        )
     if loc is not None and bool(getattr(loc, "shift_mode_enabled", False)):
         raise HTTPException(
             status_code=400,
@@ -2890,6 +2899,15 @@ def clock_in_my_attendance_geo(
     db.refresh(loc)
 
     now = now_lagos()
+    cutoff_t = getattr(loc, "attendance_cutoff_time", None)
+    if cutoff_t is not None and now.time() >= cutoff_t:
+        display = datetime(2000, 1, 1, cutoff_t.hour, cutoff_t.minute).strftime("%I:%M %p").lstrip("0")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Attendance cannot be marked. Today's attendance closed at {display} and you have already been recorded as absent."
+            ),
+        )
     today = now.date()
     if _is_sunday(today):
         return EmployeeClockInOut(

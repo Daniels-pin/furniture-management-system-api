@@ -443,6 +443,9 @@ class CompanyLocation(Base):
     allowed_radius_meters = Column(Integer, nullable=False, default=0, server_default="0")
     shift_mode_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     late_attendance_time = Column(Time, nullable=False, server_default="08:15:00")
+    # Latest time an employee can check in for today's attendance (Africa/Lagos).
+    # Nullable for backward compatibility: when NULL, cutoff enforcement + auto-absence processing are disabled.
+    attendance_cutoff_time = Column(Time, nullable=True)
     check_out_time = Column(Time, nullable=False, server_default="17:00:00")
     morning_shift_late_time = Column(Time, nullable=True)
     morning_shift_closing_time = Column(Time, nullable=True)
@@ -608,6 +611,10 @@ class EmployeeAbsenceEntry(Base):
     absence_date = Column(Date, nullable=False, index=True)
     deduction_amount_naira = Column(Numeric(14, 2), nullable=True)
     note = Column(String, nullable=True)
+    # Cutoff processor snapshot fields (immutable history: old rows never recompute if location rules change later).
+    location_id_used = Column(Integer, ForeignKey("company_locations.id", ondelete="SET NULL"), nullable=True, index=True)
+    attendance_cutoff_time_used = Column(Time, nullable=True)
+    processed_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     voided_at = Column(DateTime, nullable=True, index=True)
     voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -617,7 +624,27 @@ class EmployeeAbsenceEntry(Base):
 
     employee = relationship("Employee", back_populates="absence_entries")
     period = relationship("SalaryPeriod")
+    location_used = relationship("CompanyLocation", foreign_keys=[location_id_used])
     voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
+
+class AttendanceCutoffRun(Base):
+    """Idempotency marker for per-location daily attendance cutoff processing."""
+
+    __tablename__ = "attendance_cutoff_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    location_id = Column(Integer, ForeignKey("company_locations.id", ondelete="CASCADE"), nullable=False, index=True)
+    attendance_date = Column(Date, nullable=False, index=True)
+    cutoff_time_used = Column(Time, nullable=True)
+    processed_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    meta = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("location_id", "attendance_date", name="uq_attendance_cutoff_runs_loc_day"),
+    )
+
+    location = relationship("CompanyLocation")
 
 
 class EmployeeAttendanceEntry(Base):

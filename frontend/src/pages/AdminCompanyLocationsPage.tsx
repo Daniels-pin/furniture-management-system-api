@@ -66,6 +66,8 @@ export function AdminCompanyLocationsPage() {
   const [radius, setRadius] = useState("150");
   const [shiftMode, setShiftMode] = useState(false);
   const [lateTime, setLateTime] = useState("08:15");
+  const [cutoffEnabled, setCutoffEnabled] = useState(false);
+  const [cutoffTime, setCutoffTime] = useState("13:00");
   const [checkOutTime, setCheckOutTime] = useState("17:00");
   const [morningLate, setMorningLate] = useState("08:30");
   const [morningClose, setMorningClose] = useState("16:00");
@@ -129,6 +131,8 @@ export function AdminCompanyLocationsPage() {
     setRadius(String(selected.allowed_radius_meters ?? 0));
     setShiftMode(Boolean(selected.shift_mode_enabled));
     setLateTime(toTimeInputValue(selected.late_attendance_time));
+    setCutoffEnabled(Boolean(selected.attendance_cutoff_time));
+    setCutoffTime(toTimeInputValue(selected.attendance_cutoff_time, "13:00"));
     setCheckOutTime(toTimeInputValue(selected.check_out_time, "17:00"));
     setMorningLate(toTimeInputValue(selected.morning_shift_late_time, "08:30"));
     setMorningClose(toTimeInputValue(selected.morning_shift_closing_time, "16:00"));
@@ -146,6 +150,8 @@ export function AdminCompanyLocationsPage() {
     setRadius("150");
     setShiftMode(false);
     setLateTime("08:15");
+    setCutoffEnabled(false);
+    setCutoffTime("13:00");
     setCheckOutTime("17:00");
     setMorningLate("08:30");
     setMorningClose("16:00");
@@ -256,6 +262,7 @@ export function AdminCompanyLocationsPage() {
       allowed_radius_meters: r,
       shift_mode_enabled: shiftMode,
       late_attendance_time: lateTime,
+      attendance_cutoff_time: cutoffEnabled ? cutoffTime : null,
       check_out_time: checkOutTime,
       morning_shift_late_time: shiftMode ? morningLate : undefined,
       morning_shift_closing_time: shiftMode ? morningClose : undefined,
@@ -277,6 +284,8 @@ export function AdminCompanyLocationsPage() {
         setRadius(String(synced.allowed_radius_meters ?? 0));
         setShiftMode(Boolean(synced.shift_mode_enabled));
         setLateTime(toTimeInputValue(synced.late_attendance_time));
+        setCutoffEnabled(Boolean(synced.attendance_cutoff_time));
+        setCutoffTime(toTimeInputValue(synced.attendance_cutoff_time, "13:00"));
         setCheckOutTime(toTimeInputValue(synced.check_out_time, "17:00"));
         setMorningLate(toTimeInputValue(synced.morning_shift_late_time, "08:30"));
         setMorningClose(toTimeInputValue(synced.morning_shift_closing_time, "16:00"));
@@ -359,7 +368,8 @@ export function AdminCompanyLocationsPage() {
                   >
                     <div className="text-sm font-semibold">{x.name}</div>
                     <div className={["mt-0.5 text-xs", x.id === selectedId ? "text-white/75" : "text-black/55"].join(" ")}>
-                      Radius: {x.allowed_radius_meters}m · Late: {formatLateAttendanceTime(x.late_attendance_time)} · Out:{" "}
+                      Radius: {x.allowed_radius_meters}m · Late: {formatLateAttendanceTime(x.late_attendance_time)} · Cutoff:{" "}
+                      {x.attendance_cutoff_time ? formatLateAttendanceTime(x.attendance_cutoff_time) : "—"} · Out:{" "}
                       {formatCheckOutTime(x.check_out_time)}
                     </div>
                   </button>
@@ -420,7 +430,7 @@ export function AdminCompanyLocationsPage() {
         </div>
 
         {!shiftMode ? (
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-semibold text-black/60">Late time</label>
               <input
@@ -429,6 +439,25 @@ export function AdminCompanyLocationsPage() {
                 value={lateTime}
                 onChange={(e) => setLateTime(e.target.value)}
               />
+            </div>
+            <div className="rounded-xl border border-black/10 bg-white p-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-black">
+                <input type="checkbox" checked={cutoffEnabled} onChange={(e) => setCutoffEnabled(e.target.checked)} />
+                Attendance cutoff enabled
+              </label>
+              <div className="mt-2">
+                <label className="mb-1 block text-xs font-semibold text-black/60">Attendance cutoff time</label>
+                <input
+                  type="time"
+                  className="w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-60"
+                  value={cutoffTime}
+                  disabled={!cutoffEnabled}
+                  onChange={(e) => setCutoffTime(e.target.value)}
+                />
+                <div className="mt-1 text-xs text-black/55">
+                  After this time, employees without attendance will be auto-marked absent.
+                </div>
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-black/60">Closing time</label>
