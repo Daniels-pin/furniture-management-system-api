@@ -31,6 +31,19 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(el.closest('a,button,input,select,textarea,label,[role="button"],[role="checkbox"]'));
 }
 
+/** Clears payroll adjustment inputs; saved totals come from `detail.salary`. */
+function emptyPayrollAdjustmentFormState() {
+  return {
+    periodBaseSalary: "",
+    bonus: "",
+    deduction: "",
+    latenessDeductionTotal: "",
+    absenceDeductionTotal: "",
+    earlySignOutDeductionTotal: "",
+    adjNote: ""
+  };
+}
+
 export function MonthlyEmployeeDetailPage() {
   const toast = useToast();
   const nav = useNavigate();
@@ -114,14 +127,13 @@ export function MonthlyEmployeeDetailPage() {
 
         const empBase = d.base_salary ?? null;
         setBaseSalary(empBase != null ? String(empBase) : "");
-        const baseOverride = d.salary.period_base_salary ?? null;
-        setPeriodBaseSalary(baseOverride != null ? String(baseOverride) : "");
-        setBonus(String(d.salary.adjustment_bonus ?? 0));
-        setDeduction(String(d.salary.adjustment_deduction ?? 0));
-        setLatenessDeductionTotal(String(latenessDeductionEffective(d.salary)));
-        setAbsenceDeductionTotal(String(absenceDeductionEffective(d.salary)));
-        setEarlySignOutDeductionTotal(String(earlySignOutDeductionEffective(d.salary)));
-        setAdjNote(d.salary.adjustment_note?.trim() ?? "");
+        setPeriodBaseSalary("");
+        setBonus("");
+        setDeduction("");
+        setLatenessDeductionTotal("");
+        setAbsenceDeductionTotal("");
+        setEarlySignOutDeductionTotal("");
+        setAdjNote("");
       } catch (e) {
         toast.push("error", getErrorMessage(e));
         nav("/employees?tab=monthly");
@@ -210,14 +222,26 @@ export function MonthlyEmployeeDetailPage() {
     const latenessAuto = latenessDeductionAuto(detail.salary);
     const earlySignOutAuto = earlySignOutDeductionAuto(detail.salary);
     const absenceAuto = absenceDeductionAuto(detail.salary);
+    const latenessSaved = latenessDeductionEffective(detail.salary);
+    const earlySignOutSaved = earlySignOutDeductionEffective(detail.salary);
+    const absenceSaved = absenceDeductionEffective(detail.salary);
+    const bonusSaved = Number(detail.salary.adjustment_bonus ?? 0);
+    const deductionSaved = Number(detail.salary.adjustment_deduction ?? 0);
 
+    const baseFromSalary = Number(detail.salary.base_salary ?? detail.salary.base_salary_used ?? baseFromInput);
     const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
-    const b = parseMoneyInput(bonus) ?? 0;
-    const d = parseMoneyInput(deduction) ?? 0;
-    const latenessTotal = parseMoneyInput(latenessDeductionTotal) ?? latenessAuto;
-    const earlySignOutTotal = parseMoneyInput(earlySignOutDeductionTotal) ?? earlySignOutAuto;
-    const absenceTotal = parseMoneyInput(absenceDeductionTotal) ?? absenceAuto;
-    const baseUsed = baseOverride != null ? baseOverride : baseFromInput;
+    const b = bonus.trim() ? (parseMoneyInput(bonus) ?? bonusSaved) : bonusSaved;
+    const d = deduction.trim() ? (parseMoneyInput(deduction) ?? deductionSaved) : deductionSaved;
+    const latenessTotal = latenessDeductionTotal.trim()
+      ? (parseMoneyInput(latenessDeductionTotal) ?? latenessSaved)
+      : latenessSaved;
+    const earlySignOutTotal = earlySignOutDeductionTotal.trim()
+      ? (parseMoneyInput(earlySignOutDeductionTotal) ?? earlySignOutSaved)
+      : earlySignOutSaved;
+    const absenceTotal = absenceDeductionTotal.trim()
+      ? (parseMoneyInput(absenceDeductionTotal) ?? absenceSaved)
+      : absenceSaved;
+    const baseUsed = baseOverride != null ? baseOverride : baseFromSalary;
     const preview = computePayrollPreview({
       baseUsed,
       entriesBonus,
@@ -285,81 +309,107 @@ export function MonthlyEmployeeDetailPage() {
       toast.push("error", "Fix comma formatting in lateness deduction.");
       return;
     }
+    if (earlySignOutDeductionTotal.trim() && !isValidThousandsCommaNumber(earlySignOutDeductionTotal)) {
+      toast.push("error", "Fix comma formatting in early sign-out deduction.");
+      return;
+    }
     if (absenceDeductionTotal.trim() && !isValidThousandsCommaNumber(absenceDeductionTotal)) {
       toast.push("error", "Fix comma formatting in absence deduction.");
       return;
     }
 
     const empBase = baseSalary.trim() ? parseMoneyInput(baseSalary) : null;
-    const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
-    const b = bonus.trim() ? parseMoneyInput(bonus) : 0;
-    const d = deduction.trim() ? parseMoneyInput(deduction) : 0;
-    const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : latenessDeductionAuto(detail.salary);
-    const earlySignOutTotal = earlySignOutDeductionTotal.trim()
-      ? parseMoneyInput(earlySignOutDeductionTotal)
-      : earlySignOutDeductionAuto(detail.salary);
-    const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : absenceDeductionAuto(detail.salary);
+    const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : undefined;
+    const b = bonus.trim() ? parseMoneyInput(bonus) : undefined;
+    const d = deduction.trim() ? parseMoneyInput(deduction) : undefined;
+    const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : undefined;
+    const earlySignOutTotal = earlySignOutDeductionTotal.trim() ? parseMoneyInput(earlySignOutDeductionTotal) : undefined;
+    const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : undefined;
+    const note = adjNote.trim() || undefined;
+
     if (empBase !== null && (Number.isNaN(empBase) || empBase < 0)) {
       toast.push("error", "Enter a valid base salary (≥ 0).");
       return;
     }
-    if (baseOverride !== null && (Number.isNaN(baseOverride) || baseOverride < 0)) {
+    if (baseOverride !== undefined && (baseOverride === null || Number.isNaN(baseOverride) || baseOverride < 0)) {
       toast.push("error", "Enter a valid base salary (≥ 0).");
       return;
     }
-    if (b === null || Number.isNaN(b) || b < 0) {
+    if (b !== undefined && (b === null || Number.isNaN(b) || b < 0)) {
       toast.push("error", "Enter a valid bonus (≥ 0).");
       return;
     }
-    if (d === null || Number.isNaN(d) || d < 0) {
+    if (d !== undefined && (d === null || Number.isNaN(d) || d < 0)) {
       toast.push("error", "Enter a valid deduction (≥ 0).");
       return;
     }
-    if (latenessTotal === null || Number.isNaN(latenessTotal) || latenessTotal < 0) {
+    if (latenessTotal !== undefined && (latenessTotal === null || Number.isNaN(latenessTotal) || latenessTotal < 0)) {
       toast.push("error", "Enter a valid lateness deduction (≥ 0).");
       return;
     }
-    if (absenceTotal === null || Number.isNaN(absenceTotal) || absenceTotal < 0) {
+    if (absenceTotal !== undefined && (absenceTotal === null || Number.isNaN(absenceTotal) || absenceTotal < 0)) {
       toast.push("error", "Enter a valid absence deduction (≥ 0).");
       return;
     }
-    if (earlySignOutTotal === null || Number.isNaN(earlySignOutTotal) || earlySignOutTotal < 0) {
+    if (
+      earlySignOutTotal !== undefined &&
+      (earlySignOutTotal === null || Number.isNaN(earlySignOutTotal) || earlySignOutTotal < 0)
+    ) {
       toast.push("error", "Enter a valid early sign-out deduction (≥ 0).");
+      return;
+    }
+
+    const apiBase = Number(detail.base_salary ?? 0);
+    const desiredBase = empBase ?? apiBase;
+    const hasBaseSalaryEdit = Number.isFinite(desiredBase) && desiredBase >= 0 && desiredBase !== apiBase;
+    const hasPayrollEdits =
+      baseOverride !== undefined ||
+      b !== undefined ||
+      d !== undefined ||
+      latenessTotal !== undefined ||
+      earlySignOutTotal !== undefined ||
+      absenceTotal !== undefined ||
+      note !== undefined;
+
+    if (!hasBaseSalaryEdit && !hasPayrollEdits) {
+      toast.push("error", "Enter at least one adjustment to save.");
       return;
     }
 
     setSaving(true);
     try {
       let next = detail;
-      const apiBase = Number(detail.base_salary ?? 0);
-      const desiredBase = empBase ?? apiBase;
-      if (Number.isFinite(desiredBase) && desiredBase >= 0 && desiredBase !== apiBase) {
+      if (hasBaseSalaryEdit) {
         next = await employeesApi.update(detail.id, { base_salary: desiredBase }, { period_year: year, period_month: month });
       }
+      const adjustmentBody: Parameters<typeof employeesApi.savePayrollAdjustments>[1] = {
+        confirm_financial_edit: false
+      };
+      if (baseOverride !== undefined) adjustmentBody.period_base_salary = baseOverride;
+      if (b !== undefined) adjustmentBody.bonus = b;
+      if (d !== undefined) adjustmentBody.deduction = d;
+      if (latenessTotal !== undefined) adjustmentBody.lateness_deduction = latenessTotal;
+      if (earlySignOutTotal !== undefined) adjustmentBody.early_sign_out_deduction = earlySignOutTotal;
+      if (absenceTotal !== undefined) adjustmentBody.absence_deduction = absenceTotal;
+      if (note !== undefined) adjustmentBody.note = note;
+
       const updated = await runWithPaidConfirm((confirm) =>
         employeesApi.savePayrollAdjustments(
           next.id,
-          {
-            period_base_salary: baseOverride,
-            bonus: b,
-            deduction: d,
-            lateness_deduction: latenessTotal,
-            early_sign_out_deduction: earlySignOutTotal,
-            absence_deduction: absenceTotal,
-            note: adjNote.trim() || null,
-            confirm_financial_edit: confirm
-          },
+          { ...adjustmentBody, confirm_financial_edit: confirm },
           { period_year: year, period_month: month }
         )
       );
       setDetail(updated);
       setBaseSalary(String(updated.base_salary ?? desiredBase ?? ""));
-      setBonus(String(updated.salary.adjustment_bonus ?? b ?? 0));
-      setDeduction(String(updated.salary.adjustment_deduction ?? d ?? 0));
-      setLatenessDeductionTotal(String(latenessDeductionEffective(updated.salary)));
-      setAbsenceDeductionTotal(String(absenceDeductionEffective(updated.salary)));
-      setEarlySignOutDeductionTotal(String(earlySignOutDeductionEffective(updated.salary)));
-      setAdjNote(updated.salary.adjustment_note?.trim() ?? "");
+      const cleared = emptyPayrollAdjustmentFormState();
+      setPeriodBaseSalary(cleared.periodBaseSalary);
+      setBonus(cleared.bonus);
+      setDeduction(cleared.deduction);
+      setLatenessDeductionTotal(cleared.latenessDeductionTotal);
+      setAbsenceDeductionTotal(cleared.absenceDeductionTotal);
+      setEarlySignOutDeductionTotal(cleared.earlySignOutDeductionTotal);
+      setAdjNote(cleared.adjNote);
       toast.push("success", "Saved adjustments.");
     } catch (e) {
       toast.push("error", getErrorMessage(e));
