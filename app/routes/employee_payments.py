@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
@@ -33,9 +35,23 @@ from app.utils.contract_financials import (
 )
 
 router = APIRouter(prefix="/employee-payments", tags=["Employee Payments"])
+logger = logging.getLogger(__name__)
 
 # Unpaid payment transfers Admin may cancel before Finance confirms (mark-paid).
 _CANCELLABLE_UNPAID_PAYMENT_STATUSES = frozenset({"pending", "sent_to_finance", "approved_by_admin"})
+_DELETED_EMPLOYEE_LABEL = "Deleted User"
+
+
+def _monthly_employee_display_name(emp: models.Employee | None) -> str:
+    if emp is None or getattr(emp, "deleted_at", None) is not None:
+        return _DELETED_EMPLOYEE_LABEL
+    return str(emp.full_name)
+
+
+def _contract_employee_display_name(ce: models.ContractEmployee | None) -> str:
+    if ce is None:
+        return _DELETED_EMPLOYEE_LABEL
+    return str(ce.full_name)
 
 
 def _as_decimal(v) -> Decimal:
@@ -194,6 +210,64 @@ def _empty_payments_page(*, limit: int, offset: int) -> PendingEmployeePaymentsO
     )
 
 
+def _order_payment_transactions(q, sort: str):
+    """Apply list sort; call only after aggregate count/sum (PostgreSQL rejects ORDER BY with SUM)."""
+    if sort == "newest":
+        return q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
+    if sort == "amount_desc":
+        return q.order_by(models.EmployeeTransaction.amount.desc(), models.EmployeeTransaction.id.desc())
+    if sort == "amount_asc":
+        return q.order_by(models.EmployeeTransaction.amount.asc(), models.EmployeeTransaction.id.asc())
+    return q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
+
+
+def _employee_transaction_out(t: models.EmployeeTransaction) -> EmployeeTransactionOut:
+    """Serialize a transaction; coerce legacy/invalid status values instead of failing the list."""
+    try:
+        return EmployeeTransactionOut.model_validate(t)
+    except ValidationError:
+        raw_status = str(getattr(t, "status", None) or "pending")
+        allowed = {
+            "requested",
+            "approved_by_admin",
+            "sent_to_finance",
+            "resolved",
+            "pending",
+            "paid",
+            "cancelled",
+        }
+        safe_status = raw_status if raw_status in allowed else "pending"
+        raw_type = str(getattr(t, "txn_type", None) or "payment")
+        allowed_types = {"owed_increase", "owed_decrease", "payment", "reversal"}
+        safe_type = raw_type if raw_type in allowed_types else "payment"
+        logger.warning(
+            "employee_payments: invalid transaction fields on txn_id=%s status=%r txn_type=%r",
+            getattr(t, "id", None),
+            raw_status,
+            raw_type,
+            exc_info=True,
+        )
+        return EmployeeTransactionOut(
+            id=int(t.id),
+            created_at=t.created_at,
+            paid_at=getattr(t, "paid_at", None),
+            contract_job_id=getattr(t, "contract_job_id", None),
+            amount=_as_decimal(t.amount),
+            txn_type=safe_type,  # type: ignore[arg-type]
+            status=safe_status,  # type: ignore[arg-type]
+            processed_by_role=getattr(t, "processed_by_role", None),
+            processed_by=getattr(t, "processed_by", None),
+            initiated_by=getattr(t, "initiated_by", None),
+            note=getattr(t, "note", None),
+            receipt_url=getattr(t, "receipt_url", None),
+            running_balance=getattr(t, "running_balance", None),
+            reversal_of_id=getattr(t, "reversal_of_id", None),
+            cancelled_at=getattr(t, "cancelled_at", None),
+            cancelled_reason=getattr(t, "cancelled_reason", None),
+            allocations=None,
+        )
+
+
 def _fetch_transactions_by_ids(db: Session, txn_ids: list[int]) -> list[models.EmployeeTransaction]:
     if not txn_ids:
         return []
@@ -239,57 +313,67 @@ def _txn_to_items(
 
     items: list[PendingEmployeePaymentItem] = []
     for t in rows:
-        processed_by = None
-        if getattr(t, "processed_by_user", None) is not None:
-            email = getattr(t.processed_by_user, "email", None)
-            if email:
-                processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
-        setattr(t, "processed_by", processed_by)
+        try:
+            processed_by = None
+            if getattr(t, "processed_by_user", None) is not None:
+                email = getattr(t.processed_by_user, "email", None)
+                if email:
+                    processed_by = str(email).split("@")[0] if "@" in str(email) else str(email)
+            setattr(t, "processed_by", processed_by)
 
-        initiated_by: Optional[str] = None
-        if t.txn_type == "payment":
-            initiated_by = "employee" if int(t.id) in employee_initiated else "admin"
+            initiated_by: Optional[str] = None
+            if t.txn_type == "payment":
+                initiated_by = "employee" if int(t.id) in employee_initiated else "admin"
 
-        sent_to_finance_at = sent_at_map.get(int(t.id)) or getattr(t, "created_at", None)
-        notification_unread = bool(unread_txn_ids and int(t.id) in unread_txn_ids)
+            sent_to_finance_at = sent_at_map.get(int(t.id)) or getattr(t, "created_at", None)
+            notification_unread = bool(unread_txn_ids and int(t.id) in unread_txn_ids)
+            txn_out = _employee_transaction_out(t)
 
-        if t.contract_employee_id is not None:
-            ce = ce_map.get(int(t.contract_employee_id))
+            if t.contract_employee_id is not None:
+                ce = ce_map.get(int(t.contract_employee_id))
+                items.append(
+                    PendingEmployeePaymentItem(
+                        transaction=txn_out,
+                        employee_kind="contract",
+                        employee_id=int(t.contract_employee_id),
+                        employee_name=_contract_employee_display_name(ce),
+                        account_number=(ce.account_number if ce else None),
+                        phone=(ce.phone if ce else None),
+                        period_label=None,
+                        sent_to_finance_at=sent_to_finance_at,
+                        initiated_by=initiated_by,
+                        notification_unread=notification_unread,
+                    )
+                )
+                continue
+
+            emp = emp_map.get(int(t.employee_id or 0))
+            period_label: Optional[str] = None
+            if t.period_id:
+                p = period_map.get(int(t.period_id))
+                period_label = p.label if p else None
             items.append(
                 PendingEmployeePaymentItem(
-                    transaction=EmployeeTransactionOut.model_validate(t),
-                    employee_kind="contract",
-                    employee_id=int(t.contract_employee_id),
-                    employee_name=ce.full_name if ce else "Contract employee",
-                    account_number=(ce.account_number if ce else None),
-                    phone=(ce.phone if ce else None),
-                    period_label=None,
+                    transaction=txn_out,
+                    employee_kind="monthly",
+                    employee_id=int(t.employee_id or 0),
+                    employee_name=_monthly_employee_display_name(emp),
+                    account_number=(emp.account_number if emp else None),
+                    phone=(emp.phone if emp else None),
+                    period_label=period_label,
                     sent_to_finance_at=sent_to_finance_at,
                     initiated_by=initiated_by,
                     notification_unread=notification_unread,
                 )
             )
-            continue
-
-        emp = emp_map.get(int(t.employee_id or 0))
-        period_label: Optional[str] = None
-        if t.period_id:
-            p = period_map.get(int(t.period_id))
-            period_label = p.label if p else None
-        items.append(
-            PendingEmployeePaymentItem(
-                transaction=EmployeeTransactionOut.model_validate(t),
-                employee_kind="monthly",
-                employee_id=int(t.employee_id or 0),
-                employee_name=emp.full_name if emp else "Employee",
-                account_number=(emp.account_number if emp else None),
-                phone=(emp.phone if emp else None),
-                period_label=period_label,
-                sent_to_finance_at=sent_to_finance_at,
-                initiated_by=initiated_by,
-                notification_unread=notification_unread,
+        except Exception:
+            logger.exception(
+                "employee_payments: skipping payment list item txn_id=%s employee_id=%s contract_employee_id=%s contract_job_id=%s",
+                getattr(t, "id", None),
+                getattr(t, "employee_id", None),
+                getattr(t, "contract_employee_id", None),
+                getattr(t, "contract_job_id", None),
             )
-        )
     return items
 
 
@@ -340,15 +424,6 @@ def list_pending_payments(
     if q is None:
         return _empty_payments_page(limit=limit, offset=offset)
 
-    if sort == "newest":
-        q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
-    elif sort == "amount_desc":
-        q = q.order_by(models.EmployeeTransaction.amount.desc(), models.EmployeeTransaction.id.desc())
-    elif sort == "amount_asc":
-        q = q.order_by(models.EmployeeTransaction.amount.asc(), models.EmployeeTransaction.id.asc())
-    else:
-        q = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
-
     needs_python_filter = overpaid is not None or prioritize_employee_requests
 
     if overpaid is not None and kind != "monthly":
@@ -372,6 +447,7 @@ def list_pending_payments(
         total_count = q.count()
         total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
         total = _as_decimal(total_amt_raw)
+        q = _order_payment_transactions(q, sort)
         page_rows = (
             q.options(joinedload(models.EmployeeTransaction.processed_by_user))
             .offset(offset)
@@ -541,14 +617,8 @@ def list_payment_history(
     total_amt_raw = q.with_entities(func.coalesce(func.sum(models.EmployeeTransaction.amount), 0)).scalar()
     total_amt = _as_decimal(total_amt_raw)
 
-    if sort == "oldest":
-        q = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
-    elif sort == "amount_desc":
-        q = q.order_by(models.EmployeeTransaction.amount.desc(), models.EmployeeTransaction.id.desc())
-    elif sort == "amount_asc":
-        q = q.order_by(models.EmployeeTransaction.amount.asc(), models.EmployeeTransaction.id.asc())
-    else:
-        q = q.order_by(models.EmployeeTransaction.created_at.desc(), models.EmployeeTransaction.id.desc())
+    history_sort = sort if sort in ("oldest", "newest", "amount_desc", "amount_asc") else "newest"
+    q = _order_payment_transactions(q, history_sort)
 
     page_rows = (
         q.options(joinedload(models.EmployeeTransaction.processed_by_user))
