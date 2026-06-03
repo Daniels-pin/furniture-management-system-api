@@ -289,6 +289,28 @@ def _try_auto_mark_period_month_paid(db: Session, period_id: int, actor_user=Non
     return True
 
 
+def _mark_unpaid_roster_employees_paid(
+    db: Session,
+    period: models.SalaryPeriod,
+    actor_user,
+    paid_at: Optional[datetime] = None,
+) -> int:
+    """Mark unpaid roster employees paid for this period (payment flags only; no salary recalc)."""
+    paid_at = paid_at or now_utc_naive()
+    updated = 0
+    for eid in _employee_ids_for_period(db, period):
+        row = _get_or_create_payroll_row(db, eid, period.id)
+        if row.payment_status == "paid":
+            continue
+        row.payment_status = "paid"
+        row.payment_date = paid_at
+        row.updated_at = paid_at
+        row.updated_by_id = getattr(actor_user, "id", None)
+        updated += 1
+    db.flush()
+    return updated
+
+
 def ensure_payroll_periods_current(db: Session) -> Optional[models.SalaryPeriod]:
     """Ensure payroll months exist from first hire through today; archive the outgoing active month."""
     first = _first_operational_payroll_month(db)
@@ -2474,14 +2496,20 @@ def payroll_periods_nav(
 @router.post("/periods/mark-month-paid", response_model=SalaryPeriodOut)
 def mark_period_month_paid(
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["admin", "finance"])),
+    current_user=Depends(require_role(["admin"])),
     period_year: int = Query(..., ge=2000, le=2100),
     period_month: int = Query(..., ge=1, le=12),
 ):
-    """Mark an entire payroll month as paid (manual completion)."""
+    """Mark an entire payroll month as paid and sync unpaid roster employees in that month only."""
     period = get_or_create_period(db, period_year, period_month)
     if period.month_payment_status == MONTH_PAYMENT_PAID:
         raise HTTPException(status_code=400, detail="This month is already marked paid.")
+    paid_count, total = _period_payment_counts(db, period)
+    if total == 0:
+        raise HTTPException(status_code=400, detail="This payroll month has no employees.")
+    if paid_count >= total:
+        raise HTTPException(status_code=400, detail="All employees in this month are already paid.")
+    employees_updated = _mark_unpaid_roster_employees_paid(db, period, current_user)
     period.month_payment_status = MONTH_PAYMENT_PAID
     period.month_paid_at = now_utc_naive()
     period.month_paid_by_id = current_user.id
@@ -2490,7 +2518,13 @@ def mark_period_month_paid(
         "payroll_mark_month_paid",
         period.id,
         current_user,
-        {"period_id": period.id, "year": period.year, "month": period.month, "label": period.label},
+        {
+            "period_id": period.id,
+            "year": period.year,
+            "month": period.month,
+            "label": period.label,
+            "employees_updated": employees_updated,
+        },
     )
     db.commit()
     db.refresh(period)

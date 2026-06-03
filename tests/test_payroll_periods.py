@@ -84,11 +84,95 @@ def test_mark_month_paid_endpoint(client, admin_token, db_session):
         headers=_auth(admin_token),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["month_payment_status"] == "paid"
+    body = r.json()
+    assert body["month_payment_status"] == "paid"
+    assert body["paid_employee_count"] == body["total_employee_count"]
+    assert body["total_employee_count"] >= 1
+
+    detail = client.get(
+        f"/employees/{emp_id}",
+        params={"period_year": ap["year"], "period_month": ap["month"]},
+        headers=_auth(admin_token),
+    ).json()
+    assert detail["payment"]["status"] == "paid"
 
     nav2 = client.get("/employees/periods", headers=_auth(admin_token)).json()
     period = next(p for p in nav2["periods"] if p["year"] == ap["year"] and p["month"] == ap["month"])
     assert period["month_payment_status"] == "paid"
+    assert period["paid_employee_count"] == period["total_employee_count"]
+
+
+def test_mark_month_paid_admin_only(client, admin_token, showroom_token):
+    _create_employee(client, admin_token)
+    ap = client.get("/employees/periods", headers=_auth(admin_token)).json()["active_period"]
+    r = client.post(
+        "/employees/periods/mark-month-paid",
+        params={"period_year": ap["year"], "period_month": ap["month"]},
+        headers=_auth(showroom_token),
+    )
+    assert r.status_code == 403, r.text
+
+
+def test_mark_month_paid_only_affects_selected_archived_month(client, admin_token, db_session):
+    emp_a = _create_employee(client, admin_token)
+    nav = client.get("/employees/periods", headers=_auth(admin_token)).json()
+    archived = nav["active_period"]
+    archived_params = {"period_year": archived["year"], "period_month": archived["month"]}
+
+    advance = client.post("/employees/periods/start-next-month", headers=_auth(admin_token))
+    assert advance.status_code == 200, advance.text
+    emp_b = _create_employee(client, admin_token)
+    assert emp_b != emp_a
+
+    current = client.get("/employees/periods", headers=_auth(admin_token)).json()["active_period"]
+
+    mark = client.post(
+        "/employees/periods/mark-month-paid",
+        params=archived_params,
+        headers=_auth(admin_token),
+    )
+    assert mark.status_code == 200, mark.text
+
+    archived_detail = client.get(f"/employees/{emp_a}", params=archived_params, headers=_auth(admin_token)).json()
+    assert archived_detail["payment"]["status"] == "paid"
+
+    current_detail = client.get(
+        f"/employees/{emp_b}",
+        params={"period_year": current["year"], "period_month": current["month"]},
+        headers=_auth(admin_token),
+    ).json()
+    assert current_detail["payment"]["status"] == "unpaid"
+
+    nav2 = client.get("/employees/periods", headers=_auth(admin_token)).json()
+    archived_row = next(
+        p for p in nav2["periods"] if p["year"] == archived["year"] and p["month"] == archived["month"]
+    )
+    current_row = next(
+        p for p in nav2["periods"] if p["year"] == current["year"] and p["month"] == current["month"]
+    )
+    assert archived_row["month_payment_status"] == "paid"
+    assert current_row["month_payment_status"] == "pending_payment"
+
+
+def test_mark_month_paid_audit_log_records_employees_updated(client, admin_token, db_session):
+    _create_employee(client, admin_token)
+    ap = client.get("/employees/periods", headers=_auth(admin_token)).json()["active_period"]
+    r = client.post(
+        "/employees/periods/mark-month-paid",
+        params={"period_year": ap["year"], "period_month": ap["month"]},
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+
+    log = (
+        db_session.query(models.ActionLog)
+        .filter_by(action="payroll_mark_month_paid", entity_type="employee_payroll")
+        .order_by(models.ActionLog.id.desc())
+        .first()
+    )
+    assert log is not None
+    assert log.meta.get("employees_updated", 0) >= 1
+    assert log.meta.get("label") == ap["label"]
 
 
 def test_auto_mark_month_when_all_employees_paid(client, admin_token, db_session):

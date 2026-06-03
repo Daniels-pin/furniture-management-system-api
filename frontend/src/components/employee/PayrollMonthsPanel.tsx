@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
+import { ConfirmModal } from "../ui/ConfirmModal";
 import { employeePaymentsApi, employeesApi } from "../../services/endpoints";
 import { getErrorMessage } from "../../services/api";
+import { useAuth } from "../../state/auth";
 import type { EmployeeListItem, PayrollPeriodsNav, PayrollSummary, SalaryPeriod } from "../../types/api";
+import { formatLagosDateTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
 import { getPayrollSummaryTotals, hasPayrollSummaryData } from "../../utils/payroll";
 
@@ -15,8 +18,21 @@ function periodKey(year: number, month: number) {
   return `${year}-${month}`;
 }
 
+function isPeriodFullyPaid(period: SalaryPeriod) {
+  return (
+    period.month_payment_status === "paid" ||
+    (period.total_employee_count > 0 && period.paid_employee_count >= period.total_employee_count)
+  );
+}
+
+function canMarkMonthPaid(period: SalaryPeriod) {
+  if (isPeriodFullyPaid(period)) return false;
+  if (period.total_employee_count === 0) return false;
+  return period.paid_employee_count < period.total_employee_count;
+}
+
 function MonthPaymentBadge({ period }: { period: SalaryPeriod }) {
-  const paid = period.month_payment_status === "paid";
+  const paid = isPeriodFullyPaid(period);
   return (
     <span
       className={
@@ -28,6 +44,17 @@ function MonthPaymentBadge({ period }: { period: SalaryPeriod }) {
       {paid ? "Paid" : "Pending Payment"}
     </span>
   );
+}
+
+function formatPaidOnDate(iso: string | null | undefined) {
+  return formatLagosDateTime(iso, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: undefined,
+    minute: undefined,
+    hour12: undefined
+  });
 }
 
 type MonthBundle = {
@@ -101,6 +128,8 @@ type Props = {
 };
 
 export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
+  const auth = useAuth();
+  const isAdmin = auth.role === "admin";
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -116,6 +145,7 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
   const [bulkSending, setBulkSending] = useState(false);
   const [exportingKey, setExportingKey] = useState<string | null>(null);
   const [markingKey, setMarkingKey] = useState<string | null>(null);
+  const [confirmMarkPeriod, setConfirmMarkPeriod] = useState<SalaryPeriod | null>(null);
   const [employeeNavOpenKeys, setEmployeeNavOpenKeys] = useState<Set<string>>(() => new Set());
   const collapseTimersRef = useRef<Record<string, number>>({});
 
@@ -311,6 +341,7 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
     try {
       await employeesApi.markMonthPaid({ period_year: period.year, period_month: period.month });
       onToast("success", `${period.label} marked paid.`);
+      setConfirmMarkPeriod(null);
       await onNavRefresh();
       await loadMonth(period.year, period.month, monthlySearchDebounced);
     } catch (e) {
@@ -322,8 +353,38 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
 
   const activeKey = nav.active_period ? periodKey(nav.active_period.year, nav.active_period.month) : null;
 
+  const confirmMarkKey = confirmMarkPeriod ? periodKey(confirmMarkPeriod.year, confirmMarkPeriod.month) : null;
+
   return (
     <div className="space-y-4">
+      <ConfirmModal
+        open={confirmMarkPeriod !== null}
+        title="Mark Month Paid"
+        message={
+          confirmMarkPeriod ? (
+            <>
+              This will mark all unpaid monthly employees in <strong>{confirmMarkPeriod.label}</strong> as paid.
+              <br />
+              <br />
+              This action affects only this payroll month and will not modify salary calculations.
+            </>
+          ) : (
+            ""
+          )
+        }
+        confirmLabel="Confirm"
+        confirmVariant="primary"
+        busy={confirmMarkKey !== null && markingKey === confirmMarkKey}
+        onClose={() => {
+          if (markingKey) return;
+          setConfirmMarkPeriod(null);
+        }}
+        onConfirm={() => {
+          if (!confirmMarkPeriod) return;
+          void handleMarkMonthPaid(confirmMarkPeriod);
+        }}
+      />
+
       <div className="rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-black/70">
         Payroll months advance automatically on the 1st of each calendar month. Historical months stay archived with
         attendance and payment records intact.
@@ -357,39 +418,61 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
           const isActive = period.is_active;
           const hasSummary = hasPayrollSummaryData(bundle?.summary);
           const showInitialLoad = mounted && (!bundle || (bundle.loading && !hasSummary));
+          const fullyPaid = isPeriodFullyPaid(period);
+          const showMarkMonthPaid = isAdmin && canMarkMonthPaid(period);
 
           return (
             <Card key={key} className="!p-0 overflow-hidden">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left hover:bg-black/[0.02] transition-colors"
-                onClick={() => toggleMonth(period)}
-                aria-expanded={expanded}
-              >
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="text-base font-bold tracking-tight">{period.label}</span>
-                  {isActive ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
-                      Active
-                    </span>
-                  ) : null}
-                  <MonthPaymentBadge period={period} />
-                  {period.total_employee_count > 0 ? (
-                    <span className="text-xs font-semibold text-black/50">
-                      {period.paid_employee_count}/{period.total_employee_count} paid
-                    </span>
-                  ) : null}
-                </div>
-                <span
-                  className={[
-                    "shrink-0 text-black/40 transition-transform duration-300 ease-out",
-                    expanded ? "rotate-0" : "-rotate-90"
-                  ].join(" ")}
-                  aria-hidden
+              <div className="flex w-full items-center gap-2 px-4 py-4">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left hover:bg-black/[0.02] transition-colors rounded-lg -mx-1 px-1"
+                  onClick={() => toggleMonth(period)}
+                  aria-expanded={expanded}
                 >
-                  ▾
-                </span>
-              </button>
+                  <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="text-base font-bold tracking-tight">{period.label}</span>
+                      {isActive ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                          Active
+                        </span>
+                      ) : null}
+                      <MonthPaymentBadge period={period} />
+                    </div>
+                    {period.total_employee_count > 0 ? (
+                      <span className="text-xs font-semibold text-black/50">
+                        {period.paid_employee_count}/{period.total_employee_count}{" "}
+                        {fullyPaid ? "Employees Paid" : "Paid"}
+                      </span>
+                    ) : null}
+                    {fullyPaid && period.month_paid_at ? (
+                      <span className="text-xs font-semibold text-black/45">
+                        Paid on: {formatPaidOnDate(period.month_paid_at)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <span
+                    className={[
+                      "shrink-0 text-black/40 transition-transform duration-300 ease-out",
+                      expanded ? "rotate-0" : "-rotate-90"
+                    ].join(" ")}
+                    aria-hidden
+                  >
+                    ▾
+                  </span>
+                </button>
+                {showMarkMonthPaid ? (
+                  <Button
+                    variant="secondary"
+                    className="shrink-0"
+                    isLoading={markingKey === key}
+                    onClick={() => setConfirmMarkPeriod(period)}
+                  >
+                    Mark Month Paid
+                  </Button>
+                ) : null}
+              </div>
 
               {mounted ? (
                 <div
@@ -408,15 +491,6 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
                       ) : null}
 
                       <div className="flex flex-wrap items-center gap-2">
-                        {period.month_payment_status !== "paid" ? (
-                          <Button
-                            variant="secondary"
-                            isLoading={markingKey === key}
-                            onClick={() => void handleMarkMonthPaid(period)}
-                          >
-                            Mark Month Paid
-                          </Button>
-                        ) : null}
                         <Button
                           variant="secondary"
                           isLoading={exportingKey === key}
