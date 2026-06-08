@@ -7,47 +7,57 @@ import { contractJobsApi, customersApi, employeePaymentsApi, inventoryApi, notif
 import { useInvalidateNotifications, useNotificationsList, useUnreadNotifications } from "../../query/hooks";
 import { StatusBadge } from "../ui/StatusBadge";
 import { APP_NAME } from "../../config/app";
-import { env } from "../../env";
 import { usePageHeaderState } from "./pageHeader";
 import type { NotificationItem } from "../../types/api";
 import { isContractJobNotification, isNewJobNotification } from "../../utils/jobNotifications";
 import { formatLagosDateTime } from "../../utils/datetime";
+import { AppTopHeader } from "./AppTopHeader";
+import { NavIcon } from "./navIcons";
 
 function NavItem({
   to,
   label,
+  navKey,
   onNavigate,
   variant = "sidebar",
   badgeCount
 }: {
   to: string;
   label: string;
+  navKey: string;
   onNavigate?: () => void;
   variant?: "sidebar" | "drawer";
   badgeCount?: number;
 }) {
   const sizing =
     variant === "drawer"
-      ? "px-3 py-3.5 text-base"
-      : "px-3 py-2 text-sm md:px-2.5 md:py-2 md:text-xs lg:px-3 lg:py-2.5 lg:text-sm";
+      ? "px-3 py-3 text-[15px]"
+      : "px-2.5 py-1.5 text-[13px]";
   return (
     <NavLink
       to={to}
       onClick={onNavigate}
       className={({ isActive }) =>
         [
-          "flex items-center justify-between gap-2 rounded-xl font-semibold transition",
+          "flex items-center justify-between gap-2 rounded-lg font-medium transition duration-150",
           sizing,
-          isActive ? "bg-black text-white" : "text-black/70 hover:bg-black/5 hover:text-black"
+          isActive
+            ? "bg-[var(--text-primary)] text-[var(--surface)]"
+            : "text-[var(--text-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
         ].join(" ")
       }
     >
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="flex min-w-0 items-center gap-2.5">
+        <span className={variant === "drawer" ? "opacity-90" : "opacity-80"}>
+          <NavIcon navKey={navKey} />
+        </span>
+        <span className="truncate">{label}</span>
+      </span>
       {typeof badgeCount === "number" ? (
         <span
           className={[
             "shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-            badgeCount > 0 ? "bg-blue-600 text-white" : "bg-black/10 text-black/70"
+            badgeCount > 0 ? "bg-[var(--text-primary)] text-[var(--surface)]" : "bg-black/[0.06] text-[var(--text-muted)]"
           ].join(" ")}
           aria-label={`${label} count: ${badgeCount}`}
         >
@@ -72,7 +82,7 @@ type NavGroupModel = { key: NavGroupKey; label: string; items: NavItemModel[] };
 const NAV_GROUPS: NavGroupModel[] = [
   {
     key: "core",
-    label: "Core",
+    label: "",
     items: [
       {
         key: "dashboard",
@@ -83,7 +93,7 @@ const NAV_GROUPS: NavGroupModel[] = [
   },
   {
     key: "operations",
-    label: "Operations",
+    label: "Sales",
     items: [
       { key: "orders", label: "Orders", to: "/orders", roles: ["admin", "showroom", "factory", "finance"] },
       { key: "quotation", label: "Quotation", to: "/quotations", roles: ["admin", "showroom", "finance"] },
@@ -145,9 +155,10 @@ const NAV_GROUPS: NavGroupModel[] = [
 ];
 
 function SectionDivider({ label }: { label: string }) {
+  if (!label.trim()) return <div className="mb-0.5" />;
   return (
-    <div className="my-2.5 border-t border-black/10 pt-2.5">
-      <div className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-black/45">{label}</div>
+    <div className="mb-1 mt-4 px-2 first:mt-2">
+      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-faint)]">{label}</div>
     </div>
   );
 }
@@ -189,6 +200,7 @@ function AppNavLinks({
             {visibleItems.map((item) => (
               <NavItem
                 key={item.key}
+                navKey={item.key}
                 variant={variant}
                 onNavigate={onNavigate}
                 to={resolveTo(item)}
@@ -501,7 +513,7 @@ export function AppLayout() {
   const subtitle = pageHeader?.subtitle ?? null;
 
   return (
-    <div className="min-h-dvh overflow-x-hidden bg-white">
+    <div className="min-h-dvh overflow-x-hidden bg-[#fafaf9] dark:bg-[#0f0f0f]">
       {auth.isImpersonation ? (
         <div
           className="border-b border-amber-700/20 bg-amber-100 px-4 py-2.5 text-center text-sm font-semibold text-amber-950"
@@ -530,8 +542,8 @@ export function AppLayout() {
         </div>
       ) : null}
 
-      <div className="mx-auto w-full max-w-7xl min-w-0 px-4 py-4 md:py-6">
-        <header className="sticky top-0 z-30 -mx-4 mb-4 flex min-h-[3.25rem] items-center gap-2 border-b border-black/10 bg-white/95 px-4 py-2.5 backdrop-blur-md supports-[backdrop-filter]:bg-white/85 md:hidden">
+      <div className="mx-auto w-full max-w-[90rem] min-w-0 px-4 py-4 md:py-6">
+        <header className="sticky top-0 z-30 -mx-4 mb-4 flex min-h-[3.25rem] items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/95 px-4 py-2.5 backdrop-blur-md supports-[backdrop-filter]:bg-[var(--surface)]/85 md:hidden">
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-black/10 bg-white text-black shadow-soft hover:bg-black/[0.02]"
@@ -556,23 +568,21 @@ export function AppLayout() {
           <div className="w-11 shrink-0" aria-hidden />
         </header>
 
-        <div className="grid min-w-0 grid-cols-1 gap-6 md:grid-cols-[minmax(0,220px)_1fr] lg:grid-cols-[240px_1fr]">
-          <aside className="hidden min-w-0 overflow-hidden rounded-2xl border border-black/10 bg-white p-3 shadow-soft md:block md:rounded-2xl lg:rounded-3xl lg:p-4">
-            <div className="px-2 pb-3 lg:pb-4">
-              <div className="min-w-0">
-                <NavLink
-                  to={auth.role === "finance" ? "/finance" : "/dashboard"}
-                  className="block w-full min-w-0 break-words text-sm font-bold leading-snug tracking-tight text-black hover:opacity-80 lg:text-base"
-                >
-                  {APP_NAME}
-                </NavLink>
-              </div>
+        <div className="grid min-w-0 grid-cols-1 gap-8 md:grid-cols-[minmax(0,168px)_1fr] lg:grid-cols-[176px_1fr]">
+          <aside className="hidden min-w-0 flex-col md:sticky md:top-6 md:flex md:self-start md:py-1 md:min-h-[calc(100dvh-4rem)]">
+            <div className="mb-5 px-1">
+              <NavLink
+                to={auth.role === "finance" ? "/finance" : "/dashboard"}
+                className="block min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-faint)] hover:text-[var(--text-primary)]"
+              >
+                {APP_NAME}
+              </NavLink>
             </div>
 
             <AppNavLinks variant="sidebar" jobsNavBadgeCount={jobsNavBadgeCount} />
 
-            <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-3 lg:mt-6">
-              <div className="text-xs font-semibold lg:text-sm">
+            <div className="mt-auto px-1 pt-6">
+              <div className="text-[12px] font-medium text-[var(--text-primary)]">
                 {auth.role === "admin"
                   ? "Admin"
                   : auth.role === "finance"
@@ -585,8 +595,7 @@ export function AppLayout() {
                           ? "Staff"
                           : "Showroom"}
               </div>
-              <div className="mt-0.5 text-[11px] font-semibold text-black/60 lg:text-xs">
-                Role:{" "}
+              <div className="mt-0.5 text-[11px] text-[var(--text-faint)]">
                 {auth.role === "admin"
                   ? "Admin"
                   : auth.role === "finance"
@@ -600,7 +609,7 @@ export function AppLayout() {
                           : "Showroom"}
               </div>
               <button
-                className="mt-3 min-h-11 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold hover:bg-black/5"
+                className="mt-3 w-full rounded-lg px-2 py-2 text-left text-[12px] font-medium text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                 onClick={() => auth.logout()}
               >
                 Log out
@@ -609,35 +618,18 @@ export function AppLayout() {
           </aside>
 
           <main className="min-w-0">
-            <div
-              className={[
-                "mb-4 flex flex-col gap-3 border-b border-black/10 pb-4 md:flex-row md:items-center",
-                hideTopRightActions ? "md:justify-start" : "md:justify-between"
-              ].join(" ")}
-            >
-              <div className="flex min-w-0 items-start gap-3">
-                <img
-                  src={env.logoUrl || "/logo.png"}
-                  alt={`${APP_NAME} logo`}
-                  className="h-auto max-h-20 w-auto max-w-full shrink-0 object-contain sm:max-h-[84px] md:max-h-[92px]"
-                  draggable={false}
-                  loading="eager"
-                />
-                <div className="min-w-0">
-                  <div className="text-2xl font-bold tracking-tight">{title}</div>
-                  {subtitle ? <div className="mt-1 text-sm text-black/60">{subtitle}</div> : null}
-                  {auth.username && title === "Dashboard" ? (
-                    <div className="mt-1 text-sm font-semibold text-black/70">Signed in as {auth.username}</div>
-                  ) : null}
-                </div>
-              </div>
-              {!hideTopRightActions ? (
+            <AppTopHeader
+              title={title}
+              subtitle={subtitle}
+              hideActions={hideTopRightActions}
+              actions={
+                hideTopRightActions ? null : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <div className="relative" ref={notifWrapRef}>
                     {!auth.token ? null : (
                       <button
                         type="button"
-                        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                        className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                         aria-label={`Notifications${notifPage?.unread_count ? `: ${notifPage.unread_count}` : ""}`}
                         onClick={() => void toggleNotifications()}
                       >
@@ -657,7 +649,7 @@ export function AppLayout() {
                         <span
                           className={[
                             "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                            (notifPage?.unread_count ?? 0) > 0 ? "bg-indigo-600 text-white" : "bg-black/10 text-black/70"
+                            (notifPage?.unread_count ?? 0) > 0 ? "bg-[var(--text-primary)] text-[var(--surface)]" : "bg-black/[0.06] text-[var(--text-muted)]"
                           ].join(" ")}
                         >
                           {notifPage?.unread_count ?? 0}
@@ -729,7 +721,7 @@ export function AppLayout() {
                   {auth.role === "contract_employee" ? (
                     <button
                       type="button"
-                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                       aria-label={`Assigned jobs${assignedJobsCount ? `: ${assignedJobsCount}` : ""}`}
                       onClick={() => {
                         nav("/contract?tab=jobs");
@@ -743,7 +735,7 @@ export function AppLayout() {
                       <span
                         className={[
                           "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                          assignedJobsCount > 0 ? "bg-blue-600 text-white" : "bg-black/10 text-black/70"
+                          assignedJobsCount > 0 ? "bg-[var(--text-primary)] text-[var(--surface)]" : "bg-black/[0.06] text-[var(--text-muted)]"
                         ].join(" ")}
                       >
                         {assignedJobsCount}
@@ -754,7 +746,7 @@ export function AppLayout() {
                   {auth.role === "admin" || auth.role === "finance" ? (
                     <button
                       type="button"
-                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                       aria-label={`Pending payment requests${pendingMoneyCount ? `: ${pendingMoneyCount}` : ""}`}
                       onClick={() => navigateForMoneyRequests()}
                     >
@@ -764,7 +756,7 @@ export function AppLayout() {
                       <span
                         className={[
                           "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                          pendingMoneyCount > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                          pendingMoneyCount > 0 ? "bg-[#16a34a] text-white" : "bg-black/[0.06] text-[var(--text-muted)]"
                         ].join(" ")}
                       >
                         {pendingMoneyCount}
@@ -776,7 +768,7 @@ export function AppLayout() {
                     {auth.role === "factory" || auth.role === "finance" ? null : (
                       <>
                         <button
-                          className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                          className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                           aria-label="Birthdays today"
                           type="button"
                           onClick={() => void toggleBirthdays()}
@@ -786,7 +778,7 @@ export function AppLayout() {
                             <path d="M6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
                             <path d="M5 10h14" stroke="currentColor" strokeWidth="1.6" />
                           </svg>
-                          <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] font-bold text-black/70">
+                          <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-black/[0.06] px-1.5 py-0.5 text-[11px] font-bold text-[var(--text-muted)]">
                             {Array.isArray(birthdays) ? birthdays.length : 0}
                           </span>
                         </button>
@@ -841,7 +833,7 @@ export function AppLayout() {
                   {auth.role === "admin" || auth.role === "factory" ? (
                     <button
                       type="button"
-                      className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                      className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                       aria-label={`Low stock materials${lowStockCount ? `: ${lowStockCount}` : ""}`}
                       onClick={() => nav("/inventory")}
                     >
@@ -853,7 +845,7 @@ export function AppLayout() {
                       <span
                         className={[
                           "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                          lowStockCount > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
+                          lowStockCount > 0 ? "bg-[#d97706] text-white" : "bg-black/[0.06] text-[var(--text-muted)]"
                         ].join(" ")}
                       >
                         {lowStockCount}
@@ -864,7 +856,7 @@ export function AppLayout() {
                   <div className="relative" ref={wrapRef}>
                     {auth.role === "finance" ? null : (
                       <button
-                        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-black/10 bg-white px-3 py-2 shadow-soft hover:bg-black/[0.02]"
+                        className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
                         aria-label="Due soon alerts"
                         type="button"
                         onClick={() => void toggleBell()}
@@ -881,7 +873,7 @@ export function AppLayout() {
                         <span
                           className={[
                             "absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold",
-                            showRed ? "bg-red-600 text-white" : "bg-black/10 text-black/70"
+                            showRed ? "bg-[#dc2626] text-white" : "bg-black/[0.06] text-[var(--text-muted)]"
                           ].join(" ")}
                         >
                           {dueSoon}
@@ -937,8 +929,9 @@ export function AppLayout() {
                     ) : null}
                   </div>
                 </div>
-              ) : null}
-            </div>
+                )
+              }
+            />
             <Outlet />
           </main>
         </div>

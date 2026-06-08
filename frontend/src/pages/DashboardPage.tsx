@@ -1,31 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card } from "../components/ui/Card";
-import { dashboardApi } from "../services/endpoints";
+import { auditApi, dashboardApi, inventoryApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import { StatusBadge } from "../components/ui/StatusBadge";
 import { useAuth } from "../state/auth";
-import { formatMoney } from "../utils/money";
 import { APP_NAME } from "../config/app";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmployeeAttendanceCard";
 import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
+import { DashboardKpiGrid } from "../components/dashboard/DashboardKpiGrid";
+import { DashboardFinancialSummary } from "../components/dashboard/DashboardFinancialSummary";
+import { DashboardQuickActions } from "../components/dashboard/DashboardQuickActions";
+import { DashboardRevenueChart } from "../components/dashboard/DashboardRevenueChart";
+import { DashboardOrdersStatusChart } from "../components/dashboard/DashboardOrdersStatusChart";
+import { DashboardUpcomingOrders } from "../components/dashboard/DashboardUpcomingOrders";
+import { DashboardRecentOrders } from "../components/dashboard/DashboardRecentOrders";
+import { DashboardRecentActivity } from "../components/dashboard/DashboardRecentActivity";
+import { DashboardLowStockAlerts } from "../components/dashboard/DashboardLowStockAlerts";
+import type { AuditLogItem } from "../types/api";
+import type { InventoryMaterial } from "../types/api";
 
 export function DashboardPage() {
   const toast = useToast();
   const auth = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardApi.get>> | null>(null);
+  const [activity, setActivity] = useState<AuditLogItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [lowStock, setLowStock] = useState<InventoryMaterial[]>([]);
+  const [lowStockLoading, setLowStockLoading] = useState(false);
 
   const attendanceEnabled = auth.role !== "admin";
   const attendance = useMonthlyEmployeeAttendance({ enabled: attendanceEnabled });
 
   usePageHeader({
     title: "Dashboard",
-    subtitle: `Business insights for ${APP_NAME}.`
+    subtitle: "Overview of orders, revenue, and operations."
   });
 
-  const items = useMemo(() => {
+  const kpiItems = useMemo(() => {
     const rows = [
       { label: "Total Orders", value: data?.total_orders ?? 0 },
       { label: "Pending Orders", value: data?.pending_orders ?? 0 },
@@ -37,6 +49,8 @@ export function DashboardPage() {
     }
     return rows;
   }, [data, auth.role]);
+
+  const kpiCols = auth.role === "factory" ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-5";
 
   useEffect(() => {
     let alive = true;
@@ -57,8 +71,66 @@ export function DashboardPage() {
     };
   }, [toast]);
 
+  useEffect(() => {
+    if (auth.role !== "admin") {
+      setActivity([]);
+      return;
+    }
+    let alive = true;
+    setActivityLoading(true);
+    void auditApi
+      .list({ limit: 8, offset: 0 })
+      .then((res) => {
+        if (!alive) return;
+        setActivity(Array.isArray(res.items) ? res.items : []);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setActivity([]);
+      })
+      .finally(() => {
+        if (alive) setActivityLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [auth.role]);
+
+  useEffect(() => {
+    if (auth.role !== "admin" && auth.role !== "factory") {
+      setLowStock([]);
+      return;
+    }
+    let alive = true;
+    setLowStockLoading(true);
+    void (async () => {
+      try {
+        const lowRes = await inventoryApi.list({ limit: 50, stock_level: "low" });
+        if (!alive) return;
+        let items = Array.isArray(lowRes.items) ? lowRes.items : [];
+        if (items.length === 0) {
+          const medRes = await inventoryApi.list({ limit: 50, stock_level: "medium" });
+          if (!alive) return;
+          items = Array.isArray(medRes.items) ? medRes.items : [];
+        }
+        setLowStock(items);
+      } catch {
+        if (!alive) return;
+        setLowStock([]);
+      } finally {
+        if (alive) setLowStockLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [auth.role]);
+
+  const showLowStock = auth.role === "admin" || auth.role === "factory";
+  const showActivity = auth.role === "admin";
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       {attendanceEnabled ? (
         <MonthlyEmployeeAttendanceCard
           empLoading={attendance.empLoading}
@@ -86,124 +158,48 @@ export function DashboardPage() {
         />
       ) : null}
 
-      <div
-        className={[
-          "grid grid-cols-1 gap-4",
-          auth.role === "factory" ? "md:grid-cols-4" : "md:grid-cols-5"
-        ].join(" ")}
-      >
-        {items.map((x) => (
-          <Card key={x.label}>
-            <div className="text-sm font-semibold text-black/60">{x.label}</div>
-            <div className="mt-2 text-4xl font-bold tracking-tight">
-              {isLoading ? <span className="text-black/20">—</span> : x.value}
-            </div>
-          </Card>
-        ))}
-      </div>
+      <DashboardQuickActions role={auth.role} />
+
+      <DashboardKpiGrid items={kpiItems} isLoading={isLoading} columnClass={kpiCols} />
 
       {auth.role === "admin" ? (
-        <Card>
-          <div className="text-sm font-semibold">Financial summary</div>
-          <div className="mt-1 text-sm text-black/60">Visible to admin only.</div>
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-              <div className="text-xs font-semibold text-black/60">Total Revenue</div>
-              <div className="mt-1 text-sm font-semibold">{formatMoney(data?.total_revenue)}</div>
-            </div>
-            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-              <div className="text-xs font-semibold text-black/60">Deposits made</div>
-              <div className="mt-1 text-sm font-semibold">{formatMoney(data?.amount_paid)}</div>
-            </div>
-            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-              <div className="text-xs font-semibold text-black/60">Outstanding Balance</div>
-              <div className="mt-1 text-sm font-semibold">{formatMoney(data?.outstanding_balance)}</div>
-            </div>
-          </div>
-        </Card>
+        <DashboardFinancialSummary data={data} isLoading={isLoading} />
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <div className="text-sm font-semibold">Upcoming Due Orders</div>
-          <div className="mt-1 text-sm text-black/60">Due within 14 days (max 5).</div>
-          <div className="mt-4 space-y-2">
-            {isLoading ? (
-              <div className="text-sm text-black/60">Loading…</div>
-            ) : !data || data.upcoming_due_orders.length === 0 ? (
-              <div className="text-sm text-black/60">No upcoming due orders</div>
-            ) : (
-              data.upcoming_due_orders.map((o, idx) => (
-                <div
-                  key={o.order_id}
-                  className="flex items-center justify-between rounded-2xl border border-black/10 bg-white px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold">
-                      #{String(idx + 1).padStart(3, "0")}
-                      <span className="ml-2 text-black/60">(Order {o.order_id})</span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-black/60">
-                      Due: {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
-                      {o.customer?.name ? ` • ${o.customer.name}` : ""}
-                    </div>
-                  </div>
-                  <StatusBadge status={o.status} />
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <div className="text-sm font-semibold">Recent Orders</div>
-          <div className="mt-1 text-sm text-black/60">Last 5 orders.</div>
-          <div className="mt-4 min-w-0 overflow-x-touch">
-            <table className="w-full min-w-[520px] text-left text-sm">
-              <thead className="text-black/60">
-                <tr className="border-b border-black/10">
-                  <th className="py-3 pr-4 font-semibold">Order</th>
-                  <th className="py-3 pr-4 font-semibold">Status</th>
-                  <th className="py-3 pr-0 font-semibold">Due date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  <tr>
-                    <td className="py-6 text-black/60" colSpan={3}>
-                      Loading…
-                    </td>
-                  </tr>
-                ) : !data || data.recent_orders.length === 0 ? (
-                  <tr>
-                    <td className="py-6 text-black/60" colSpan={3}>
-                      No recent orders.
-                    </td>
-                  </tr>
-                ) : (
-                  data.recent_orders.map((o, idx) => (
-                    <tr key={o.order_id} className="border-b border-black/5">
-                      <td className="py-3 pr-4 font-semibold">
-                        #{String(idx + 1).padStart(3, "0")}
-                        <span className="ml-2 text-black/60">(Order {o.order_id})</span>
-                        {o.customer?.name ? (
-                          <span className="ml-2 text-black/50">• {o.customer.name}</span>
-                        ) : null}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <StatusBadge status={o.status} />
-                      </td>
-                      <td className="py-3 pr-0 text-black/70">
-                        {o.due_date ? new Date(o.due_date).toLocaleDateString() : "—"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:gap-8">
+        <DashboardRevenueChart isLoading={isLoading} />
+        <DashboardOrdersStatusChart
+          pending={data?.pending_orders ?? 0}
+          inProgress={data?.in_progress_orders ?? 0}
+          completed={data?.completed_orders ?? 0}
+          isLoading={isLoading}
+        />
       </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:gap-8">
+        <DashboardUpcomingOrders orders={data?.upcoming_due_orders ?? []} isLoading={isLoading} />
+        <DashboardRecentOrders orders={data?.recent_orders ?? []} isLoading={isLoading} />
+      </div>
+
+      {showActivity || showLowStock ? (
+        <div
+          className={[
+            "grid grid-cols-1 gap-6 xl:gap-8",
+            showActivity && showLowStock ? "xl:grid-cols-2" : ""
+          ].join(" ")}
+        >
+          {showActivity ? (
+            <DashboardRecentActivity
+              items={activity}
+              isLoading={activityLoading}
+              showViewAll
+            />
+          ) : null}
+          {showLowStock ? (
+            <DashboardLowStockAlerts materials={lowStock} isLoading={lowStockLoading} />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
