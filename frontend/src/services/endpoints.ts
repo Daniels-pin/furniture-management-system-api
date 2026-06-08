@@ -1128,6 +1128,53 @@ export const employeesApi = {
     const { data } = await api.get<EmployeeTransaction[]>(`/employees/${employeeId}/transactions`, { params });
     return data;
   },
+  async createPayrollAdjustment(
+    employeeId: number,
+    body: {
+      adjustment_type: "bonus" | "deduction" | "increment";
+      amount: number;
+      reason: string;
+      notes?: string | null;
+      confirm_financial_edit?: boolean;
+    },
+    period: { period_year: number; period_month: number }
+  ) {
+    const { data } = await api.post<EmployeeDetail>(
+      `/employees/${employeeId}/payroll-adjustment-transactions`,
+      body,
+      { params: period }
+    );
+    return data;
+  },
+  async updatePayrollAdjustment(
+    employeeId: number,
+    adjustmentId: number,
+    body: {
+      amount?: number;
+      reason?: string;
+      notes?: string | null;
+      confirm_financial_edit?: boolean;
+    },
+    period: { period_year: number; period_month: number }
+  ) {
+    const { data } = await api.patch<EmployeeDetail>(
+      `/employees/${employeeId}/payroll-adjustment-transactions/${adjustmentId}`,
+      body,
+      { params: period }
+    );
+    return data;
+  },
+  async deletePayrollAdjustment(
+    employeeId: number,
+    adjustmentId: number,
+    period: { period_year: number; period_month: number; confirm_financial_edit?: boolean }
+  ) {
+    const { data } = await api.delete<EmployeeDetail>(
+      `/employees/${employeeId}/payroll-adjustment-transactions/${adjustmentId}`,
+      { params: period }
+    );
+    return data;
+  },
   async savePayrollAdjustments(
     employeeId: number,
     body: {

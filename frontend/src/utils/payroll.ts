@@ -38,24 +38,31 @@ export function isAbsenceDeductionAdjusted(salary: EmployeeSalaryBreakdown): boo
 }
 
 export function computePayrollPreview(input: {
-  baseUsed: number;
-  entriesBonus: number;
-  entriesPenalties: number;
-  adjustmentBonus: number;
-  adjustmentDeduction: number;
+  baseSalary: number;
+  incrementsTotal?: number;
+  bonusesTotal: number;
+  deductionsTotal: number;
   latenessDeduction: number;
   earlySignOutDeduction?: number;
   absenceDeduction: number;
-}): { finalPayable: number; totalDeductions: number } {
-  const bonuses = input.entriesBonus + input.adjustmentBonus;
-  const penalties = input.entriesPenalties + input.adjustmentDeduction;
+}): { finalPayable: number; totalDeductions: number; baseUsed: number } {
+  const baseUsed = input.baseSalary + (input.incrementsTotal ?? 0);
   const totalDeductions =
     input.latenessDeduction +
     (input.earlySignOutDeduction ?? 0) +
     input.absenceDeduction +
-    penalties;
-  const finalPayable = input.baseUsed + bonuses - totalDeductions;
-  return { finalPayable, totalDeductions };
+    input.deductionsTotal;
+  const finalPayable = baseUsed + input.bonusesTotal - totalDeductions;
+  return { finalPayable, totalDeductions, baseUsed };
+}
+
+export function sumAdjustmentsByType(
+  adjustments: Array<{ adjustment_type: string; amount: string | number }> | undefined,
+  type: "bonus" | "deduction" | "increment"
+): number {
+  return (adjustments ?? [])
+    .filter((a) => a.adjustment_type === type)
+    .reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
 }
 
 /** Month-level payroll totals for summary cards (base + bonuses − deductions = payable). */

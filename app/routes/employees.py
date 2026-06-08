@@ -47,7 +47,10 @@ from app.schemas import (
     EmployeeOut,
     EmployeePaymentOut,
     EmployeePaymentUpdate,
+    EmployeePayrollAdjustmentCreate,
     EmployeePayrollAdjustmentIn,
+    EmployeePayrollAdjustmentOut,
+    EmployeePayrollAdjustmentUpdate,
     EmployeePenaltyCreate,
     EmployeePenaltyOut,
     EmployeeSalaryBreakdown,
@@ -170,6 +173,7 @@ def _employee_ids_with_period_footprint(db: Session, period_id: int) -> set[int]
         models.EmployeeAbsenceEntry,
         models.EmployeePenalty,
         models.EmployeeBonus,
+        models.EmployeePayrollAdjustment,
         models.EmployeePeriodPayroll,
     ):
         for (eid,) in db.query(model.employee_id).filter(model.period_id == period_id).distinct():
@@ -1583,6 +1587,8 @@ def _period_ids_with_any_data(db: Session) -> set[int]:
         s.add(int(pid))
     for (pid,) in db.query(models.EmployeeBonus.period_id).distinct():
         s.add(int(pid))
+    for (pid,) in db.query(models.EmployeePayrollAdjustment.period_id).distinct():
+        s.add(int(pid))
     for (pid,) in db.query(models.EmployeePeriodPayroll.period_id).distinct():
         s.add(int(pid))
     for (pid,) in db.query(models.EmployeeEarlySignOutEntry.period_id).distinct():
@@ -1673,6 +1679,121 @@ def _assert_financial_mutable(db: Session, employee_id: int, period_id: int, con
         )
 
 
+def _adjustment_type_totals(
+    adjustments: list[models.EmployeePayrollAdjustment],
+) -> tuple[Decimal, Decimal, Decimal]:
+    bonus = Decimal("0")
+    deduction = Decimal("0")
+    increment = Decimal("0")
+    for adj in adjustments:
+        if adj.voided_at is not None:
+            continue
+        amt = Decimal(str(adj.amount))
+        if adj.adjustment_type == "bonus":
+            bonus += amt
+        elif adj.adjustment_type == "deduction":
+            deduction += amt
+        elif adj.adjustment_type == "increment":
+            increment += amt
+    return bonus, deduction, increment
+
+
+def _load_adjustments_for_period(
+    db: Session,
+    employee_id: int,
+    period_id: int,
+    *,
+    include_voided: bool = False,
+) -> list[models.EmployeePayrollAdjustment]:
+    q = (
+        db.query(models.EmployeePayrollAdjustment)
+        .options(joinedload(models.EmployeePayrollAdjustment.created_by))
+        .options(joinedload(models.EmployeePayrollAdjustment.updated_by))
+        .filter_by(employee_id=employee_id, period_id=period_id)
+    )
+    if not include_voided:
+        q = q.filter(models.EmployeePayrollAdjustment.voided_at.is_(None))
+    return q.order_by(
+        models.EmployeePayrollAdjustment.created_at.desc(),
+        models.EmployeePayrollAdjustment.id.desc(),
+    ).all()
+
+
+def _user_display_name(user: Optional[models.User]) -> Optional[str]:
+    if user is None:
+        return None
+    name = (getattr(user, "name", None) or "").strip()
+    if name:
+        return name
+    return getattr(user, "email", None)
+
+
+def _adjustment_to_out(adj: models.EmployeePayrollAdjustment) -> EmployeePayrollAdjustmentOut:
+    return EmployeePayrollAdjustmentOut(
+        id=adj.id,
+        adjustment_type=adj.adjustment_type,  # type: ignore[arg-type]
+        amount=adj.amount,
+        reason=adj.reason,
+        notes=adj.notes,
+        created_at=adj.created_at,
+        created_by_name=_user_display_name(adj.created_by),
+        updated_at=adj.updated_at,
+        updated_by_name=_user_display_name(adj.updated_by),
+    )
+
+
+def _create_payroll_adjustment(
+    db: Session,
+    *,
+    employee_id: int,
+    period_id: int,
+    adjustment_type: str,
+    amount: Decimal,
+    reason: str,
+    notes: Optional[str],
+    actor: models.User,
+) -> models.EmployeePayrollAdjustment:
+    row = models.EmployeePayrollAdjustment(
+        employee_id=employee_id,
+        period_id=period_id,
+        adjustment_type=adjustment_type,
+        amount=amount,
+        reason=reason.strip(),
+        notes=(notes or "").strip() or None,
+        created_by_id=actor.id,
+    )
+    db.add(row)
+    return row
+
+
+def _adjustment_totals_for_employee_period(
+    db: Session,
+    employee_id: int,
+    period_id: int,
+) -> tuple[Decimal, Decimal, Decimal]:
+    adjustments = _load_adjustments_for_period(db, employee_id, period_id)
+    return _adjustment_type_totals(adjustments)
+
+
+def _projected_salary_after_adjustment_change(
+    db: Session,
+    emp: models.Employee,
+    period: models.SalaryPeriod,
+    adjustments: list[models.EmployeePayrollAdjustment],
+    payroll: Optional[models.EmployeePeriodPayroll],
+) -> EmployeeSalaryBreakdown:
+    bon, ded, inc = _adjustment_type_totals(adjustments)
+    return _payroll_salary_for_employee(
+        db,
+        emp,
+        period,
+        ded,
+        bon,
+        increments_total=inc,
+        payroll=payroll,
+    )
+
+
 def _payroll_breakdown_kwargs(payroll: Optional[models.EmployeePeriodPayroll]) -> dict:
     if payroll is None:
         return {
@@ -1687,8 +1808,8 @@ def _payroll_breakdown_kwargs(payroll: Optional[models.EmployeePeriodPayroll]) -
         }
     return {
         "period_base_salary": getattr(payroll, "period_base_salary", None),
-        "adjustment_bonus": Decimal(str(getattr(payroll, "adjustment_bonus", 0) or 0)),
-        "adjustment_deduction": Decimal(str(getattr(payroll, "adjustment_deduction", 0) or 0)),
+        "adjustment_bonus": Decimal("0"),
+        "adjustment_deduction": Decimal("0"),
         "adjustment_late_penalty": Decimal(str(getattr(payroll, "adjustment_late_penalty", 0) or 0)),
         "lateness_deduction_override": (
             Decimal(str(payroll.lateness_deduction_override))
@@ -1731,6 +1852,7 @@ def _salary_breakdown(
     absence_deduction_override: Optional[Decimal] = None,
     early_sign_out_deduction_override: Optional[Decimal] = None,
     adjustment_note: Optional[str] = None,
+    increments_total: Decimal = Decimal("0"),
     apply_attendance_deductions: bool = True,
 ) -> EmployeeSalaryBreakdown:
     if apply_attendance_deductions:
@@ -1745,11 +1867,13 @@ def _salary_breakdown(
         lateness_ded = Decimal("0")
         early_ded = Decimal("0")
         absence_ded = Decimal("0")
-    base_used = period_base_salary if period_base_salary is not None else base
+    base_used = base + (increments_total or Decimal("0"))
+    if period_base_salary is not None:
+        base_used = period_base_salary
     penalties_entries_total = penalties_total
     bonuses_entries_total = bonuses_total
-    bonuses_total_all = bonuses_entries_total + (adjustment_bonus or Decimal("0"))
-    penalties_total_all = penalties_entries_total + (adjustment_deduction or Decimal("0")) + (adjustment_late_penalty or Decimal("0"))
+    bonuses_total_all = bonuses_entries_total
+    penalties_total_all = penalties_entries_total + (adjustment_late_penalty or Decimal("0"))
     total_ded = lateness_ded + early_ded + absence_ded + penalties_total_all
     final = base_used - lateness_ded - early_ded - absence_ded - penalties_total_all + bonuses_total_all
     return EmployeeSalaryBreakdown(
@@ -1774,8 +1898,9 @@ def _salary_breakdown(
         attendance_deductions_eligible=apply_attendance_deductions,
         penalties_entries_total=penalties_entries_total,
         bonuses_entries_total=bonuses_entries_total,
-        adjustment_bonus=(adjustment_bonus or Decimal("0")),
-        adjustment_deduction=(adjustment_deduction or Decimal("0")),
+        increments_total=(increments_total or Decimal("0")),
+        adjustment_bonus=Decimal("0"),
+        adjustment_deduction=Decimal("0"),
         adjustment_late_penalty=(adjustment_late_penalty or Decimal("0")),
         penalties_total=penalties_total_all,
         bonuses_total=bonuses_total_all,
@@ -1800,6 +1925,7 @@ def _payroll_salary_for_employee(
     penalties_total: Decimal,
     bonuses_total: Decimal,
     *,
+    increments_total: Decimal = Decimal("0"),
     lateness_extra: int = 0,
     payroll: Optional[models.EmployeePeriodPayroll] = None,
     skip_absence_sync: bool = False,
@@ -1824,6 +1950,7 @@ def _payroll_salary_for_employee(
         early_sign_out_rate=early_rate,
         absence_rate=abs_rate,
         apply_attendance_deductions=apply_att,
+        increments_total=increments_total,
         **_payroll_breakdown_kwargs(payroll),
     )
 
@@ -2100,6 +2227,7 @@ class _PayrollListContext:
     absence_map: dict[int, int]
     pen_map: dict[int, Decimal]
     bon_map: dict[int, Decimal]
+    inc_map: dict[int, Decimal]
     payroll_map: dict[int, models.EmployeePeriodPayroll]
     _paid: dict[int, bool] = field(default_factory=dict)
     _apply_att: dict[int, bool] = field(default_factory=dict)
@@ -2121,7 +2249,7 @@ class _PayrollListContext:
         search: str = "",
         payment_status: Optional[str] = None,
     ) -> _PayrollListContext:
-        lateness_map, absence_map, pen_map, bon_map = _aggregates_for_period(db, period.id)
+        lateness_map, absence_map, pen_map, bon_map, inc_map = _aggregates_for_period(db, period.id)
         payroll_map = _payroll_map_for_period(db, period.id)
         emps = _employees_for_period(db, period)
         s = (search or "").strip()
@@ -2145,6 +2273,7 @@ class _PayrollListContext:
             absence_map=absence_map,
             pen_map=pen_map,
             bon_map=bon_map,
+            inc_map=inc_map,
             payroll_map=payroll_map,
         )
         ctx._init_employee_caches()
@@ -2256,6 +2385,7 @@ class _PayrollListContext:
         penalties_total: Decimal,
         bonuses_total: Decimal,
         payroll: Optional[models.EmployeePeriodPayroll],
+        increments_total: Decimal = Decimal("0"),
     ) -> EmployeeSalaryBreakdown:
         base = emp.base_salary if emp.base_salary is not None else Decimal("0")
         apply_att = self._apply_att.get(emp.id, False)
@@ -2265,6 +2395,7 @@ class _PayrollListContext:
                 0,
                 penalties_total,
                 bonuses_total,
+                increments_total=increments_total,
                 apply_attendance_deductions=False,
                 **_payroll_breakdown_kwargs(payroll),
             )
@@ -2284,6 +2415,7 @@ class _PayrollListContext:
             lateness_rate=late_rate,
             early_sign_out_rate=early_rate,
             absence_rate=abs_rate,
+            increments_total=increments_total,
             apply_attendance_deductions=True,
             **_payroll_breakdown_kwargs(payroll),
         )
@@ -2351,9 +2483,9 @@ def _employee_to_out(
         u = db.query(models.User).filter(models.User.id == emp.user_id).first()
         if u:
             linked_username = u.email
-    pen = sum((p.amount for p in penalties), Decimal("0"))
-    bon = sum((b.amount for b in bonuses), Decimal("0"))
-    salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+    adjustments = _load_adjustments_for_period(db, emp.id, period.id)
+    bon, pen, inc = _adjustment_type_totals(adjustments)
+    salary = _payroll_salary_for_employee(db, emp, period, pen, bon, increments_total=inc, payroll=payroll)
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -2380,6 +2512,7 @@ def _employee_to_out(
         lateness_entries=[EmployeeLatenessEntryOut.model_validate(x) for x in lateness],
         penalties=[EmployeePenaltyOut.model_validate(x) for x in penalties],
         bonuses=[EmployeeBonusOut.model_validate(x) for x in bonuses],
+        payroll_adjustments=[_adjustment_to_out(a) for a in adjustments],
         salary=salary,
     )
 
@@ -2392,7 +2525,13 @@ def _list_item(
     payroll: Optional[models.EmployeePeriodPayroll],
 ) -> EmployeeListItemOut:
     base = emp.base_salary if emp.base_salary is not None else Decimal("0")
-    salary = ctx.salary_for(emp, penalties_total, bonuses_total, payroll)
+    salary = ctx.salary_for(
+        emp,
+        penalties_total,
+        bonuses_total,
+        payroll,
+        ctx.inc_map.get(emp.id, Decimal("0")),
+    )
     pay = EmployeePaymentOut(
         status=(payroll.payment_status if payroll else "unpaid"),
         payment_date=payroll.payment_date if payroll else None,
@@ -2442,27 +2581,35 @@ def _aggregates_for_period(
         .all()
     )
     absence_map = {int(eid): int(c) for eid, c in absence_rows}
-    pen_rows = (
-        db.query(models.EmployeePenalty.employee_id, func.coalesce(func.sum(models.EmployeePenalty.amount), 0))
-        .filter(
-            models.EmployeePenalty.period_id == period_id,
-            models.EmployeePenalty.voided_at.is_(None),
+    adj_rows = (
+        db.query(
+            models.EmployeePayrollAdjustment.employee_id,
+            models.EmployeePayrollAdjustment.adjustment_type,
+            func.coalesce(func.sum(models.EmployeePayrollAdjustment.amount), 0),
         )
-        .group_by(models.EmployeePenalty.employee_id)
+        .filter(
+            models.EmployeePayrollAdjustment.period_id == period_id,
+            models.EmployeePayrollAdjustment.voided_at.is_(None),
+        )
+        .group_by(
+            models.EmployeePayrollAdjustment.employee_id,
+            models.EmployeePayrollAdjustment.adjustment_type,
+        )
         .all()
     )
-    pen_map = {int(eid): Decimal(str(total)) for eid, total in pen_rows}
-    bon_rows = (
-        db.query(models.EmployeeBonus.employee_id, func.coalesce(func.sum(models.EmployeeBonus.amount), 0))
-        .filter(
-            models.EmployeeBonus.period_id == period_id,
-            models.EmployeeBonus.voided_at.is_(None),
-        )
-        .group_by(models.EmployeeBonus.employee_id)
-        .all()
-    )
-    bon_map = {int(eid): Decimal(str(total)) for eid, total in bon_rows}
-    return lateness_map, absence_map, pen_map, bon_map
+    pen_map: dict[int, Decimal] = {}
+    bon_map: dict[int, Decimal] = {}
+    inc_map: dict[int, Decimal] = {}
+    for eid, adj_type, total in adj_rows:
+        eid_int = int(eid)
+        total_dec = Decimal(str(total))
+        if adj_type == "bonus":
+            bon_map[eid_int] = total_dec
+        elif adj_type == "deduction":
+            pen_map[eid_int] = total_dec
+        elif adj_type == "increment":
+            inc_map[eid_int] = total_dec
+    return lateness_map, absence_map, pen_map, bon_map, inc_map
 
 
 def _payroll_map_for_period(db: Session, period_id: int) -> dict[int, models.EmployeePeriodPayroll]:
@@ -2593,7 +2740,8 @@ def payroll_summary(
     for e in ctx.emps:
         pt = ctx.pen_map.get(e.id, Decimal("0"))
         bt = ctx.bon_map.get(e.id, Decimal("0"))
-        br = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id))
+        it = ctx.inc_map.get(e.id, Decimal("0"))
+        br = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id), it)
         total_base += br.base_salary_used
         total_lat += br.lateness_deduction
         total_early += br.early_sign_out_deduction
@@ -2673,7 +2821,8 @@ def export_employees_csv(
     for e in emps:
         pt = ctx.pen_map.get(e.id, Decimal("0"))
         bt = ctx.bon_map.get(e.id, Decimal("0"))
-        s = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id))
+        it = ctx.inc_map.get(e.id, Decimal("0"))
+        s = ctx.salary_for(e, pt, bt, ctx.payroll_map.get(e.id), it)
         pr = ctx.payroll_map.get(e.id)
         w.writerow(
             [
@@ -2757,10 +2906,11 @@ def list_my_employee_transactions(
     if period_id is not None:
         period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
         if period:
-            lateness, penalties, bonuses, payroll = _load_rows_for_period(db, emp.id, period)
-            pen = sum((p.amount for p in penalties), Decimal("0"))
-            bon = sum((b.amount for b in bonuses), Decimal("0"))
-            salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+            _, _, _, payroll = _load_rows_for_period(db, emp.id, period)
+            bon, pen, inc = _adjustment_totals_for_employee_period(db, emp.id, period.id)
+            salary = _payroll_salary_for_employee(
+                db, emp, period, pen, bon, increments_total=inc, payroll=payroll
+            )
             due = salary.final_payable
             paid_total = Decimal("0")
             for o in outs:
@@ -3627,13 +3777,15 @@ def patch_employee_period_payment(
         raise HTTPException(status_code=404, detail="Employee not found")
     period = get_or_create_period(db, period_year, period_month)
     _assert_period_is_editable(period)
-    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    _, _, _, payroll = _load_rows_for_period(db, employee_id, period)
+    bon, pen, inc = _adjustment_totals_for_employee_period(db, employee_id, period.id)
     salary = _payroll_salary_for_employee(
         db,
         emp,
         period,
-        sum((p.amount for p in penalties), Decimal("0")),
-        sum((b.amount for b in bonuses), Decimal("0")),
+        pen,
+        bon,
+        increments_total=inc,
         payroll=payroll,
     )
     _validate_breakdown(salary)
@@ -3705,12 +3857,51 @@ def patch_employee_payroll_adjustments(
     auto_early = _early_sign_out_deduction_sum_for_payroll(db, emp, period.id)
     auto_absence = _absence_deduction_sum_for_payroll(db, emp, period)
 
+    adjustments = _load_adjustments_for_period(db, employee_id, period.id)
+    note_text = (body.note or "").strip() or None
+
+    if body.bonus is not None and body.bonus > 0:
+        adjustments.append(
+            _create_payroll_adjustment(
+                db,
+                employee_id=employee_id,
+                period_id=period.id,
+                adjustment_type="bonus",
+                amount=body.bonus,
+                reason=note_text or "Payroll bonus",
+                notes=note_text,
+                actor=current_user,
+            )
+        )
+    if body.deduction is not None and body.deduction > 0:
+        adjustments.append(
+            _create_payroll_adjustment(
+                db,
+                employee_id=employee_id,
+                period_id=period.id,
+                adjustment_type="deduction",
+                amount=body.deduction,
+                reason=note_text or "Payroll deduction",
+                notes=note_text,
+                actor=current_user,
+            )
+        )
     if body.period_base_salary is not None:
-        payroll.period_base_salary = body.period_base_salary
-    if body.bonus is not None:
-        payroll.adjustment_bonus = body.bonus
-    if body.deduction is not None:
-        payroll.adjustment_deduction = body.deduction
+        emp_base = emp.base_salary if emp.base_salary is not None else Decimal("0")
+        inc_delta = body.period_base_salary - emp_base
+        if inc_delta > 0:
+            adjustments.append(
+                _create_payroll_adjustment(
+                    db,
+                    employee_id=employee_id,
+                    period_id=period.id,
+                    adjustment_type="increment",
+                    amount=inc_delta,
+                    reason=note_text or "Salary increment",
+                    notes=note_text,
+                    actor=current_user,
+                )
+            )
     if body.lateness_deduction is not None:
         payroll.lateness_deduction_override = (
             body.lateness_deduction if body.lateness_deduction != auto_lateness else None
@@ -3735,9 +3926,7 @@ def patch_employee_payroll_adjustments(
     payroll.updated_by_id = current_user.id
     emp.updated_at = now_utc_naive()
 
-    pen_entries = sum((p.amount for p in penalties), Decimal("0"))
-    bon_entries = sum((b.amount for b in bonuses), Decimal("0"))
-    projected = _payroll_salary_for_employee(db, emp, period, pen_entries, bon_entries, payroll=payroll)
+    projected = _projected_salary_after_adjustment_change(db, emp, period, adjustments, payroll)
     _validate_breakdown(projected)
 
     _log_payroll(
@@ -3749,9 +3938,6 @@ def patch_employee_payroll_adjustments(
             "employee_id": employee_id,
             "period_id": period.id,
             "period_label": period.label,
-            "period_base_salary": str(payroll.period_base_salary) if payroll.period_base_salary is not None else None,
-            "bonus": str(payroll.adjustment_bonus or 0),
-            "deduction": str(payroll.adjustment_deduction or 0),
             "late_penalty": str(payroll.adjustment_late_penalty or 0),
             "lateness_deduction_override": (
                 str(payroll.lateness_deduction_override)
@@ -3766,6 +3952,177 @@ def patch_employee_payroll_adjustments(
         },
     )
 
+    db.commit()
+    db.refresh(emp)
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.post("/{employee_id}/payroll-adjustment-transactions", response_model=EmployeeOut)
+def create_payroll_adjustment_transaction(
+    employee_id: int,
+    body: EmployeePayrollAdjustmentCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    period = get_or_create_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
+
+    payroll = _get_or_create_payroll_row(db, employee_id, period.id)
+    adjustments = _load_adjustments_for_period(db, employee_id, period.id)
+    adjustments.append(
+        _create_payroll_adjustment(
+            db,
+            employee_id=employee_id,
+            period_id=period.id,
+            adjustment_type=body.adjustment_type,
+            amount=body.amount,
+            reason=body.reason,
+            notes=body.notes,
+            actor=current_user,
+        )
+    )
+    projected = _projected_salary_after_adjustment_change(db, emp, period, adjustments, payroll)
+    _validate_breakdown(projected)
+
+    emp.updated_at = now_utc_naive()
+    db.flush()
+    _log_payroll(
+        db,
+        "employee_payroll_adjustment_create",
+        adjustments[-1].id,
+        current_user,
+        {
+            "employee_id": employee_id,
+            "period_id": period.id,
+            "adjustment_type": body.adjustment_type,
+            "amount": str(body.amount),
+        },
+    )
+    db.commit()
+    db.refresh(emp)
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.patch("/{employee_id}/payroll-adjustment-transactions/{adjustment_id}", response_model=EmployeeOut)
+def update_payroll_adjustment_transaction(
+    employee_id: int,
+    adjustment_id: int,
+    body: EmployeePayrollAdjustmentUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    period = get_or_create_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
+
+    row = (
+        db.query(models.EmployeePayrollAdjustment)
+        .filter(
+            models.EmployeePayrollAdjustment.id == adjustment_id,
+            models.EmployeePayrollAdjustment.employee_id == employee_id,
+            models.EmployeePayrollAdjustment.period_id == period.id,
+            models.EmployeePayrollAdjustment.voided_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Adjustment not found")
+
+    if body.amount is not None:
+        row.amount = body.amount
+    if body.reason is not None:
+        row.reason = body.reason.strip()
+    if body.notes is not None:
+        row.notes = body.notes.strip() or None
+    row.updated_at = now_utc_naive()
+    row.updated_by_id = current_user.id
+    emp.updated_at = now_utc_naive()
+
+    payroll = _get_or_create_payroll_row(db, employee_id, period.id)
+    adjustments = _load_adjustments_for_period(db, employee_id, period.id)
+    projected = _projected_salary_after_adjustment_change(db, emp, period, adjustments, payroll)
+    _validate_breakdown(projected)
+
+    _log_payroll(
+        db,
+        "employee_payroll_adjustment_update",
+        row.id,
+        current_user,
+        {"employee_id": employee_id, "period_id": period.id},
+    )
+    db.commit()
+    db.refresh(emp)
+    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
+    return _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
+
+
+@router.delete("/{employee_id}/payroll-adjustment-transactions/{adjustment_id}", response_model=EmployeeOut)
+def delete_payroll_adjustment_transaction(
+    employee_id: int,
+    adjustment_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    confirm_financial_edit: bool = Query(False),
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+):
+    emp = (
+        db.query(models.Employee)
+        .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
+        .first()
+    )
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    period = get_or_create_period(db, period_year, period_month)
+    _assert_period_is_editable(period)
+    _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
+
+    row = (
+        db.query(models.EmployeePayrollAdjustment)
+        .filter(
+            models.EmployeePayrollAdjustment.id == adjustment_id,
+            models.EmployeePayrollAdjustment.employee_id == employee_id,
+            models.EmployeePayrollAdjustment.period_id == period.id,
+            models.EmployeePayrollAdjustment.voided_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Adjustment not found")
+
+    row.voided_at = now_utc_naive()
+    row.voided_by_id = current_user.id
+    row.void_reason = "void_via_delete_endpoint"
+    emp.updated_at = now_utc_naive()
+    log_financial_action(
+        db,
+        action="payroll_adjustment_void",
+        entity_type="employee_payroll_adjustment",
+        entity_id=row.id,
+        actor_user=current_user,
+        meta={"employee_id": employee_id, "period_id": period.id, "adjustment_type": row.adjustment_type},
+    )
     db.commit()
     db.refresh(emp)
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
@@ -3861,21 +4218,23 @@ def add_lateness_entry(
     _assert_period_is_editable(period)
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
-    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    pen = sum((p.amount for p in penalties), Decimal("0"))
-    bon = sum((b.amount for b in bonuses), Decimal("0"))
+    _, _, _, payroll = _load_rows_for_period(db, employee_id, period)
+    bon, pen, inc = _adjustment_totals_for_employee_period(db, employee_id, period.id)
     loc = None
     if emp.work_location_id is not None:
         loc = db.query(models.CompanyLocation).filter(models.CompanyLocation.id == emp.work_location_id).first()
     late_fee = _location_late_fee(loc)
     apply_att = _attendance_deductions_apply(db, emp, period.id)
-    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+    projected = _payroll_salary_for_employee(
+        db, emp, period, pen, bon, increments_total=inc, payroll=payroll
+    )
     if apply_att:
         projected = _salary_breakdown(
             emp.base_salary if emp.base_salary is not None else Decimal("0"),
             _lateness_count_for_payroll(db, emp, period.id) + 1,
             pen,
             bon,
+            increments_total=inc,
             lateness_auto=_lateness_deduction_sum_for_payroll(db, emp, period.id) + late_fee,
             early_sign_out_count=_early_sign_out_count_for_payroll(db, emp, period.id),
             early_sign_out_auto=_early_sign_out_deduction_sum_for_payroll(db, emp, period.id),
@@ -4022,24 +4381,34 @@ def add_penalty(
     _assert_period_is_editable(period)
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
-    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    pen = sum((p.amount for p in penalties), Decimal("0")) + body.amount
-    bon = sum((b.amount for b in bonuses), Decimal("0"))
-    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+    payroll = _get_or_create_payroll_row(db, employee_id, period.id)
+    adjustments = _load_adjustments_for_period(db, employee_id, period.id)
+    adjustments.append(
+        _create_payroll_adjustment(
+            db,
+            employee_id=employee_id,
+            period_id=period.id,
+            adjustment_type="deduction",
+            amount=body.amount,
+            reason=body.description.strip(),
+            notes=None,
+            actor=current_user,
+        )
+    )
+    projected = _projected_salary_after_adjustment_change(db, emp, period, adjustments, payroll)
     _validate_breakdown(projected)
 
-    row = models.EmployeePenalty(
-        employee_id=employee_id,
-        period_id=period.id,
-        description=body.description.strip(),
-        amount=body.amount,
-    )
-    db.add(row)
     emp.updated_at = now_utc_naive()
     db.flush()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     out = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
-    _log_payroll(db, "employee_penalty_add", row.id, current_user, {"employee_id": employee_id, "period_id": period.id})
+    _log_payroll(
+        db,
+        "employee_penalty_add",
+        adjustments[-1].id,
+        current_user,
+        {"employee_id": employee_id, "period_id": period.id},
+    )
     db.commit()
     return out
 
@@ -4057,29 +4426,52 @@ def delete_penalty(
     period = resolve_period(db, period_year, period_month)
     _assert_period_is_editable(period)
     _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
-    row = (
-        db.query(models.EmployeePenalty)
+    adj = (
+        db.query(models.EmployeePayrollAdjustment)
         .filter(
-            models.EmployeePenalty.id == penalty_id,
-            models.EmployeePenalty.employee_id == employee_id,
-            models.EmployeePenalty.period_id == period.id,
-            models.EmployeePenalty.voided_at.is_(None),
+            models.EmployeePayrollAdjustment.migrated_from_penalty_id == penalty_id,
+            models.EmployeePayrollAdjustment.employee_id == employee_id,
+            models.EmployeePayrollAdjustment.period_id == period.id,
+            models.EmployeePayrollAdjustment.voided_at.is_(None),
         )
         .first()
     )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Penalty not found")
-    row.voided_at = now_utc_naive()
-    row.voided_by_id = current_user.id
-    row.void_reason = "void_via_delete_endpoint"
-    log_financial_action(
-        db,
-        action="payroll_penalty_void",
-        entity_type="employee_penalty",
-        entity_id=row.id,
-        actor_user=current_user,
-        meta={"employee_id": employee_id, "period_id": period.id},
-    )
+    if adj is not None:
+        adj.voided_at = now_utc_naive()
+        adj.voided_by_id = current_user.id
+        adj.void_reason = "void_via_delete_endpoint"
+        log_financial_action(
+            db,
+            action="payroll_adjustment_void",
+            entity_type="employee_payroll_adjustment",
+            entity_id=adj.id,
+            actor_user=current_user,
+            meta={"employee_id": employee_id, "period_id": period.id, "legacy_penalty_id": penalty_id},
+        )
+    else:
+        row = (
+            db.query(models.EmployeePenalty)
+            .filter(
+                models.EmployeePenalty.id == penalty_id,
+                models.EmployeePenalty.employee_id == employee_id,
+                models.EmployeePenalty.period_id == period.id,
+                models.EmployeePenalty.voided_at.is_(None),
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Penalty not found")
+        row.voided_at = now_utc_naive()
+        row.voided_by_id = current_user.id
+        row.void_reason = "void_via_delete_endpoint"
+        log_financial_action(
+            db,
+            action="payroll_penalty_void",
+            entity_type="employee_penalty",
+            entity_id=row.id,
+            actor_user=current_user,
+            meta={"employee_id": employee_id, "period_id": period.id},
+        )
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
@@ -4161,24 +4553,34 @@ def add_bonus(
     _assert_period_is_editable(period)
     _assert_financial_mutable(db, employee_id, period.id, body.confirm_financial_edit)
 
-    lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-    pen = sum((p.amount for p in penalties), Decimal("0"))
-    bon = sum((b.amount for b in bonuses), Decimal("0")) + body.amount
-    projected = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+    payroll = _get_or_create_payroll_row(db, employee_id, period.id)
+    adjustments = _load_adjustments_for_period(db, employee_id, period.id)
+    adjustments.append(
+        _create_payroll_adjustment(
+            db,
+            employee_id=employee_id,
+            period_id=period.id,
+            adjustment_type="bonus",
+            amount=body.amount,
+            reason=body.description.strip(),
+            notes=None,
+            actor=current_user,
+        )
+    )
+    projected = _projected_salary_after_adjustment_change(db, emp, period, adjustments, payroll)
     _validate_breakdown(projected)
 
-    row = models.EmployeeBonus(
-        employee_id=employee_id,
-        period_id=period.id,
-        description=body.description.strip(),
-        amount=body.amount,
-    )
-    db.add(row)
     emp.updated_at = now_utc_naive()
     db.flush()
     lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
     out = _employee_to_out(emp, db, period, lateness, penalties, bonuses, payroll)
-    _log_payroll(db, "employee_bonus_add", row.id, current_user, {"employee_id": employee_id, "period_id": period.id})
+    _log_payroll(
+        db,
+        "employee_bonus_add",
+        adjustments[-1].id,
+        current_user,
+        {"employee_id": employee_id, "period_id": period.id},
+    )
     db.commit()
     return out
 
@@ -4196,29 +4598,52 @@ def delete_bonus(
     period = resolve_period(db, period_year, period_month)
     _assert_period_is_editable(period)
     _assert_financial_mutable(db, employee_id, period.id, confirm_financial_edit)
-    row = (
-        db.query(models.EmployeeBonus)
+    adj = (
+        db.query(models.EmployeePayrollAdjustment)
         .filter(
-            models.EmployeeBonus.id == bonus_id,
-            models.EmployeeBonus.employee_id == employee_id,
-            models.EmployeeBonus.period_id == period.id,
-            models.EmployeeBonus.voided_at.is_(None),
+            models.EmployeePayrollAdjustment.migrated_from_bonus_id == bonus_id,
+            models.EmployeePayrollAdjustment.employee_id == employee_id,
+            models.EmployeePayrollAdjustment.period_id == period.id,
+            models.EmployeePayrollAdjustment.voided_at.is_(None),
         )
         .first()
     )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Bonus not found")
-    row.voided_at = now_utc_naive()
-    row.voided_by_id = current_user.id
-    row.void_reason = "void_via_delete_endpoint"
-    log_financial_action(
-        db,
-        action="payroll_bonus_void",
-        entity_type="employee_bonus",
-        entity_id=row.id,
-        actor_user=current_user,
-        meta={"employee_id": employee_id, "period_id": period.id},
-    )
+    if adj is not None:
+        adj.voided_at = now_utc_naive()
+        adj.voided_by_id = current_user.id
+        adj.void_reason = "void_via_delete_endpoint"
+        log_financial_action(
+            db,
+            action="payroll_adjustment_void",
+            entity_type="employee_payroll_adjustment",
+            entity_id=adj.id,
+            actor_user=current_user,
+            meta={"employee_id": employee_id, "period_id": period.id, "legacy_bonus_id": bonus_id},
+        )
+    else:
+        row = (
+            db.query(models.EmployeeBonus)
+            .filter(
+                models.EmployeeBonus.id == bonus_id,
+                models.EmployeeBonus.employee_id == employee_id,
+                models.EmployeeBonus.period_id == period.id,
+                models.EmployeeBonus.voided_at.is_(None),
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Bonus not found")
+        row.voided_at = now_utc_naive()
+        row.voided_by_id = current_user.id
+        row.void_reason = "void_via_delete_endpoint"
+        log_financial_action(
+            db,
+            action="payroll_bonus_void",
+            entity_type="employee_bonus",
+            entity_id=row.id,
+            actor_user=current_user,
+            meta={"employee_id": employee_id, "period_id": period.id},
+        )
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.id == employee_id, models.Employee.deleted_at.is_(None))
@@ -4462,10 +4887,11 @@ def list_employee_transactions(
         )
         period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
         if emp and period:
-            lateness, penalties, bonuses, payroll = _load_rows_for_period(db, employee_id, period)
-            pen = sum((p.amount for p in penalties), Decimal("0"))
-            bon = sum((b.amount for b in bonuses), Decimal("0"))
-            salary = _payroll_salary_for_employee(db, emp, period, pen, bon, payroll=payroll)
+            _, _, _, payroll = _load_rows_for_period(db, employee_id, period)
+            bon, pen, inc = _adjustment_totals_for_employee_period(db, employee_id, period.id)
+            salary = _payroll_salary_for_employee(
+                db, emp, period, pen, bon, increments_total=inc, payroll=payroll
+            )
             due = salary.final_payable
             paid_total = Decimal("0")
             for o in outs:

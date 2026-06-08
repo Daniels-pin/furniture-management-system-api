@@ -535,6 +535,12 @@ class Employee(Base):
         cascade="all, delete-orphan",
         order_by="EmployeeBonus.id",
     )
+    payroll_adjustments = relationship(
+        "EmployeePayrollAdjustment",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="EmployeePayrollAdjustment.id",
+    )
     period_payrolls = relationship(
         "EmployeePeriodPayroll",
         back_populates="employee",
@@ -757,6 +763,35 @@ class EmployeeBonus(Base):
 
     employee = relationship("Employee", back_populates="bonuses")
     period = relationship("SalaryPeriod")
+    voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
+
+class EmployeePayrollAdjustment(Base):
+    """Independent payroll adjustment transaction (bonus, deduction, or salary increment)."""
+
+    __tablename__ = "employee_payroll_adjustments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    adjustment_type = Column(String(16), nullable=False, index=True)  # bonus | deduction | increment
+    amount = Column(Numeric(14, 2), nullable=False)
+    reason = Column(String, nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    voided_at = Column(DateTime, nullable=True, index=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String, nullable=True)
+    migrated_from_bonus_id = Column(Integer, nullable=True)
+    migrated_from_penalty_id = Column(Integer, nullable=True)
+
+    employee = relationship("Employee", back_populates="payroll_adjustments")
+    period = relationship("SalaryPeriod")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
     voided_by_user = relationship("User", foreign_keys=[voided_by_id])
 
 

@@ -503,6 +503,7 @@ export type EmployeeSalaryBreakdown = {
   attendance_deductions_eligible?: boolean;
   penalties_entries_total?: string | number;
   bonuses_entries_total?: string | number;
+  increments_total?: string | number;
   adjustment_bonus?: string | number;
   adjustment_deduction?: string | number;
   adjustment_late_penalty?: string | number;
@@ -732,6 +733,20 @@ export type EmployeeBonus = {
   created_at: string;
 };
 
+export type PayrollAdjustmentType = "bonus" | "deduction" | "increment";
+
+export type EmployeePayrollAdjustment = {
+  id: number;
+  adjustment_type: PayrollAdjustmentType;
+  amount: string | number;
+  reason: string;
+  notes?: string | null;
+  created_at: string;
+  created_by_name?: string | null;
+  updated_at?: string | null;
+  updated_by_name?: string | null;
+};
+
 export type EmployeeDetail = {
   id: number;
   full_name: string;
@@ -753,6 +768,7 @@ export type EmployeeDetail = {
   lateness_entries: EmployeeLatenessEntry[];
   penalties: EmployeePenalty[];
   bonuses: EmployeeBonus[];
+  payroll_adjustments?: EmployeePayrollAdjustment[];
   salary: EmployeeSalaryBreakdown;
 };
 

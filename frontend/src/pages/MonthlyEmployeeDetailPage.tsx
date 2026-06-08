@@ -10,7 +10,14 @@ import { useCompanyLocations } from "../query/hooks";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { CompanyLocation, EmployeeAttendanceHistoryItem, EmployeeDetail, EmployeeTransaction } from "../types/api";
+import type {
+  CompanyLocation,
+  EmployeeAttendanceHistoryItem,
+  EmployeeDetail,
+  EmployeePayrollAdjustment,
+  EmployeeTransaction,
+  PayrollAdjustmentType
+} from "../types/api";
 import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
@@ -22,7 +29,8 @@ import {
   earlySignOutDeductionAuto,
   earlySignOutDeductionEffective,
   latenessDeductionAuto,
-  latenessDeductionEffective
+  latenessDeductionEffective,
+  sumAdjustmentsByType
 } from "../utils/payroll";
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -31,18 +39,25 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(el.closest('a,button,input,select,textarea,label,[role="button"],[role="checkbox"]'));
 }
 
-/** Clears payroll adjustment inputs; saved totals come from `detail.salary`. */
-function emptyPayrollAdjustmentFormState() {
+type TransactionFormState = { amount: string; reason: string; notes: string };
+
+function emptyTransactionForm(): TransactionFormState {
+  return { amount: "", reason: "", notes: "" };
+}
+
+function emptyAttendanceOverrideFormState() {
   return {
-    periodBaseSalary: "",
-    bonus: "",
-    deduction: "",
     latenessDeductionTotal: "",
     absenceDeductionTotal: "",
-    earlySignOutDeductionTotal: "",
-    adjNote: ""
+    earlySignOutDeductionTotal: ""
   };
 }
+
+const ADJUSTMENT_TYPE_LABELS: Record<PayrollAdjustmentType, string> = {
+  bonus: "Bonus",
+  deduction: "Deduction",
+  increment: "Increment"
+};
 
 export function MonthlyEmployeeDetailPage() {
   const toast = useToast();
@@ -56,7 +71,6 @@ export function MonthlyEmployeeDetailPage() {
 
   const idNum = Number(employeeId);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<EmployeeDetail | null>(null);
   const [txns, setTxns] = useState<EmployeeTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(false);
@@ -74,13 +88,17 @@ export function MonthlyEmployeeDetailPage() {
   const [sending, setSending] = useState(false);
 
   const [baseSalary, setBaseSalary] = useState("");
-  const [periodBaseSalary, setPeriodBaseSalary] = useState("");
-  const [bonus, setBonus] = useState("");
-  const [deduction, setDeduction] = useState("");
+  const [bonusForm, setBonusForm] = useState<TransactionFormState>(emptyTransactionForm);
+  const [deductionForm, setDeductionForm] = useState<TransactionFormState>(emptyTransactionForm);
+  const [incrementForm, setIncrementForm] = useState<TransactionFormState>(emptyTransactionForm);
   const [latenessDeductionTotal, setLatenessDeductionTotal] = useState("");
   const [absenceDeductionTotal, setAbsenceDeductionTotal] = useState("");
   const [earlySignOutDeductionTotal, setEarlySignOutDeductionTotal] = useState("");
-  const [adjNote, setAdjNote] = useState("");
+  const [savingType, setSavingType] = useState<PayrollAdjustmentType | "attendance" | "base" | null>(null);
+  const [editingAdj, setEditingAdj] = useState<EmployeePayrollAdjustment | null>(null);
+  const [editForm, setEditForm] = useState<TransactionFormState>(emptyTransactionForm);
+  const [adjPage, setAdjPage] = useState(0);
+  const ADJ_PAGE_SIZE = 10;
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState("Confirm");
@@ -117,6 +135,16 @@ export function MonthlyEmployeeDetailPage() {
       return;
     }
     let alive = true;
+    setDetail(null);
+    setBonusForm(emptyTransactionForm());
+    setDeductionForm(emptyTransactionForm());
+    setIncrementForm(emptyTransactionForm());
+    setLatenessDeductionTotal("");
+    setAbsenceDeductionTotal("");
+    setEarlySignOutDeductionTotal("");
+    setSendNote("");
+    setEditingAdj(null);
+    setAdjPage(0);
     (async () => {
       setLoading(true);
       try {
@@ -127,13 +155,6 @@ export function MonthlyEmployeeDetailPage() {
 
         const empBase = d.base_salary ?? null;
         setBaseSalary(empBase != null ? String(empBase) : "");
-        setPeriodBaseSalary("");
-        setBonus("");
-        setDeduction("");
-        setLatenessDeductionTotal("");
-        setAbsenceDeductionTotal("");
-        setEarlySignOutDeductionTotal("");
-        setAdjNote("");
       } catch (e) {
         toast.push("error", getErrorMessage(e));
         nav("/employees?tab=monthly");
@@ -209,29 +230,23 @@ export function MonthlyEmployeeDetailPage() {
     };
   }, [idNum, periodParams]);
 
+  const adjustments = detail?.payroll_adjustments ?? [];
+
   const computed = useMemo(() => {
     if (!detail) return null;
     const isAdmin = auth.role === "admin";
     const baseFromApi = Number(detail.base_salary ?? 0);
     const baseFromInput =
-      isAdmin && baseSalary.trim()
-        ? (parseMoneyInput(baseSalary) ?? baseFromApi)
-        : baseFromApi;
-    const entriesBonus = Number(detail.salary.bonuses_entries_total ?? 0);
-    const entriesPen = Number(detail.salary.penalties_entries_total ?? 0);
+      isAdmin && baseSalary.trim() ? (parseMoneyInput(baseSalary) ?? baseFromApi) : baseFromApi;
+    const bonusesTotal = sumAdjustmentsByType(adjustments, "bonus");
+    const deductionsTotal = sumAdjustmentsByType(adjustments, "deduction");
+    const incrementsTotal = sumAdjustmentsByType(adjustments, "increment");
     const latenessAuto = latenessDeductionAuto(detail.salary);
     const earlySignOutAuto = earlySignOutDeductionAuto(detail.salary);
     const absenceAuto = absenceDeductionAuto(detail.salary);
     const latenessSaved = latenessDeductionEffective(detail.salary);
     const earlySignOutSaved = earlySignOutDeductionEffective(detail.salary);
     const absenceSaved = absenceDeductionEffective(detail.salary);
-    const bonusSaved = Number(detail.salary.adjustment_bonus ?? 0);
-    const deductionSaved = Number(detail.salary.adjustment_deduction ?? 0);
-
-    const baseFromSalary = Number(detail.salary.base_salary ?? detail.salary.base_salary_used ?? baseFromInput);
-    const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : null;
-    const b = bonus.trim() ? (parseMoneyInput(bonus) ?? bonusSaved) : bonusSaved;
-    const d = deduction.trim() ? (parseMoneyInput(deduction) ?? deductionSaved) : deductionSaved;
     const latenessTotal = latenessDeductionTotal.trim()
       ? (parseMoneyInput(latenessDeductionTotal) ?? latenessSaved)
       : latenessSaved;
@@ -241,180 +256,271 @@ export function MonthlyEmployeeDetailPage() {
     const absenceTotal = absenceDeductionTotal.trim()
       ? (parseMoneyInput(absenceDeductionTotal) ?? absenceSaved)
       : absenceSaved;
-    const baseUsed = baseOverride != null ? baseOverride : baseFromSalary;
     const preview = computePayrollPreview({
-      baseUsed,
-      entriesBonus,
-      entriesPenalties: entriesPen,
-      adjustmentBonus: b,
-      adjustmentDeduction: d,
+      baseSalary: baseFromInput,
+      incrementsTotal,
+      bonusesTotal,
+      deductionsTotal,
       latenessDeduction: latenessTotal,
       earlySignOutDeduction: earlySignOutTotal,
       absenceDeduction: absenceTotal
     });
+    const attendanceDeductions = latenessTotal + earlySignOutTotal + absenceTotal;
     return {
-      baseUsed,
-      entriesBonus,
-      entriesPen,
+      baseSalary: baseFromInput,
+      baseUsed: preview.baseUsed,
+      bonusesTotal,
+      deductionsTotal,
+      incrementsTotal,
       latenessAuto,
       earlySignOutAuto,
       absenceAuto,
       latenessTotal,
       earlySignOutTotal,
       absenceTotal,
+      attendanceDeductions,
       latenessAdjusted: latenessTotal !== latenessAuto,
       absenceAdjusted: absenceTotal !== absenceAuto,
-      bonus: b,
-      deduction: d,
       finalPayable: preview.finalPayable,
       totalDeductions: preview.totalDeductions
     };
   }, [
+    adjustments,
     auth.role,
     detail,
     baseSalary,
-    periodBaseSalary,
-    bonus,
-    deduction,
     latenessDeductionTotal,
     earlySignOutDeductionTotal,
     absenceDeductionTotal
   ]);
 
-  async function onSaveAdjustments() {
+  const pagedAdjustments = useMemo(() => {
+    const start = adjPage * ADJ_PAGE_SIZE;
+    return adjustments.slice(start, start + ADJ_PAGE_SIZE);
+  }, [adjustments, adjPage]);
+
+  const adjPageCount = Math.max(1, Math.ceil(adjustments.length / ADJ_PAGE_SIZE));
+
+  function validateTransactionForm(form: TransactionFormState, label: string): number | null {
+    if (!form.amount.trim()) {
+      toast.push("error", `Enter a ${label} amount.`);
+      return null;
+    }
+    if (!isValidThousandsCommaNumber(form.amount)) {
+      toast.push("error", `Fix comma formatting in ${label} amount.`);
+      return null;
+    }
+    const amount = parseMoneyInput(form.amount);
+    if (amount === null || Number.isNaN(amount) || amount <= 0) {
+      toast.push("error", `Enter a valid ${label} amount (> 0).`);
+      return null;
+    }
+    if (!form.reason.trim()) {
+      toast.push("error", `Enter a reason for this ${label.toLowerCase()}.`);
+      return null;
+    }
+    return amount;
+  }
+
+  async function onSaveTransaction(type: PayrollAdjustmentType) {
     if (!detail) return;
-    const isAdmin = auth.role === "admin";
-    if (!isAdmin) {
-      toast.push("error", "Only Admin can update payroll fields.");
+    if (auth.role !== "admin") {
+      toast.push("error", "Only Admin can add payroll adjustments.");
+      return;
+    }
+    if (!detail.period.is_active) {
+      toast.push("error", "Archived months are read-only.");
       return;
     }
 
-    if (baseSalary.trim() && !isValidThousandsCommaNumber(baseSalary)) {
-      toast.push("error", "Fix comma formatting in base salary.");
-      return;
-    }
-    if (periodBaseSalary.trim() && !isValidThousandsCommaNumber(periodBaseSalary)) {
-      toast.push("error", "Fix comma formatting in base salary.");
-      return;
-    }
-    if (bonus.trim() && !isValidThousandsCommaNumber(bonus)) {
-      toast.push("error", "Fix comma formatting in bonus.");
-      return;
-    }
-    if (deduction.trim() && !isValidThousandsCommaNumber(deduction)) {
-      toast.push("error", "Fix comma formatting in deduction.");
-      return;
-    }
-    if (latenessDeductionTotal.trim() && !isValidThousandsCommaNumber(latenessDeductionTotal)) {
-      toast.push("error", "Fix comma formatting in lateness deduction.");
-      return;
-    }
-    if (earlySignOutDeductionTotal.trim() && !isValidThousandsCommaNumber(earlySignOutDeductionTotal)) {
-      toast.push("error", "Fix comma formatting in early sign-out deduction.");
-      return;
-    }
-    if (absenceDeductionTotal.trim() && !isValidThousandsCommaNumber(absenceDeductionTotal)) {
-      toast.push("error", "Fix comma formatting in absence deduction.");
-      return;
-    }
+    const form =
+      type === "bonus" ? bonusForm : type === "deduction" ? deductionForm : incrementForm;
+    const label = ADJUSTMENT_TYPE_LABELS[type];
+    const amount = validateTransactionForm(form, label);
+    if (amount === null) return;
 
-    const empBase = baseSalary.trim() ? parseMoneyInput(baseSalary) : null;
-    const baseOverride = periodBaseSalary.trim() ? parseMoneyInput(periodBaseSalary) : undefined;
-    const b = bonus.trim() ? parseMoneyInput(bonus) : undefined;
-    const d = deduction.trim() ? parseMoneyInput(deduction) : undefined;
-    const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : undefined;
-    const earlySignOutTotal = earlySignOutDeductionTotal.trim() ? parseMoneyInput(earlySignOutDeductionTotal) : undefined;
-    const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : undefined;
-    const note = adjNote.trim() || undefined;
-
-    if (empBase !== null && (Number.isNaN(empBase) || empBase < 0)) {
-      toast.push("error", "Enter a valid base salary (≥ 0).");
-      return;
-    }
-    if (baseOverride !== undefined && (baseOverride === null || Number.isNaN(baseOverride) || baseOverride < 0)) {
-      toast.push("error", "Enter a valid base salary (≥ 0).");
-      return;
-    }
-    if (b !== undefined && (b === null || Number.isNaN(b) || b < 0)) {
-      toast.push("error", "Enter a valid bonus (≥ 0).");
-      return;
-    }
-    if (d !== undefined && (d === null || Number.isNaN(d) || d < 0)) {
-      toast.push("error", "Enter a valid deduction (≥ 0).");
-      return;
-    }
-    if (latenessTotal !== undefined && (latenessTotal === null || Number.isNaN(latenessTotal) || latenessTotal < 0)) {
-      toast.push("error", "Enter a valid lateness deduction (≥ 0).");
-      return;
-    }
-    if (absenceTotal !== undefined && (absenceTotal === null || Number.isNaN(absenceTotal) || absenceTotal < 0)) {
-      toast.push("error", "Enter a valid absence deduction (≥ 0).");
-      return;
-    }
-    if (
-      earlySignOutTotal !== undefined &&
-      (earlySignOutTotal === null || Number.isNaN(earlySignOutTotal) || earlySignOutTotal < 0)
-    ) {
-      toast.push("error", "Enter a valid early sign-out deduction (≥ 0).");
-      return;
-    }
-
-    const apiBase = Number(detail.base_salary ?? 0);
-    const desiredBase = empBase ?? apiBase;
-    const hasBaseSalaryEdit = Number.isFinite(desiredBase) && desiredBase >= 0 && desiredBase !== apiBase;
-    const hasPayrollEdits =
-      baseOverride !== undefined ||
-      b !== undefined ||
-      d !== undefined ||
-      latenessTotal !== undefined ||
-      earlySignOutTotal !== undefined ||
-      absenceTotal !== undefined ||
-      note !== undefined;
-
-    if (!hasBaseSalaryEdit && !hasPayrollEdits) {
-      toast.push("error", "Enter at least one adjustment to save.");
-      return;
-    }
-
-    setSaving(true);
+    setSavingType(type);
     try {
-      let next = detail;
-      if (hasBaseSalaryEdit) {
-        next = await employeesApi.update(detail.id, { base_salary: desiredBase }, { period_year: year, period_month: month });
-      }
-      const adjustmentBody: Parameters<typeof employeesApi.savePayrollAdjustments>[1] = {
-        confirm_financial_edit: false
-      };
-      if (baseOverride !== undefined) adjustmentBody.period_base_salary = baseOverride;
-      if (b !== undefined) adjustmentBody.bonus = b;
-      if (d !== undefined) adjustmentBody.deduction = d;
-      if (latenessTotal !== undefined) adjustmentBody.lateness_deduction = latenessTotal;
-      if (earlySignOutTotal !== undefined) adjustmentBody.early_sign_out_deduction = earlySignOutTotal;
-      if (absenceTotal !== undefined) adjustmentBody.absence_deduction = absenceTotal;
-      if (note !== undefined) adjustmentBody.note = note;
-
       const updated = await runWithPaidConfirm((confirm) =>
-        employeesApi.savePayrollAdjustments(
-          next.id,
-          { ...adjustmentBody, confirm_financial_edit: confirm },
+        employeesApi.createPayrollAdjustment(
+          detail.id,
+          {
+            adjustment_type: type,
+            amount,
+            reason: form.reason.trim(),
+            notes: form.notes.trim() || null,
+            confirm_financial_edit: confirm
+          },
           { period_year: year, period_month: month }
         )
       );
       setDetail(updated);
-      setBaseSalary(String(updated.base_salary ?? desiredBase ?? ""));
-      const cleared = emptyPayrollAdjustmentFormState();
-      setPeriodBaseSalary(cleared.periodBaseSalary);
-      setBonus(cleared.bonus);
-      setDeduction(cleared.deduction);
-      setLatenessDeductionTotal(cleared.latenessDeductionTotal);
-      setAbsenceDeductionTotal(cleared.absenceDeductionTotal);
-      setEarlySignOutDeductionTotal(cleared.earlySignOutDeductionTotal);
-      setAdjNote(cleared.adjNote);
-      toast.push("success", "Saved adjustments.");
+      if (type === "bonus") setBonusForm(emptyTransactionForm());
+      if (type === "deduction") setDeductionForm(emptyTransactionForm());
+      if (type === "increment") setIncrementForm(emptyTransactionForm());
+      toast.push("success", `${label} recorded.`);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
-      setSaving(false);
+      setSavingType(null);
+    }
+  }
+
+  async function onSaveBaseSalary() {
+    if (!detail) return;
+    if (auth.role !== "admin") {
+      toast.push("error", "Only Admin can update base salary.");
+      return;
+    }
+    if (!baseSalary.trim()) {
+      toast.push("error", "Enter a base salary.");
+      return;
+    }
+    if (!isValidThousandsCommaNumber(baseSalary)) {
+      toast.push("error", "Fix comma formatting in base salary.");
+      return;
+    }
+    const desiredBase = parseMoneyInput(baseSalary);
+    if (desiredBase === null || Number.isNaN(desiredBase) || desiredBase < 0) {
+      toast.push("error", "Enter a valid base salary (≥ 0).");
+      return;
+    }
+    const apiBase = Number(detail.base_salary ?? 0);
+    if (desiredBase === apiBase) {
+      toast.push("error", "Base salary is unchanged.");
+      return;
+    }
+
+    setSavingType("base");
+    try {
+      const updated = await employeesApi.update(detail.id, { base_salary: desiredBase }, periodParams);
+      setDetail(updated);
+      setBaseSalary(String(updated.base_salary ?? desiredBase));
+      toast.push("success", "Base salary saved.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setSavingType(null);
+    }
+  }
+
+  async function onSaveAttendanceOverrides() {
+    if (!detail) return;
+    if (auth.role !== "admin") {
+      toast.push("error", "Only Admin can update attendance deductions.");
+      return;
+    }
+    if (!detail.period.is_active) {
+      toast.push("error", "Archived months are read-only.");
+      return;
+    }
+
+    const latenessTotal = latenessDeductionTotal.trim() ? parseMoneyInput(latenessDeductionTotal) : undefined;
+    const earlySignOutTotal = earlySignOutDeductionTotal.trim() ? parseMoneyInput(earlySignOutDeductionTotal) : undefined;
+    const absenceTotal = absenceDeductionTotal.trim() ? parseMoneyInput(absenceDeductionTotal) : undefined;
+
+    if (
+      latenessTotal === undefined &&
+      earlySignOutTotal === undefined &&
+      absenceTotal === undefined
+    ) {
+      toast.push("error", "Enter at least one attendance deduction override.");
+      return;
+    }
+
+    setSavingType("attendance");
+    try {
+      const updated = await runWithPaidConfirm((confirm) =>
+        employeesApi.savePayrollAdjustments(
+          detail.id,
+          {
+            confirm_financial_edit: confirm,
+            ...(latenessTotal !== undefined ? { lateness_deduction: latenessTotal } : {}),
+            ...(earlySignOutTotal !== undefined ? { early_sign_out_deduction: earlySignOutTotal } : {}),
+            ...(absenceTotal !== undefined ? { absence_deduction: absenceTotal } : {})
+          },
+          { period_year: year, period_month: month }
+        )
+      );
+      setDetail(updated);
+      const cleared = emptyAttendanceOverrideFormState();
+      setLatenessDeductionTotal(cleared.latenessDeductionTotal);
+      setAbsenceDeductionTotal(cleared.absenceDeductionTotal);
+      setEarlySignOutDeductionTotal(cleared.earlySignOutDeductionTotal);
+      toast.push("success", "Attendance deductions saved.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setSavingType(null);
+    }
+  }
+
+  function startEditAdjustment(adj: EmployeePayrollAdjustment) {
+    setEditingAdj(adj);
+    setEditForm({
+      amount: String(adj.amount),
+      reason: adj.reason,
+      notes: adj.notes ?? ""
+    });
+  }
+
+  async function onSaveEditAdjustment() {
+    if (!detail || !editingAdj) return;
+    const amount = validateTransactionForm(editForm, ADJUSTMENT_TYPE_LABELS[editingAdj.adjustment_type]);
+    if (amount === null) return;
+
+    setSavingType(editingAdj.adjustment_type);
+    try {
+      const updated = await runWithPaidConfirm((confirm) =>
+        employeesApi.updatePayrollAdjustment(
+          detail.id,
+          editingAdj.id,
+          {
+            amount,
+            reason: editForm.reason.trim(),
+            notes: editForm.notes.trim() || null,
+            confirm_financial_edit: confirm
+          },
+          { period_year: year, period_month: month }
+        )
+      );
+      setDetail(updated);
+      setEditingAdj(null);
+      setEditForm(emptyTransactionForm());
+      toast.push("success", "Adjustment updated.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setSavingType(null);
+    }
+  }
+
+  async function onDeleteAdjustment(adj: EmployeePayrollAdjustment) {
+    if (!detail) return;
+    const ok = await askConfirm(
+      "Delete adjustment",
+      `Delete this ${ADJUSTMENT_TYPE_LABELS[adj.adjustment_type].toLowerCase()} of ${formatMoney(adj.amount)}?`
+    );
+    if (!ok) return;
+    setSavingType(adj.adjustment_type);
+    try {
+      const updated = await runWithPaidConfirm((confirm) =>
+        employeesApi.deletePayrollAdjustment(detail.id, adj.id, {
+          period_year: year,
+          period_month: month,
+          confirm_financial_edit: confirm
+        })
+      );
+      setDetail(updated);
+      if (editingAdj?.id === adj.id) {
+        setEditingAdj(null);
+        setEditForm(emptyTransactionForm());
+      }
+      toast.push("success", "Adjustment deleted.");
+    } catch (e) {
+      toast.push("error", getErrorMessage(e));
+    } finally {
+      setSavingType(null);
     }
   }
 
@@ -611,144 +717,283 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
-        <div className="text-xs font-semibold text-black/55">4. Payroll adjustment</div>
-        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="text-xs font-semibold text-black/55">4. Payroll adjustments</div>
+        <p className="mt-1 text-xs text-black/55">
+          Each bonus, deduction, and increment is saved as its own transaction. Archived months are read-only.
+        </p>
+        {!detail.period.is_active ? (
+          <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+            Viewing archived month {detail.period.label} — adjustments cannot be added or changed.
+          </p>
+        ) : null}
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <Input
-            label="Base Salary — NGN"
+            label="Base salary — NGN"
             value={baseSalary}
             onChange={(e) => setBaseSalary(e.target.value)}
             inputMode="decimal"
             placeholder="e.g. 150,000"
             disabled={!isAdmin}
           />
-          <Input
-            label="Base salary (override for this month only) — NGN"
-            value={periodBaseSalary}
-            onChange={(e) => setPeriodBaseSalary(e.target.value)}
-            inputMode="decimal"
-            placeholder="Leave blank to use employee base salary"
-            disabled={!isAdmin}
-          />
-          {!isAdmin ? (
-            <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-900">
-              You don’t have permission to edit base salary.
-            </div>
-          ) : null}
-
-          <Input
-            label="Bonuses (NGN)"
-            value={bonus}
-            onChange={(e) => setBonus(e.target.value)}
-            inputMode="decimal"
-            disabled={!isAdmin}
-          />
-          <Input
-            label="Deductions (NGN)"
-            value={deduction}
-            onChange={(e) => setDeduction(e.target.value)}
-            inputMode="decimal"
-            disabled={!isAdmin}
-          />
-          <div>
-            <Input
-              label={`Lateness deduction (NGN) — ${detail.salary.lateness_count} record(s)`}
-              value={latenessDeductionTotal}
-              onChange={(e) => setLatenessDeductionTotal(e.target.value)}
-              inputMode="decimal"
-              disabled={!isAdmin}
-            />
-            {computed?.latenessAdjusted ? (
-              <p className="mt-1 text-xs font-semibold text-amber-900">
-                Adjusted from calculated {formatMoney(computed.latenessAuto)}. Attendance records are unchanged.
-              </p>
-            ) : (
-              <p className="mt-1 text-xs text-black/55">
-                Calculated from late records ({formatMoney(computed?.latenessAuto ?? 0)}).
-              </p>
-            )}
-          </div>
-          <div>
-            <Input
-              label={`Early sign-out deduction (NGN) — ${detail.salary.early_sign_out_count ?? 0} record(s)`}
-              value={earlySignOutDeductionTotal}
-              onChange={(e) => setEarlySignOutDeductionTotal(e.target.value)}
-              inputMode="decimal"
-              disabled={!isAdmin}
-            />
-            <p className="mt-1 text-xs text-black/55">
-              Calculated from early sign-out records ({formatMoney(computed?.earlySignOutAuto ?? 0)}).
-            </p>
-          </div>
-          <div>
-            <Input
-              label={`Absence deduction (NGN) — ${detail.salary.absence_count ?? 0} record(s)`}
-              value={absenceDeductionTotal}
-              onChange={(e) => setAbsenceDeductionTotal(e.target.value)}
-              inputMode="decimal"
-              disabled={!isAdmin}
-            />
-            {computed?.absenceAdjusted ? (
-              <p className="mt-1 text-xs font-semibold text-amber-900">
-                Adjusted from calculated {formatMoney(computed.absenceAuto)}. Absence records are unchanged.
-              </p>
-            ) : (
-              <p className="mt-1 text-xs text-black/55">
-                Calculated from absence records ({formatMoney(computed?.absenceAuto ?? 0)}).
-              </p>
-            )}
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold text-black/60">Notes (optional)</label>
-            <textarea
-              className="min-h-[88px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-black/40"
-              value={adjNote}
-              onChange={(e) => setAdjNote(e.target.value)}
-              placeholder="Reason for adjustments…"
-              disabled={!isAdmin}
-            />
-          </div>
-
-          <div className="md:col-span-2 flex flex-wrap gap-2">
-            <Button isLoading={saving} disabled={!isAdmin || saving} onClick={() => void onSaveAdjustments()}>
-              Save Adjustments
-            </Button>
-            <Link
-              to={`/employees/new`}
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+          <div className="flex items-end">
+            <Button
+              variant="secondary"
+              isLoading={savingType === "base"}
+              disabled={!isAdmin || savingType !== null}
+              onClick={() => void onSaveBaseSalary()}
             >
-              Add another employee
-            </Link>
+              Save base salary
+            </Button>
+          </div>
+        </div>
+
+        {(["bonus", "deduction", "increment"] as const).map((type) => {
+          const form = type === "bonus" ? bonusForm : type === "deduction" ? deductionForm : incrementForm;
+          const setForm =
+            type === "bonus" ? setBonusForm : type === "deduction" ? setDeductionForm : setIncrementForm;
+          const label = ADJUSTMENT_TYPE_LABELS[type];
+          return (
+            <div key={type} className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+              <div className="text-xs font-semibold text-black/60">Add {label}</div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <Input
+                  label={`${label} amount — NGN`}
+                  value={form.amount}
+                  onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+                  inputMode="decimal"
+                  disabled={!isAdmin || !detail.period.is_active}
+                />
+                <Input
+                  label="Reason"
+                  value={form.reason}
+                  onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+                  disabled={!isAdmin || !detail.period.is_active}
+                  placeholder={
+                    type === "bonus"
+                      ? "e.g. Excellent performance"
+                      : type === "deduction"
+                        ? "e.g. Uniform replacement"
+                        : "e.g. Salary review"
+                  }
+                />
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-black/60">Notes (optional)</label>
+                  <textarea
+                    className="min-h-[72px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-black/40"
+                    value={form.notes}
+                    onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                    disabled={!isAdmin || !detail.period.is_active}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Button
+                    isLoading={savingType === type}
+                    disabled={!isAdmin || !detail.period.is_active || savingType !== null}
+                    onClick={() => void onSaveTransaction(type)}
+                  >
+                    Save {label}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+          <div className="text-xs font-semibold text-black/60">Attendance deduction overrides</div>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <Input
+                label={`Lateness deduction (NGN) — ${detail.salary.lateness_count} record(s)`}
+                value={latenessDeductionTotal}
+                onChange={(e) => setLatenessDeductionTotal(e.target.value)}
+                inputMode="decimal"
+                disabled={!isAdmin || !detail.period.is_active}
+              />
+              {computed?.latenessAdjusted ? (
+                <p className="mt-1 text-xs font-semibold text-amber-900">
+                  Adjusted from calculated {formatMoney(computed.latenessAuto)}.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-black/55">Calculated: {formatMoney(computed?.latenessAuto ?? 0)}</p>
+              )}
+            </div>
+            <div>
+              <Input
+                label={`Early sign-out deduction (NGN) — ${detail.salary.early_sign_out_count ?? 0} record(s)`}
+                value={earlySignOutDeductionTotal}
+                onChange={(e) => setEarlySignOutDeductionTotal(e.target.value)}
+                inputMode="decimal"
+                disabled={!isAdmin || !detail.period.is_active}
+              />
+              <p className="mt-1 text-xs text-black/55">Calculated: {formatMoney(computed?.earlySignOutAuto ?? 0)}</p>
+            </div>
+            <div>
+              <Input
+                label={`Absence deduction (NGN) — ${detail.salary.absence_count ?? 0} record(s)`}
+                value={absenceDeductionTotal}
+                onChange={(e) => setAbsenceDeductionTotal(e.target.value)}
+                inputMode="decimal"
+                disabled={!isAdmin || !detail.period.is_active}
+              />
+              {computed?.absenceAdjusted ? (
+                <p className="mt-1 text-xs font-semibold text-amber-900">
+                  Adjusted from calculated {formatMoney(computed.absenceAuto)}.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-black/55">Calculated: {formatMoney(computed?.absenceAuto ?? 0)}</p>
+              )}
+            </div>
+            <div className="flex items-end">
+              <Button
+                variant="secondary"
+                isLoading={savingType === "attendance"}
+                disabled={!isAdmin || !detail.period.is_active || savingType !== null}
+                onClick={() => void onSaveAttendanceOverrides()}
+              >
+                Save attendance overrides
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
 
       <Card className="!p-4">
+        <div className="text-xs font-semibold text-black/55">4b. Adjustment history ({detail.period.label})</div>
+        {adjustments.length === 0 ? (
+          <div className="mt-2 text-sm text-black/60">No adjustments yet.</div>
+        ) : (
+          <>
+            <div className="mt-3 min-w-0 overflow-x-auto">
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="text-black/60">
+                  <tr className="border-b border-black/10">
+                    <th className="py-3 pr-4 font-semibold">Date</th>
+                    <th className="py-3 pr-4 font-semibold">Type</th>
+                    <th className="py-3 pr-4 text-right font-semibold">Amount</th>
+                    <th className="py-3 pr-4 font-semibold">Reason</th>
+                    <th className="py-3 pr-4 font-semibold">Added by</th>
+                    {isAdmin && detail.period.is_active ? <th className="py-3 pr-0 font-semibold">Actions</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedAdjustments.map((adj) => (
+                    <tr key={adj.id} className="border-b border-black/5">
+                      <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(adj.created_at)}</td>
+                      <td className="py-3 pr-4 font-semibold">{ADJUSTMENT_TYPE_LABELS[adj.adjustment_type]}</td>
+                      <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(adj.amount)}</td>
+                      <td className="py-3 pr-4 text-xs">{adj.reason}</td>
+                      <td className="py-3 pr-4 text-xs text-black/60">{adj.created_by_name ?? "—"}</td>
+                      {isAdmin && detail.period.is_active ? (
+                        <td className="py-3 pr-0">
+                          <div className="flex gap-2">
+                            <Button variant="secondary" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => startEditAdjustment(adj)}>
+                              Edit
+                            </Button>
+                            <Button variant="danger" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => void onDeleteAdjustment(adj)}>
+                              Delete
+                            </Button>
+                          </div>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {adjustments.length > ADJ_PAGE_SIZE ? (
+              <div className="mt-3 flex items-center justify-between text-xs font-semibold text-black/60">
+                <span>
+                  Page {adjPage + 1} of {adjPageCount}
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="secondary" className="!min-h-8" disabled={adjPage <= 0} onClick={() => setAdjPage((p) => p - 1)}>
+                    Previous
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="!min-h-8"
+                    disabled={adjPage >= adjPageCount - 1}
+                    onClick={() => setAdjPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+
+        {editingAdj ? (
+          <div className="mt-4 rounded-2xl border border-black/15 bg-white p-4">
+            <div className="text-xs font-semibold text-black/60">
+              Edit {ADJUSTMENT_TYPE_LABELS[editingAdj.adjustment_type]}
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Input
+                label="Amount — NGN"
+                value={editForm.amount}
+                onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                inputMode="decimal"
+              />
+              <Input
+                label="Reason"
+                value={editForm.reason}
+                onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
+              />
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-black/60">Notes (optional)</label>
+                <textarea
+                  className="min-h-[72px] w-full rounded-xl border border-black/15 bg-white px-3 py-2 text-sm"
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
+              <div className="md:col-span-2 flex gap-2">
+                <Button isLoading={savingType === editingAdj.adjustment_type} onClick={() => void onSaveEditAdjustment()}>
+                  Save changes
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingAdj(null);
+                    setEditForm(emptyTransactionForm());
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">5. Final payable summary ({detail.period.label})</div>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-sm">
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 text-sm">
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
-            <div className="text-xs font-semibold text-black/60">Base</div>
-            <div className="mt-1 font-bold tabular-nums">{formatMoney(computed?.baseUsed ?? detail.salary.base_salary)}</div>
+            <div className="text-xs font-semibold text-black/60">Base salary</div>
+            <div className="mt-1 font-bold tabular-nums">{formatMoney(computed?.baseSalary ?? detail.salary.base_salary)}</div>
+          </div>
+          <div className="rounded-xl border border-black/10 bg-sky-50/50 p-3">
+            <div className="text-xs font-semibold text-sky-900/70">Increments</div>
+            <div className="mt-1 font-bold tabular-nums text-sky-800">+{formatMoney(computed?.incrementsTotal ?? 0)}</div>
+          </div>
+          <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
+            <div className="text-xs font-semibold text-black/60">Effective base</div>
+            <div className="mt-1 font-bold tabular-nums">{formatMoney(computed?.baseUsed ?? detail.salary.base_salary_used)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-emerald-50/50 p-3">
             <div className="text-xs font-semibold text-emerald-900/70">Bonuses</div>
-            <div className="mt-1 font-bold tabular-nums text-emerald-800">
-              +{formatMoney((computed?.entriesBonus ?? 0) + (computed?.bonus ?? 0))}
-            </div>
+            <div className="mt-1 font-bold tabular-nums text-emerald-800">+{formatMoney(computed?.bonusesTotal ?? 0)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-red-50/60 p-3">
-            <div className="text-xs font-semibold text-red-900/70">Other deductions</div>
-            <div className="mt-1 font-bold tabular-nums text-red-800">
-              −{formatMoney((computed?.entriesPen ?? 0) + (computed?.deduction ?? 0))}
-            </div>
+            <div className="text-xs font-semibold text-red-900/70">Manual deductions</div>
+            <div className="mt-1 font-bold tabular-nums text-red-800">−{formatMoney(computed?.deductionsTotal ?? 0)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-amber-50/60 p-3">
-            <div className="text-xs font-semibold text-amber-900/70">Lateness</div>
-            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.latenessTotal ?? 0)}</div>
-          </div>
-          <div className="rounded-xl border border-black/10 bg-amber-50/60 p-3">
-            <div className="text-xs font-semibold text-amber-900/70">Absence</div>
-            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.absenceTotal ?? 0)}</div>
+            <div className="text-xs font-semibold text-amber-900/70">Attendance deductions</div>
+            <div className="mt-1 font-bold tabular-nums text-amber-900">−{formatMoney(computed?.attendanceDeductions ?? 0)}</div>
           </div>
           <div className="rounded-xl border border-black/10 bg-black/[0.02] p-3">
             <div className="text-xs font-semibold text-black/60">Total deductions</div>
@@ -782,7 +1027,7 @@ export function MonthlyEmployeeDetailPage() {
       </Card>
 
       <Card className="!p-4">
-        <div className="text-xs font-semibold text-black/55">6. Transaction history ({detail.period.label})</div>
+        <div className="text-xs font-semibold text-black/55">6. Finance payment history ({detail.period.label})</div>
         {txLoading ? (
           <div className="mt-2 text-sm text-black/60">Loading…</div>
         ) : txns.length === 0 ? (

@@ -1439,6 +1439,52 @@ class EmployeeBonusOut(BaseModel):
         from_attributes = True
 
 
+class EmployeePayrollAdjustmentOut(BaseModel):
+    id: int
+    adjustment_type: Literal["bonus", "deduction", "increment"]
+    amount: Decimal
+    reason: str
+    notes: Optional[str] = None
+    created_at: datetime
+    created_by_name: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    updated_by_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeePayrollAdjustmentCreate(BaseModel):
+    adjustment_type: Literal["bonus", "deduction", "increment"]
+    amount: Decimal = Field(..., gt=0)
+    reason: str = Field(..., min_length=1, max_length=2000)
+    notes: Optional[str] = Field(None, max_length=8000)
+    confirm_financial_edit: bool = False
+
+    @field_validator("reason", "notes", mode="before")
+    @classmethod
+    def _strip_text(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
+class EmployeePayrollAdjustmentUpdate(BaseModel):
+    amount: Optional[Decimal] = Field(None, gt=0)
+    reason: Optional[str] = Field(None, min_length=1, max_length=2000)
+    notes: Optional[str] = Field(None, max_length=8000)
+    confirm_financial_edit: bool = False
+
+    @field_validator("reason", "notes", mode="before")
+    @classmethod
+    def _strip_text(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
 class EmployeeSalaryBreakdown(BaseModel):
     # base_salary_used: actual base used for this period (period override or employee base).
     base_salary_used: Decimal
@@ -1463,14 +1509,15 @@ class EmployeeSalaryBreakdown(BaseModel):
     absence_rate_naira: Optional[Decimal] = None
     # False when no work location is assigned (unpaid periods); lateness/absence amounts are zero.
     attendance_deductions_eligible: bool = True
-    # Entry totals (raw entries, excluding manual adjustments)
+    # Transaction totals (employee_payroll_adjustments)
     penalties_entries_total: Decimal = Decimal("0")
     bonuses_entries_total: Decimal = Decimal("0")
-    # Manual adjustments (stored on payroll row; positive numbers)
+    increments_total: Decimal = Decimal("0")
+    # Legacy aggregate fields (always zero after transaction migration; kept for API compat)
     adjustment_bonus: Decimal = Decimal("0")
     adjustment_deduction: Decimal = Decimal("0")
     adjustment_late_penalty: Decimal = Decimal("0")
-    # Totals used in final payable (entries + adjustments)
+    # Totals used in final payable
     penalties_total: Decimal
     bonuses_total: Decimal
     total_deductions: Decimal
@@ -1527,6 +1574,7 @@ class EmployeeOut(BaseModel):
     lateness_entries: List[EmployeeLatenessEntryOut] = []
     penalties: List[EmployeePenaltyOut] = []
     bonuses: List[EmployeeBonusOut] = []
+    payroll_adjustments: List[EmployeePayrollAdjustmentOut] = []
     salary: EmployeeSalaryBreakdown
 
     class Config:
@@ -1550,11 +1598,23 @@ class EmployeeListItemOut(BaseModel):
 
 
 class EmployeePayrollAdjustmentIn(BaseModel):
-    """Admin-only per-period payroll adjustments (monthly employees)."""
+    """Admin-only per-period attendance deduction overrides (monthly employees)."""
 
-    period_base_salary: Optional[Decimal] = Field(None, ge=0)
-    bonus: Optional[Decimal] = Field(None, ge=0)
-    deduction: Optional[Decimal] = Field(None, ge=0)
+    period_base_salary: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Deprecated: use increment transactions. When set, creates an increment transaction for the delta.",
+    )
+    bonus: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Deprecated: creates a bonus transaction instead of overwriting a running total.",
+    )
+    deduction: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Deprecated: creates a deduction transaction instead of overwriting a running total.",
+    )
     late_penalty: Optional[Decimal] = Field(
         None,
         ge=0,
