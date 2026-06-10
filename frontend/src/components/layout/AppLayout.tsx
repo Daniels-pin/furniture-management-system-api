@@ -12,6 +12,7 @@ import type { NotificationItem } from "../../types/api";
 import { isContractJobNotification, isNewJobNotification } from "../../utils/jobNotifications";
 import { formatLagosDateTime } from "../../utils/datetime";
 import { AppTopHeader } from "./AppTopHeader";
+import { CompanyLogo } from "./CompanyLogo";
 import { NavIcon } from "./navIcons";
 
 function NavItem({
@@ -573,9 +574,12 @@ export function AppLayout() {
             <div className="mb-5 px-1">
               <NavLink
                 to={auth.role === "finance" ? "/finance" : "/dashboard"}
-                className="block min-w-0 truncate text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-faint)] hover:text-[var(--text-primary)]"
+                className="block min-w-0 hover:opacity-90"
               >
-                {APP_NAME}
+                <CompanyLogo variant="sidebar" className="mb-2.5" />
+                <span className="block truncate text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-faint)] hover:text-[var(--text-primary)]">
+                  {APP_NAME}
+                </span>
               </NavLink>
             </div>
 
@@ -955,7 +959,10 @@ export function AppLayout() {
             className="relative flex h-full w-[min(19rem,88vw)] max-w-full min-w-0 flex-col border-r border-black/10 bg-white shadow-xl"
           >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-black/10 px-4 py-3">
-              <div className="min-w-0 text-sm font-bold tracking-tight text-black">{APP_NAME}</div>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <CompanyLogo variant="drawer" />
+                <div className="min-w-0 truncate text-sm font-bold tracking-tight text-black">{APP_NAME}</div>
+              </div>
               <button
                 type="button"
                 className="flex min-h-10 min-w-10 items-center justify-center rounded-xl text-sm font-semibold text-black/70 hover:bg-black/5"

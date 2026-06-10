@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { useAuth } from "../../state/auth";
-import { env } from "../../env";
-import { APP_NAME } from "../../config/app";
 import { IconSearch } from "../dashboard/icons";
+import { CompanyLogo } from "./CompanyLogo";
 
 type AppTopHeaderProps = {
   title: string;
@@ -17,14 +16,8 @@ export function AppTopHeader({ title, subtitle, hideActions, actions }: AppTopHe
   return (
     <header className="mb-8 pb-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex min-w-0 items-end gap-3">
-          <img
-            src={env.logoUrl || "/logo.png"}
-            alt={`${APP_NAME} logo`}
-            className="hidden h-7 w-auto shrink-0 object-contain opacity-70 sm:block"
-            draggable={false}
-            loading="eager"
-          />
+        <div className="flex min-w-0 items-center gap-3.5 sm:gap-4">
+          <CompanyLogo variant="header" />
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-[1.75rem]">
               {title}

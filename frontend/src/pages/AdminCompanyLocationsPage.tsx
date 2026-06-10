@@ -82,6 +82,7 @@ export function AdminCompanyLocationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState("");
   const [confirmResolve, setConfirmResolve] = useState<null | ((v: boolean) => void)>(null);
   const mapRef = useRef<LeafletMap | null>(null);
 
@@ -92,6 +93,7 @@ export function AdminCompanyLocationsPage() {
 
   async function askConfirm(message: string) {
     return await new Promise<boolean>((resolve) => {
+      setConfirmMessage(message);
       setConfirmResolve(() => resolve);
       setConfirmOpen(true);
     });
@@ -192,7 +194,12 @@ export function AdminCompanyLocationsPage() {
       url.searchParams.set("format", "json");
       url.searchParams.set("q", q);
       url.searchParams.set("limit", "1");
-      const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+      const res = await fetch(url.toString(), {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "furniture-management-system/1.0"
+        }
+      });
       if (!res.ok) throw new Error(`Search failed (${res.status})`);
       const data = (await res.json()) as Array<{ lat?: string; lon?: string }>;
       const first = Array.isArray(data) ? data[0] : null;
@@ -502,13 +509,11 @@ export function AdminCompanyLocationsPage() {
 
         <div className="relative z-0 isolate mt-4 overflow-hidden rounded-2xl border border-black/10 [&_.leaflet-container]:z-0">
           <MapContainer
+            ref={mapRef}
             center={mapCenter}
             zoom={15}
             className="z-0"
             style={{ height: 420, width: "100%" }}
-            whenReady={(e) => {
-              mapRef.current = e.target as LeafletMap;
-            }}
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -533,7 +538,7 @@ export function AdminCompanyLocationsPage() {
       <ConfirmModal
         open={confirmOpen}
         title="Confirm"
-        message="Delete this location permanently?"
+        message={confirmMessage}
         busy={false}
         confirmLabel="Delete"
         cancelLabel="Cancel"

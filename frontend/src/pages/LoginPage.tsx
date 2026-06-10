@@ -8,8 +8,8 @@ import { authApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useAuth } from "../state/auth";
 import { useToast } from "../state/toast";
-import { env } from "../env";
 import { APP_NAME } from "../config/app";
+import { CompanyLogo } from "../components/layout/CompanyLogo";
 
 export function LoginPage() {
   const auth = useAuth();
@@ -55,13 +55,7 @@ export function LoginPage() {
       <div className="mx-auto flex min-h-dvh w-full max-w-md items-center px-4 py-10">
         <div className="w-full">
           <div className="mb-6 flex justify-center">
-            <img
-              src={env.logoUrl || "/logo.png"}
-              alt={`${APP_NAME} logo`}
-              className="h-auto max-h-20 w-auto max-w-full object-contain sm:max-h-[84px]"
-              draggable={false}
-              loading="eager"
-            />
+            <CompanyLogo variant="login" />
           </div>
           <div className="mb-6">
             <div className="text-sm font-medium italic tracking-tight text-black/70">
