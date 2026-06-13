@@ -21,6 +21,7 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
+from app.utils.phone_format import format_nigerian_phone_e164
 from app.utils.user_labels import user_label, user_labels_by_id
 
 router = APIRouter()
@@ -91,17 +92,18 @@ def export_customer_contacts(
         .all()
     )
     buf = StringIO()
-    writer = csv.writer(buf, lineterminator="\n")
     if kind == "phones":
+        writer = csv.writer(buf, lineterminator="\n", quoting=csv.QUOTE_ALL)
         writer.writerow(["phone"])
         seen: set[str] = set()
         for c in rows:
-            p = (c.phone or "").strip()
-            if p and p not in seen:
-                seen.add(p)
-                writer.writerow([p])
+            formatted = format_nigerian_phone_e164(c.phone or "")
+            if formatted and formatted not in seen:
+                seen.add(formatted)
+                writer.writerow([formatted])
         filename = "customer-phones.csv"
     else:
+        writer = csv.writer(buf, lineterminator="\n")
         writer.writerow(["email"])
         seen = set()
         for c in rows:
