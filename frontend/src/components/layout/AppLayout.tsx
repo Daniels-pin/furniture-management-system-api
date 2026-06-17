@@ -88,7 +88,7 @@ const NAV_GROUPS: NavGroupModel[] = [
       {
         key: "dashboard",
         label: "Dashboard",
-        to: (role) => (role === "finance" ? "/finance" : role === "contract_employee" ? "/contract" : "/dashboard")
+        to: (role) => (role === "finance" ? "/dashboard" : role === "contract_employee" ? "/contract" : "/dashboard")
       }
     ]
   },
@@ -138,7 +138,7 @@ const NAV_GROUPS: NavGroupModel[] = [
         key: "financials",
         label: "Financials",
         items: [
-          { key: "finance", label: "Finance", to: "/finance", roles: ["admin", "finance", "staff"] },
+          { key: "finance", label: "Finance", to: "/finance", roles: ["admin", "staff"] },
           { key: "petty-cash", label: "Petty Cash", to: "/expenses", roles: ["admin", "finance"] }
         ]
       },
@@ -560,7 +560,7 @@ export function AppLayout() {
             </span>
           </button>
           <NavLink
-            to={auth.role === "finance" ? "/finance" : "/dashboard"}
+            to="/dashboard"
             onClick={closeDrawer}
             className="min-w-0 flex-1 truncate text-center text-sm font-bold tracking-tight text-black hover:opacity-80"
           >
@@ -573,7 +573,7 @@ export function AppLayout() {
           <aside className="hidden min-w-0 flex-col md:sticky md:top-6 md:flex md:self-start md:py-1 md:min-h-[calc(100dvh-4rem)]">
             <div className="mb-5 px-1">
               <NavLink
-                to={auth.role === "finance" ? "/finance" : "/dashboard"}
+                to="/dashboard"
                 className="block min-w-0 hover:opacity-90"
               >
                 <CompanyLogo variant="sidebar" className="mb-2.5" />

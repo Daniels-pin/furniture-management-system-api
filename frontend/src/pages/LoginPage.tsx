@@ -18,7 +18,7 @@ export function LoginPage() {
   const location = useLocation() as any;
 
   const defaultHome = useMemo(() => {
-    if (auth.role === "finance") return "/finance";
+    if (auth.role === "finance") return "/dashboard";
     if (auth.role === "contract_employee") return "/contract";
     return "/dashboard";
   }, [auth.role]);

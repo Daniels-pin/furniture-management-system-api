@@ -41,7 +41,11 @@ export function FinanceDashboardPage() {
   const monthlyAttendance = useMonthlyEmployeeAttendance();
   const [searchParams] = useSearchParams();
   const moneyRequestsView = searchParams.get("moneyRequests") === "1";
-  const [section, setSection] = useState<"payments" | "petty_cash">("payments");
+  const isFinanceRole = auth.role === "finance";
+  const showPaymentsPettyToggle = !isFinanceRole;
+  const [section, setSection] = useState<"payments" | "petty_cash">(
+    isFinanceRole && !moneyRequestsView ? "petty_cash" : "payments"
+  );
   const [tab, setTab] = useState<"contract" | "monthly">("contract");
   const [pendingLoading, setPendingLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -404,6 +408,11 @@ export function FinanceDashboardPage() {
   }
 
   useEffect(() => {
+    if (!isFinanceRole) return;
+    setSection(moneyRequestsView ? "payments" : "petty_cash");
+  }, [isFinanceRole, moneyRequestsView]);
+
+  useEffect(() => {
     if (section !== "petty_cash") return;
     let alive = true;
     (async () => {
@@ -424,7 +433,10 @@ export function FinanceDashboardPage() {
 
   usePageHeader({
     title: "Finance Dashboard",
-    subtitle: "Contract payments and monthly salary payments — separated."
+    subtitle:
+      isFinanceRole && !moneyRequestsView
+        ? "Attendance and petty cash."
+        : "Contract payments and monthly salary payments — separated."
   });
 
   const pendingPage = pending ? Math.floor((pending.offset ?? 0) / (pending.limit || pageLimit)) + 1 : 1;
@@ -471,81 +483,89 @@ export function FinanceDashboardPage() {
           showHistory
         />
       ) : null}
-      <Card className="!p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-black/55">Sections</div>
-            <div className="mt-1 text-lg font-bold">{section === "payments" ? "Payments" : "Petty Cash"}</div>
-          </div>
-          <div className="inline-flex w-full flex-wrap rounded-2xl border border-black/10 bg-white p-1 sm:w-auto">
-            <button
-              type="button"
-              onClick={() => setSection("payments")}
-              className={[
-                "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
-                section === "payments" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
-              ].join(" ")}
-              aria-pressed={section === "payments"}
-            >
-              PAYMENTS
-            </button>
-            <button
-              type="button"
-              onClick={() => setSection("petty_cash")}
-              className={[
-                "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
-                section === "petty_cash" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
-              ].join(" ")}
-              aria-pressed={section === "petty_cash"}
-            >
-              PETTY CASH
-            </button>
-          </div>
-        </div>
+      {showPaymentsPettyToggle || (isFinanceRole && moneyRequestsView) ? (
+        <Card className="!p-4">
+          {showPaymentsPettyToggle ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-black/55">Sections</div>
+                <div className="mt-1 text-lg font-bold">{section === "payments" ? "Payments" : "Petty Cash"}</div>
+              </div>
+              <div className="inline-flex w-full flex-wrap rounded-2xl border border-black/10 bg-white p-1 sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setSection("payments")}
+                  className={[
+                    "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
+                    section === "payments" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  aria-pressed={section === "payments"}
+                >
+                  PAYMENTS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSection("petty_cash")}
+                  className={[
+                    "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
+                    section === "petty_cash" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  aria-pressed={section === "petty_cash"}
+                >
+                  PETTY CASH
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-lg font-bold">Payments</div>
+          )}
 
-        {section === "payments" ? (
-          <div className="mt-3 inline-flex w-full flex-wrap rounded-2xl border border-black/10 bg-white p-1 sm:w-auto">
-            <button
-              type="button"
-              onClick={() => setTab("contract")}
-              className={[
-                "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
-                tab === "contract" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
-              ].join(" ")}
-              aria-pressed={tab === "contract"}
-            >
-              CONTRACT EMPLOYEES{" "}
-              <span
-                className={[
-                  "ml-2 inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
-                  contractPendingBadge > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
-                ].join(" ")}
-              >
-                Pending ({contractPendingBadge})
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("monthly")}
-              className={[
-                "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
-                tab === "monthly" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
-              ].join(" ")}
-              aria-pressed={tab === "monthly"}
-            >
-              MONTHLY EMPLOYEES{" "}
-              <span
-                className={[
-                  "ml-2 inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
-                  monthlyDueBadge > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
-                ].join(" ")}
-              >
-                Due ({monthlyDueBadge})
-              </span>
-            </button>
-          </div>
-        ) : null}
-      </Card>
+          {section === "payments" ? (
+            <div className={showPaymentsPettyToggle ? "mt-3" : ""}>
+              <div className="inline-flex w-full flex-wrap rounded-2xl border border-black/10 bg-white p-1 sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setTab("contract")}
+                  className={[
+                    "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
+                    tab === "contract" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  aria-pressed={tab === "contract"}
+                >
+                  CONTRACT EMPLOYEES{" "}
+                  <span
+                    className={[
+                      "ml-2 inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
+                      contractPendingBadge > 0 ? "bg-emerald-600 text-white" : "bg-black/10 text-black/70"
+                    ].join(" ")}
+                  >
+                    Pending ({contractPendingBadge})
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("monthly")}
+                  className={[
+                    "min-h-11 rounded-xl px-4 text-sm font-extrabold tracking-wide",
+                    tab === "monthly" ? "bg-black text-white" : "text-black/70 hover:bg-black/5"
+                  ].join(" ")}
+                  aria-pressed={tab === "monthly"}
+                >
+                  MONTHLY EMPLOYEES{" "}
+                  <span
+                    className={[
+                      "ml-2 inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold",
+                      monthlyDueBadge > 0 ? "bg-amber-500 text-white" : "bg-black/10 text-black/70"
+                    ].join(" ")}
+                  >
+                    Due ({monthlyDueBadge})
+                  </span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
 
       {section === "petty_cash" ? (
         <Card>

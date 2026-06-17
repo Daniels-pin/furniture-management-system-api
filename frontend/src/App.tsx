@@ -111,6 +111,9 @@ const ExpensesPage = lazy(() => import("./pages/ExpensesPage").then((m) => ({ de
 const FinanceDashboardPage = lazy(() =>
   import("./pages/FinanceDashboardPage").then((m) => ({ default: m.FinanceDashboardPage }))
 );
+const FinanceRoleDashboardPage = lazy(() =>
+  import("./pages/FinanceRoleDashboardPage").then((m) => ({ default: m.FinanceRoleDashboardPage }))
+);
 const StaffFinanceSelf = lazy(() => import("./pages/StaffFinanceSelf").then((m) => ({ default: m.StaffFinanceSelf })));
 const StaffProfilePage = lazy(() => import("./pages/StaffProfilePage").then((m) => ({ default: m.StaffProfilePage })));
 
@@ -133,7 +136,13 @@ function LegacyMachineDetailRedirect() {
 
 function DashboardGate() {
   const auth = useAuth();
-  if (auth.role === "finance") return <Navigate to="/finance" replace />;
+  if (auth.role === "finance") {
+    return (
+      <LazyPage>
+        <FinanceRoleDashboardPage />
+      </LazyPage>
+    );
+  }
   if (auth.role === "contract_employee") return <Navigate to="/contract" replace />;
   if (auth.role === "staff") return <StaffDashboardPage />;
   return <DashboardPage />;
