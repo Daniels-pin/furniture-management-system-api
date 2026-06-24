@@ -85,8 +85,17 @@ class UserRole(str, Enum):
     showroom = "showroom"
     factory = "factory"
     admin = "admin"
+    root_admin = "root_admin"
     finance = "finance"
     contract_employee = "contract_employee"
+    staff = "staff"
+
+class PortalUserRole(str, Enum):
+    """Roles assignable through the normal Create User interface (excludes root_admin)."""
+    showroom = "showroom"
+    factory = "factory"
+    admin = "admin"
+    finance = "finance"
     staff = "staff"
 
 class UserCreate(BaseModel):
@@ -94,7 +103,12 @@ class UserCreate(BaseModel):
     # We map username -> email and name -> username by default for stability.
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=8, max_length=128)
-    role: UserRole
+    role: PortalUserRole
+
+
+class RootAdminUserCreate(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class ContractEmployeeCreateWithLogin(BaseModel):

@@ -95,7 +95,7 @@ export function QuotationListPage() {
             {r.created_by ? <div className="mt-0.5 text-[11px] font-semibold text-black/45">by {r.created_by}</div> : null}
           </div>
         </div>
-        {(auth.role === "admin" || auth.role === "showroom") ? (
+        {(auth.isAdmin || auth.role === "showroom") ? (
           <div className="mt-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
             <Button variant="secondary" className="w-full" onClick={() => nav(`/quotations/${r.id}`)}>
               Open
@@ -123,7 +123,7 @@ export function QuotationListPage() {
           <div className="mt-1 text-sm text-black/60">Early-stage pricing before proforma or invoice. Drafts: admin and showroom only.</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {auth.role === "admin" || auth.role === "showroom" || auth.role === "finance" ? (
+          {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (
             <Button onClick={() => nav("/quotations/new")}>New quotation</Button>
           ) : null}
           <Button variant="secondary" onClick={() => void load()} isLoading={loading}>
@@ -154,19 +154,19 @@ export function QuotationListPage() {
                 <th className="py-3 pr-4 font-semibold">Status</th>
                 <th className="py-3 pr-4 font-semibold">Total</th>
                 <th className="py-3 pr-4 font-semibold">Created</th>
-                {auth.role === "admin" || auth.role === "showroom" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
+                {auth.isAdmin || auth.role === "showroom" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={auth.role === "admin" || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.isAdmin || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={auth.role === "admin" || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
+                  <td colSpan={auth.isAdmin || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
                     No quotations yet.
                   </td>
                 </tr>
@@ -185,7 +185,7 @@ export function QuotationListPage() {
                       {formatLagosDateTime(r.created_at)}
                       {r.created_by ? <span className="ml-2 text-black/40">· {r.created_by}</span> : null}
                     </td>
-                    {auth.role === "admin" || auth.role === "showroom" ? (
+                    {auth.isAdmin || auth.role === "showroom" ? (
                       <td className="py-3 pr-0 text-right">
                         <button
                           type="button"

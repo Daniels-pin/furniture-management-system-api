@@ -68,7 +68,7 @@ export function ProformaListPage() {
     }
   }
 
-  const showActions = auth.role === "admin" || auth.role === "showroom";
+  const showActions = auth.isAdmin || auth.role === "showroom";
 
   function ProformaCard({ r }: { r: ProformaListItem }) {
     return (
@@ -121,7 +121,7 @@ export function ProformaListPage() {
           <div className="mt-1 text-sm text-black/60">Quotations and pre-payment billing. Drafts are visible to admin and showroom only.</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {auth.role === "admin" || auth.role === "showroom" || auth.role === "finance" ? (
+          {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (
             <Button onClick={() => nav("/proforma/new")}>New proforma</Button>
           ) : null}
           <Button variant="secondary" onClick={() => void load()} isLoading={loading}>

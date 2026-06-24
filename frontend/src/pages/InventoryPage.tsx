@@ -137,7 +137,7 @@ export function InventoryPage() {
       setRows(Array.isArray(list.items) ? list.items : []);
       setTotal(typeof list.total === "number" ? list.total : 0);
       setSupplierOptions(Array.isArray(sup.suppliers) ? sup.suppliers : []);
-      if (auth.role === "admin") {
+      if (auth.isAdmin) {
         try {
           const [summ, supf] = await Promise.all([
             inventoryApi.financialSummary(),
@@ -529,7 +529,7 @@ export function InventoryPage() {
         </div>
       </Card>
 
-      {auth.role === "admin" && financialSummary ? (
+      {auth.isAdmin && financialSummary ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card className="p-4">
             <div className="text-sm font-semibold text-black/70">Inventory financial summary</div>
@@ -1080,7 +1080,7 @@ export function InventoryPage() {
                     <th className="px-3 py-2">Amount</th>
                     <th className="px-3 py-2">Note</th>
                     <th className="px-3 py-2">By</th>
-                    {auth.role === "admin" ? <th className="px-3 py-2" /> : null}
+                    {auth.isAdmin ? <th className="px-3 py-2" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -1090,7 +1090,7 @@ export function InventoryPage() {
                       <td className="px-3 py-2 tabular-nums font-semibold">{formatMoney(p.amount)}</td>
                       <td className="px-3 py-2 text-black/70">{p.note || "—"}</td>
                       <td className="px-3 py-2">{p.recorded_by || "—"}</td>
-                      {auth.role === "admin" ? (
+                      {auth.isAdmin ? (
                         <td className="px-3 py-2 text-right">
                           <button
                             type="button"

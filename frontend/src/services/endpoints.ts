@@ -414,6 +414,10 @@ export const usersApi = {
     const { data } = await api.post<User>("/users", payload);
     return data;
   },
+  async createRootAdmin(payload: { username: string; password: string }) {
+    const { data } = await api.post<User>("/users/root-admins", payload);
+    return data;
+  },
   async delete(userId: number) {
     const { data } = await api.delete<{ message: string }>(`/users/${userId}`);
     return data;

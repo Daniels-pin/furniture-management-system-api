@@ -243,17 +243,17 @@ export function OrdersPage() {
     toast.push("success", "Draft discarded");
   }
 
-  const canCreate = auth.role === "showroom" || auth.role === "admin";
+  const canCreate = auth.role === "showroom" || auth.isAdmin;
   function canDeleteOrder(o: Order): boolean {
-    if (auth.role === "admin") return true;
+    if (auth.isAdmin) return true;
     if (auth.role === "showroom" && typeof auth.userId === "number" && o.created_by_id === auth.userId) {
       return true;
     }
     return false;
   }
-  const canSeePricing = auth.role === "admin" || auth.role === "showroom" || auth.role === "finance";
-  const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "admin";
-  const canUpdateStatus = auth.role === "admin" || auth.role === "factory";
+  const canSeePricing = auth.isAdmin || auth.role === "showroom" || auth.role === "finance";
+  const canInputPricingOnCreate = auth.role === "showroom" || auth.isAdmin;
+  const canUpdateStatus = auth.isAdmin || auth.role === "factory";
 
   const statusParam = view === "completed" ? "completed" : "open";
 

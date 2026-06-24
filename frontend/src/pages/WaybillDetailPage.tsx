@@ -78,8 +78,8 @@ export function WaybillDetailPage() {
   }, [id, toast]);
 
   const isReadOnly = auth.role === "finance";
-  const canDelete = auth.role === "admin" && !isReadOnly;
-  const canEdit = (auth.role === "admin" || auth.role === "showroom") && !isReadOnly;
+  const canDelete = auth.isAdmin && !isReadOnly;
+  const canEdit = (auth.isAdmin || auth.role === "showroom") && !isReadOnly;
 
   async function saveLogistics() {
     if (!Number.isFinite(id)) return;

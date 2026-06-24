@@ -29,7 +29,7 @@ export function DashboardPage() {
   const [lowStock, setLowStock] = useState<InventoryMaterial[]>([]);
   const [lowStockLoading, setLowStockLoading] = useState(false);
 
-  const attendanceEnabled = auth.role !== "admin";
+  const attendanceEnabled = !auth.isAdmin;
   const attendance = useMonthlyEmployeeAttendance({ enabled: attendanceEnabled });
 
   usePageHeader({
@@ -72,7 +72,7 @@ export function DashboardPage() {
   }, [toast]);
 
   useEffect(() => {
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       setActivity([]);
       return;
     }
@@ -97,7 +97,7 @@ export function DashboardPage() {
   }, [auth.role]);
 
   useEffect(() => {
-    if (auth.role !== "admin" && auth.role !== "factory") {
+    if (!auth.isAdmin && auth.role !== "factory") {
       setLowStock([]);
       return;
     }
@@ -126,8 +126,8 @@ export function DashboardPage() {
     };
   }, [auth.role]);
 
-  const showLowStock = auth.role === "admin" || auth.role === "factory";
-  const showActivity = auth.role === "admin";
+  const showLowStock = auth.isAdmin || auth.role === "factory";
+  const showActivity = auth.isAdmin;
 
   return (
     <div className="space-y-10">
@@ -162,7 +162,7 @@ export function DashboardPage() {
 
       <DashboardKpiGrid items={kpiItems} isLoading={isLoading} columnClass={kpiCols} />
 
-      {auth.role === "admin" ? (
+      {auth.isAdmin ? (
         <DashboardFinancialSummary data={data} isLoading={isLoading} />
       ) : null}
 

@@ -67,7 +67,7 @@ export function QuotationDetailPage() {
     data.status !== "converted" &&
     !data.converted_order_id &&
     !data.converted_proforma_id;
-  const canPresalesDelete = !isReadOnly && (auth.role === "admin" || auth.role === "showroom") && data;
+  const canPresalesDelete = !isReadOnly && (auth.isAdmin || auth.role === "showroom") && data;
   const canDocActions = !isReadOnly && Boolean(data);
 
   return (

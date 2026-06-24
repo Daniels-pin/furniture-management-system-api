@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import normalize_role, reject_staff, require_role
+from app.auth.auth import normalize_role, reject_staff, require_role, has_admin_privileges
 from app.database import get_db
 from app.utils.activity_log import TRASH_PURGED, TRASH_RESTORED, log_activity, username_from_email
 
@@ -319,7 +319,7 @@ def list_trash(
     db: Session = Depends(get_db),
     user=Depends(reject_staff),
 ):
-    is_admin = normalize_role(user.role) == "admin"
+    is_admin = has_admin_privileges(user)
     rows = _gather_trash_rows(db, is_admin, user.id)
     rows.sort(key=lambda r: r.deleted_at, reverse=True)
     return TrashListResponse(items=rows)
@@ -444,7 +444,7 @@ def restore_item(
         raise HTTPException(status_code=400, detail="Invalid entity_type")
 
     _et, entity = _load_trashed_entity(db, body.entity_type, body.entity_id)
-    is_admin = normalize_role(user.role) == "admin"
+    is_admin = has_admin_privileges(user)
     deleted_by = getattr(entity, "deleted_by_id", None)
     if not is_admin and deleted_by != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")

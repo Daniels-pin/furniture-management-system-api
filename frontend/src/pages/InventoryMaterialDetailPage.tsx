@@ -417,7 +417,7 @@ export function InventoryMaterialDetailPage() {
                       <th className="px-2 py-2">Amount</th>
                       <th className="px-2 py-2">Note</th>
                       <th className="px-2 py-2">By</th>
-                      {auth.role === "admin" ? <th className="px-2 py-2" /> : null}
+                      {auth.isAdmin ? <th className="px-2 py-2" /> : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -427,7 +427,7 @@ export function InventoryMaterialDetailPage() {
                         <td className="px-2 py-2 tabular-nums">{formatMoney(p.amount)}</td>
                         <td className="px-2 py-2">{p.note || "—"}</td>
                         <td className="px-2 py-2">{p.recorded_by || "—"}</td>
-                        {auth.role === "admin" ? (
+                        {auth.isAdmin ? (
                           <td className="px-2 py-2 text-right">
                             <button
                               type="button"

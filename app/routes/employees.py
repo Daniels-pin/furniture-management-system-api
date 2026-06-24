@@ -17,10 +17,11 @@ from sqlalchemy import and_, extract, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
-from app.auth.auth import get_current_user, normalize_role, require_role
+from app.auth.auth import get_current_user, has_admin_privileges, normalize_role, require_role
 from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
+from app.utils.root_admin import exclude_system_employee_ids, system_linked_employee_ids
 from app.utils.timezone import (
     early_minutes_before_cutoff,
     lagos_date_of,
@@ -109,7 +110,7 @@ def _month_label(year: int, month: int) -> str:
 
 def _can_view_attendance_oversight(user) -> bool:
     role = normalize_role(getattr(user, "role", None))
-    return role in ("admin", "factory")
+    return has_admin_privileges(user) or role == "factory"
 
 
 def _require_attendance_oversight(user) -> None:
@@ -118,7 +119,7 @@ def _require_attendance_oversight(user) -> None:
 
 
 def _is_admin(user) -> bool:
-    return normalize_role(getattr(user, "role", None)) == "admin"
+    return has_admin_privileges(user)
 
 
 MONTH_PAYMENT_PAID = "paid"
@@ -245,10 +246,11 @@ def get_active_period(db: Session) -> Optional[models.SalaryPeriod]:
 
 
 def _active_employee_ids(db: Session) -> list[int]:
-    return [
+    ids = [
         int(eid)
         for (eid,) in db.query(models.Employee.id).filter(models.Employee.deleted_at.is_(None)).all()
     ]
+    return exclude_system_employee_ids(db, ids)
 
 
 def _period_payment_counts(db: Session, period: models.SalaryPeriod) -> tuple[int, int]:
@@ -1056,7 +1058,7 @@ def _monitor_filter_status(raw_status: str) -> str:
 
 
 def _attendance_assigned_employees(db: Session) -> list[models.Employee]:
-    return (
+    rows = (
         db.query(models.Employee)
         .options(joinedload(models.Employee.work_location))
         .filter(
@@ -1066,6 +1068,10 @@ def _attendance_assigned_employees(db: Session) -> list[models.Employee]:
         .order_by(models.Employee.full_name.asc(), models.Employee.id.asc())
         .all()
     )
+    exclude = system_linked_employee_ids(db)
+    if not exclude:
+        return rows
+    return [e for e in rows if int(e.id) not in exclude]
 
 
 def _absence_history_item(
@@ -3454,6 +3460,9 @@ def list_employee_location_assignments(
     if s:
         q = q.filter(models.Employee.full_name.ilike(f"%{s}%"))
     rows = q.order_by(models.Employee.full_name.asc(), models.Employee.id.asc()).all()
+    exclude = system_linked_employee_ids(db)
+    if exclude:
+        rows = [e for e in rows if int(e.id) not in exclude]
     return [
         EmployeeLocationAssignmentItemOut(
             id=e.id,

@@ -55,7 +55,7 @@ export function EmployeesPage() {
   const refreshToken = searchParams.get("r");
   const moneyRequestsView = searchParams.get("moneyRequests") === "1";
 
-  const payrollNavQuery = usePayrollPeriodsNav(auth.role === "admin");
+  const payrollNavQuery = usePayrollPeriodsNav(auth.isAdmin);
   const nav = payrollNavQuery.data ?? null;
   const [rows, setRows] = useState<EmployeeListItem[]>([]);
   const [monthlySearch, setMonthlySearch] = useState("");
@@ -163,7 +163,7 @@ export function EmployeesPage() {
 
   /** Default URL to active payroll month when missing (monthly tab only — avoid clobbering contract tab params). */
   useEffect(() => {
-    if (auth.role !== "admin") return;
+    if (!auth.isAdmin) return;
     if (tab === "contract") return;
     if (!nav?.active_period) return;
     const hasYm = searchParams.get("year") && searchParams.get("month");
@@ -179,7 +179,7 @@ export function EmployeesPage() {
 
   /** If URL points to a month not in the archive (e.g. stale bookmark), snap to active */
   useEffect(() => {
-    if (auth.role !== "admin") return;
+    if (!auth.isAdmin) return;
     if (tab === "contract") return;
     if (!nav?.periods.length || !nav.active_period) return;
     if (!Number.isFinite(year) || !Number.isFinite(month)) return;
@@ -206,7 +206,7 @@ export function EmployeesPage() {
 
   useEffect(() => {
     let alive = true;
-    if (auth.role !== "admin") return;
+    if (!auth.isAdmin) return;
     if (tab !== "monthly") return;
     if (!periodParams) {
       setLoading(false);
@@ -261,7 +261,7 @@ export function EmployeesPage() {
   }, [auth.role, toast, pendingSearch, pendingOverpaidOnly, pendingSort, moneyRequestsView]);
 
   useEffect(() => {
-    if (auth.role !== "admin") return;
+    if (!auth.isAdmin) return;
     if (tab !== "contract") return;
     let alive = true;
     let notifDebounceTimer: number | null = null;
@@ -370,7 +370,7 @@ export function EmployeesPage() {
 
   return (
     <div className="space-y-6">
-      {auth.role === "admin" ? (
+      {auth.isAdmin ? (
         <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
           <button
             type="button"
@@ -395,7 +395,7 @@ export function EmployeesPage() {
         </div>
       ) : null}
 
-      {auth.role === "admin" && tab === "monthly" && false ? (
+      {auth.isAdmin && tab === "monthly" && false ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="!p-4">
             <div className="text-xs font-semibold text-black/55">Period</div>

@@ -10,7 +10,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import get_current_user, normalize_role, require_role
+from app.auth.auth import get_current_user, has_admin_privileges, normalize_role, require_role
 from app.database import get_db
 from app.schemas import (
     ContractJobCancelBody,
@@ -23,6 +23,7 @@ from app.schemas import (
 from app.utils.cloudinary import upload_image
 from app.utils.financial_audit import log_financial_action
 from app.utils.notifications import create_notifications
+from app.utils.root_admin import admin_user_ids_for_notifications
 from app.utils.contract_financials import (
     _get_reversed_payment_ids,
     _get_reversed_payment_ids_batch,
@@ -813,11 +814,7 @@ def create_job_me(
     db.commit()
     db.refresh(j)
     # Notify admins when an employee creates a job (so it shows up centrally).
-    admin_ids = [
-        int(uid)
-        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
-        if uid is not None
-    ]
+    admin_ids = admin_user_ids_for_notifications(db)
     if admin_ids:
         create_notifications(
             db,
@@ -900,13 +897,7 @@ def set_price_me(
     db.commit()
     db.refresh(j)
     # Notify admins so renegotiations are visible on the admin side.
-    admin_ids = [
-        int(uid)
-        for (uid,) in (
-            db.query(models.User.id).filter(models.User.role == "admin").all()
-        )
-        if uid is not None
-    ]
+    admin_ids = admin_user_ids_for_notifications(db)
     if admin_ids:
         create_notifications(
             db,
@@ -955,11 +946,7 @@ def accept_price_me(
     db.commit()
     db.refresh(j)
     # Notify admins when employee accepts (price accepted event).
-    admin_ids = [
-        int(uid)
-        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
-        if uid is not None
-    ]
+    admin_ids = admin_user_ids_for_notifications(db)
     if admin_ids:
         create_notifications(
             db,
@@ -1103,7 +1090,7 @@ def cancel_job(
 ):
     j = _get_job_or_404(db, job_id)
     role = normalize_role(getattr(current_user, "role", None))
-    if role not in ("admin", "contract_employee"):
+    if not has_admin_privileges(current_user) and role != "contract_employee":
         raise HTTPException(status_code=403, detail="Not authorized")
     if role == "contract_employee":
         _assert_job_belongs_to_user(db, current_user, j)
@@ -1136,12 +1123,7 @@ def cancel_job(
 
     # Notify the other party when job is cancelled.
     ce = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == j.contract_employee_id).first()
-    admin_ids = [
-        int(uid)
-        for (uid,) in (db.query(models.User.id).filter(models.User.role == "admin").all())
-        if uid is not None
-    ]
-    if role == "admin":
+    if has_admin_privileges(current_user):
         if ce and ce.user_id:
             create_notifications(
                 db,
@@ -1154,6 +1136,7 @@ def cancel_job(
             )
             db.commit()
     else:
+        admin_ids = admin_user_ids_for_notifications(db)
         if admin_ids:
             create_notifications(
                 db,

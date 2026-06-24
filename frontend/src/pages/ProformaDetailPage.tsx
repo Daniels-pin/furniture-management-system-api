@@ -62,7 +62,7 @@ export function ProformaDetailPage() {
   const canEdit = !isReadOnly && data && data.status !== "converted";
   const canFinalize = !isReadOnly && data?.status === "draft";
   const canConvert = !isReadOnly && data && data.status !== "converted" && !data.converted_order_id;
-  const canPresalesDelete = !isReadOnly && (auth.role === "admin" || auth.role === "showroom") && data;
+  const canPresalesDelete = !isReadOnly && (auth.isAdmin || auth.role === "showroom") && data;
   const canDocActions = !isReadOnly && Boolean(data);
 
   return (

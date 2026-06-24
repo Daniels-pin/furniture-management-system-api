@@ -28,10 +28,10 @@ export function CustomersPage() {
   const [exporting, setExporting] = useState(false);
 
   const canSeePrivate = auth.role !== "factory";
-  const canDelete = auth.role === "admin";
-  const canExport = auth.role === "admin";
-  const canCreate = auth.role === "admin" || auth.role === "showroom";
-  const canEdit = auth.role === "admin" || auth.role === "showroom";
+  const canDelete = auth.isAdmin;
+  const canExport = auth.isAdmin;
+  const canCreate = auth.isAdmin || auth.role === "showroom";
+  const canEdit = auth.isAdmin || auth.role === "showroom";
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);

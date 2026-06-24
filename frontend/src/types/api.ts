@@ -1,4 +1,4 @@
-export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee" | "staff";
+export type Role = "showroom" | "factory" | "admin" | "root_admin" | "finance" | "contract_employee" | "staff";
 
 export type DraftModule = "quotation" | "order" | "proforma";
 
@@ -140,7 +140,7 @@ export type User = {
 export type UserCreate = {
   username: string;
   password: string;
-  role: Role;
+  role: Exclude<Role, "root_admin" | "contract_employee">;
 };
 
 export type InvoiceListItem = {

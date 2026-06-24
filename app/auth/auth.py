@@ -86,9 +86,28 @@ def require_role(allowed_roles: list):
         effective_role = normalize_role(getattr(user, "role", None))
         effective_allowed = {normalize_role(r) for r in allowed_roles}
         if effective_role not in effective_allowed:
+            # Root Admin inherits every permission granted to Admin.
+            from app.utils.root_admin import ROOT_ADMIN_ROLE
+
+            if effective_role == ROOT_ADMIN_ROLE and "admin" in effective_allowed:
+                return user
             raise HTTPException(status_code=403, detail="Not authorized")
         return user
     return role_checker
+
+
+def require_root_admin(user=Depends(get_current_user)):
+    from app.utils.root_admin import is_root_admin_user
+
+    if not is_root_admin_user(user):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return user
+
+
+def has_admin_privileges(user) -> bool:
+    from app.utils.root_admin import has_admin_privileges as _has_admin_privileges
+
+    return _has_admin_privileges(user)
 
 
 def forbid_factory(user=Depends(get_current_user)):

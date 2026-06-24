@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
-from app.auth.auth import get_current_user, normalize_role, reject_staff
+from app.auth.auth import get_current_user, normalize_role, reject_staff, has_admin_privileges
 from app.db.alive import customer_alive, order_alive
 from app.database import get_db
 
@@ -110,8 +110,8 @@ def get_dashboard(
         "recent_orders": recent_orders,
     }
 
-    # Admin-only financials
-    if user.role == "admin":
+    # Admin-only financials (Root Admin inherits Admin dashboard access)
+    if has_admin_privileges(user):
         total_revenue = (
             db.query(
                 func.coalesce(

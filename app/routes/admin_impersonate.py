@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import normalize_role, require_role
+from app.auth.auth import has_admin_privileges, normalize_role, require_role
 from app.auth.impersonation_tokens import create_impersonation_restore_token, verify_impersonation_restore_token
 from app.auth.utils import create_access_token
 from app.config import ALGORITHM, SECRET_KEY
@@ -16,6 +16,7 @@ from app.utils.activity_log import (
     log_activity,
     username_from_email,
 )
+from app.utils.root_admin import is_root_admin_role, is_root_admin_user
 from app.utils.user_account import is_removed_account
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -48,6 +49,8 @@ def impersonate_user(
         raise HTTPException(status_code=404, detail="User not found")
     if is_removed_account(target):
         raise HTTPException(status_code=400, detail="Cannot impersonate a removed user")
+    if is_root_admin_role(target.role) and not is_root_admin_user(admin):
+        raise HTTPException(status_code=403, detail="Only a Root Admin may impersonate this account.")
 
     username = username_from_email(target.email)
     token = create_access_token(
@@ -115,7 +118,7 @@ def stop_impersonation(
         raise HTTPException(status_code=403, detail="Invalid or expired restore token")
 
     admin = db.query(models.User).filter(models.User.id == int(admin_id)).first()
-    if admin is None or normalize_role(admin.role) != "admin":
+    if admin is None or not has_admin_privileges(admin):
         raise HTTPException(status_code=403, detail="Original admin account is not valid")
 
     username = username_from_email(admin.email)

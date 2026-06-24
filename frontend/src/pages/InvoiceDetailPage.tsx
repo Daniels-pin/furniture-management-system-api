@@ -24,8 +24,8 @@ export function InvoiceDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const canDeleteInvoice = auth.role === "admin";
-  const canDocActions = auth.role === "admin" || auth.role === "showroom";
+  const canDeleteInvoice = auth.isAdmin;
+  const canDocActions = auth.isAdmin || auth.role === "showroom";
 
   useEffect(() => {
     let alive = true;

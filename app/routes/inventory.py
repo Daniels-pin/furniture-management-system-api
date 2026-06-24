@@ -136,7 +136,7 @@ def _material_to_out(
 
 
 def require_inventory_access(user=Depends(get_current_user)):
-    if normalize_role(getattr(user, "role", None)) not in ("admin", "factory"):
+    if normalize_role(getattr(user, "role", None)) not in ("admin", "root_admin", "factory"):
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
 

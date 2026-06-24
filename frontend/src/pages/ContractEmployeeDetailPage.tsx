@@ -208,7 +208,7 @@ export function ContractEmployeeDetailPage() {
   }, [id, toast]);
 
   useEffect(() => {
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       setUnreadNotifs([]);
       return;
     }
@@ -236,7 +236,7 @@ export function ContractEmployeeDetailPage() {
   }, [auth.role]);
 
   useEffect(() => {
-    if (auth.role !== "admin" || tab !== "jobs" || !Number.isFinite(id)) return;
+    if (!auth.isAdmin || tab !== "jobs" || !Number.isFinite(id)) return;
     let alive = true;
     (async () => {
       try {
@@ -341,7 +341,7 @@ export function ContractEmployeeDetailPage() {
   }
 
   useEffect(() => {
-    if (auth.role !== "admin") return;
+    if (!auth.isAdmin) return;
     if (!Number.isFinite(id)) return;
     if (tab !== "jobs") return;
     let alive = true;
@@ -391,12 +391,12 @@ export function ContractEmployeeDetailPage() {
           <div className="mt-1 text-sm text-black/60">Contract employee details, jobs, and finances.</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {auth.role === "admin" ? (
+          {auth.isAdmin ? (
             <Button variant="secondary" disabled={!detail} onClick={() => setResetOpen(true)}>
               Reset Password
             </Button>
           ) : null}
-          {auth.role === "admin" ? (
+          {auth.isAdmin ? (
             <Button
               variant="danger"
               disabled={!detail || deleting}
@@ -506,7 +506,7 @@ export function ContractEmployeeDetailPage() {
                     <div className="mt-0.5 text-xs text-black/55">Click any job row/card to open details.</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {auth.role === "admin" ? (
+                    {auth.isAdmin ? (
                       <Button onClick={() => setAssignOpen(true)}>Assign Job</Button>
                     ) : null}
                     <Button variant="secondary" isLoading={jobsLoading} onClick={() => void refreshJobs()}>
@@ -860,7 +860,7 @@ export function ContractEmployeeDetailPage() {
                   </div>
                 </Card>
 
-                {auth.role === "admin" ? (
+                {auth.isAdmin ? (
                   <Card className="!p-4">
                     <div className="text-sm font-semibold text-black">Admin initiated payment (no request)</div>
                     <div className="mt-2 text-xs text-black/55">
@@ -1120,7 +1120,7 @@ export function ContractEmployeeDetailPage() {
                       ) : null}
                       {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
                       <div className="mt-2 flex justify-end gap-2">
-                        {auth.role === "admin" && t.txn_type === "payment" && canCancelUnpaidPaymentTransfer(t.status) ? (
+                        {auth.isAdmin && t.txn_type === "payment" && canCancelUnpaidPaymentTransfer(t.status) ? (
                           <Button variant="danger" onClick={() => setCancelTargetId(t.id)}>
                             Cancel
                           </Button>

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.utils.route_db import route_db_session
 from app import models
-from app.auth.auth import get_current_user, is_factory_user, normalize_role, reject_staff, require_role
+from app.auth.auth import get_current_user, has_admin_privileges, is_factory_user, normalize_role, reject_staff, require_role
 from app.db.alive import customer_alive, order_alive
 from app.auth.pdf_access import require_order_reader
 from datetime import datetime, timedelta
@@ -175,7 +175,7 @@ def _build_order_response(
         "items": item_rows,
     }
 
-    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "root_admin", "showroom", "finance"):
         total = None
         if order.final_price is not None or order.total_price is not None:
             base_price = order.final_price if order.final_price is not None else order.total_price
@@ -208,7 +208,7 @@ def _build_order_response(
         )
 
         # Admin-only: show who performed actions
-        if normalize_role(getattr(user, "role", None)) == "admin":
+        if has_admin_privileges(user):
             created_by_username = None
             updated_by_username = None
             if order.created_by:
@@ -773,7 +773,7 @@ def get_orders(
             ],
         }
 
-        if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
+        if normalize_role(getattr(user, "role", None)) in ("admin", "root_admin", "showroom", "finance"):
             base.update(
                 {
                     "total_price": order.total_price,
@@ -924,10 +924,10 @@ def get_order(
         "items": item_rows,
     }
 
-    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "root_admin", "showroom", "finance"):
         created_by_username = None
         updated_by_username = None
-        if normalize_role(getattr(user, "role", None)) == "admin":
+        if has_admin_privileges(user):
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
                 created_by_username = historical_attribution_label(u1)
@@ -1077,7 +1077,7 @@ def put_order_admin(
             for i, item in enumerate(items)
         ],
     }
-    if normalize_role(getattr(user, "role", None)) in ("admin", "showroom", "finance"):
+    if normalize_role(getattr(user, "role", None)) in ("admin", "root_admin", "showroom", "finance"):
         total = None
         if order.final_price is not None or order.total_price is not None:
             base_price = order.final_price if order.final_price is not None else order.total_price
@@ -1085,7 +1085,7 @@ def put_order_admin(
                 total = (base_price or Decimal("0")) + (order.tax or Decimal("0"))
         created_by_username = None
         updated_by_username = None
-        if normalize_role(getattr(user, "role", None)) == "admin":
+        if has_admin_privileges(user):
             if order.created_by:
                 u1 = db.query(models.User).filter(models.User.id == order.created_by).first()
                 created_by_username = historical_attribution_label(u1)

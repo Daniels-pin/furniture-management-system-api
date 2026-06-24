@@ -11,6 +11,7 @@ import { usePageHeaderState } from "./pageHeader";
 import type { NotificationItem } from "../../types/api";
 import { isContractJobNotification, isNewJobNotification } from "../../utils/jobNotifications";
 import { formatLagosDateTime } from "../../utils/datetime";
+import { roleLabel, roleSatisfiesAllowed } from "../../utils/roles";
 import { AppTopHeader } from "./AppTopHeader";
 import { CompanyLogo } from "./CompanyLogo";
 import { NavIcon } from "./navIcons";
@@ -178,7 +179,7 @@ function AppNavLinks({
 
   function isVisible(item: NavItemModel) {
     if (!item.roles) return true;
-    return item.roles.includes(role);
+    return roleSatisfiesAllowed(role, item.roles);
   }
 
   function resolveTo(item: NavItemModel) {
@@ -284,13 +285,13 @@ export function AppLayout() {
       setAssignedJobsCount(0);
     }
 
-    if (auth.role === "admin") {
+    if (auth.isAdmin) {
       setAdminNewJobsCount(items.filter((n) => isNewJobNotification(n)).length);
     } else {
       setAdminNewJobsCount(0);
     }
 
-    if (auth.role === "admin" || auth.role === "finance") {
+    if (auth.isAdmin || auth.role === "finance") {
       const kinds = auth.role === "finance" ? ["payment_sent_to_finance"] : ["payment_request_submitted"];
       setPendingMoneyCount(items.filter((n) => kinds.includes(String(n.kind))).length);
     } else {
@@ -299,7 +300,7 @@ export function AppLayout() {
   }, [notifUnreadRes, auth.token, auth.userId, auth.role, toast]);
 
   useEffect(() => {
-    if (!auth.token || auth.role !== "admin") {
+    if (!auth.token || !auth.isAdmin) {
       setPendingNegotiationsCount(0);
       return;
     }
@@ -388,7 +389,7 @@ export function AppLayout() {
       .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
       .catch(() => null);
 
-    if (n.kind === "payment_request_submitted" && auth.role === "admin") {
+    if (n.kind === "payment_request_submitted" && auth.isAdmin) {
       setNotifOpen(false);
       navigateForMoneyRequests();
       return;
@@ -420,7 +421,7 @@ export function AppLayout() {
   }, [location.pathname, auth.role]);
 
   useEffect(() => {
-    if (auth.role !== "admin" && auth.role !== "factory") {
+    if (!auth.isAdmin && auth.role !== "factory") {
       setLowStockCount(0);
       return;
     }
@@ -587,30 +588,10 @@ export function AppLayout() {
 
             <div className="mt-auto px-1 pt-6">
               <div className="text-[12px] font-medium text-[var(--text-primary)]">
-                {auth.role === "admin"
-                  ? "Admin"
-                  : auth.role === "finance"
-                    ? "Finance"
-                    : auth.role === "factory"
-                      ? "Factory"
-                      : auth.role === "contract_employee"
-                        ? "Contract"
-                        : auth.role === "staff"
-                          ? "Staff"
-                          : "Showroom"}
+                {roleLabel(auth.role)}
               </div>
               <div className="mt-0.5 text-[11px] text-[var(--text-faint)]">
-                {auth.role === "admin"
-                  ? "Admin"
-                  : auth.role === "finance"
-                    ? "Finance"
-                    : auth.role === "factory"
-                      ? "Factory"
-                      : auth.role === "contract_employee"
-                        ? "Contract"
-                        : auth.role === "staff"
-                          ? "Staff"
-                          : "Showroom"}
+                {roleLabel(auth.role)}
               </div>
               <button
                 className="mt-3 w-full rounded-lg px-2 py-2 text-left text-[12px] font-medium text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
@@ -747,7 +728,7 @@ export function AppLayout() {
                     </button>
                   ) : null}
 
-                  {auth.role === "admin" || auth.role === "finance" ? (
+                  {auth.isAdmin || auth.role === "finance" ? (
                     <button
                       type="button"
                       className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
@@ -834,7 +815,7 @@ export function AppLayout() {
                     )}
                   </div>
 
-                  {auth.role === "admin" || auth.role === "factory" ? (
+                  {auth.isAdmin || auth.role === "factory" ? (
                     <button
                       type="button"
                       className="relative flex min-h-10 min-w-10 items-center justify-center rounded-lg bg-[var(--surface)] px-2.5 py-2 shadow-soft hover:bg-[var(--surface-muted)]"
@@ -980,32 +961,9 @@ export function AppLayout() {
               />
             </div>
             <div className="shrink-0 border-t border-black/10 bg-black/[0.02] p-4">
-              <div className="text-xs font-semibold">
-                {auth.role === "admin"
-                  ? "Admin"
-                  : auth.role === "finance"
-                    ? "Finance"
-                    : auth.role === "factory"
-                      ? "Factory"
-                      : auth.role === "contract_employee"
-                        ? "Contract"
-                        : auth.role === "staff"
-                          ? "Staff"
-                          : "Showroom"}
-              </div>
+              <div className="text-xs font-semibold">{roleLabel(auth.role)}</div>
               <div className="mt-0.5 text-[11px] font-semibold text-black/60">
-                Role:{" "}
-                {auth.role === "admin"
-                  ? "Admin"
-                  : auth.role === "finance"
-                    ? "Finance"
-                    : auth.role === "factory"
-                      ? "Factory"
-                      : auth.role === "contract_employee"
-                        ? "Contract"
-                        : auth.role === "staff"
-                          ? "Staff"
-                          : "Showroom"}
+                Role: {roleLabel(auth.role)}
               </div>
               <button
                 type="button"

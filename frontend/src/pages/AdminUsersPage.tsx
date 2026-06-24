@@ -5,6 +5,7 @@ import { adminApi, usersApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
+import { isRootAdminRole, roleLabel } from "../utils/roles";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
@@ -21,7 +22,7 @@ export function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const limit = 10;
 
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createRootOpen, setCreateRootOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [impersonateConfirmId, setImpersonateConfirmId] = useState<number | null>(null);
@@ -82,7 +83,9 @@ export function AdminUsersPage() {
   }
 
   function UserCard({ u, displayNumber }: { u: User; displayNumber: string }) {
-    const canImpersonate = typeof u.id === "number" && u.id !== auth.userId;
+    const isProtectedRoot = isRootAdminRole(u.role);
+    const canManage = !isProtectedRoot || auth.isRootAdmin;
+    const canImpersonate = canManage && typeof u.id === "number" && u.id !== auth.userId;
     return (
       <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
         <div className="flex items-start justify-between gap-3">
@@ -90,7 +93,7 @@ export function AdminUsersPage() {
             <div className="text-sm font-bold">User #{displayNumber}</div>
             <div className="mt-1 break-words text-sm font-semibold text-black/80">{u.username}</div>
             <div className="mt-1 inline-flex rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
-              {u.role}
+              {roleLabel(u.role)}
             </div>
           </div>
         </div>
@@ -107,6 +110,7 @@ export function AdminUsersPage() {
               Login as User
             </Button>
           ) : null}
+          {canManage ? (
           <Button
             variant="danger"
             className="w-full"
@@ -117,6 +121,7 @@ export function AdminUsersPage() {
           >
             Delete
           </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -134,6 +139,11 @@ export function AdminUsersPage() {
             Refresh
           </Button>
           <Button onClick={() => setCreateOpen(true)}>Create user</Button>
+          {auth.isRootAdmin ? (
+            <Button variant="secondary" onClick={() => setCreateRootOpen(true)}>
+              Create Root Admin
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -180,14 +190,17 @@ export function AdminUsersPage() {
               ) : (
                 pageRows.map((u, idx) => {
                   const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
+                  const isProtectedRoot = isRootAdminRole(u.role);
+                  const canManage = !isProtectedRoot || auth.isRootAdmin;
+                  const canImpersonate = canManage && typeof u.id === "number" && u.id !== auth.userId;
                   return (
                     <tr key={u.id} className="border-b border-black/5">
                       <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
                       <td className="py-3 pr-4">{u.username}</td>
-                      <td className="py-3 pr-4">{u.role}</td>
+                      <td className="py-3 pr-4">{roleLabel(u.role)}</td>
                       <td className="py-3 pr-0 text-right">
                         <div className="flex flex-wrap items-center justify-end gap-1">
-                          {typeof u.id === "number" && u.id !== auth.userId ? (
+                          {canImpersonate ? (
                             <Button
                               variant="secondary"
                               disabled={impersonatingId !== null || deletingId === u.id}
@@ -196,15 +209,17 @@ export function AdminUsersPage() {
                               Login as User
                             </Button>
                           ) : null}
-                          <Button
-                            variant="ghost"
-                            disabled={deletingId === u.id}
-                            onClick={() => {
-                              if (typeof u.id === "number") setConfirmDeleteId(u.id);
-                            }}
-                          >
-                            Delete
-                          </Button>
+                          {canManage ? (
+                            <Button
+                              variant="ghost"
+                              disabled={deletingId === u.id}
+                              onClick={() => {
+                                if (typeof u.id === "number") setConfirmDeleteId(u.id);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -243,6 +258,15 @@ export function AdminUsersPage() {
           onCreated={(u) => {
             setUsers((xs) => [u, ...xs]);
             setCreateOpen(false);
+          }}
+        />
+      </Modal>
+
+      <Modal open={createRootOpen} title="Create Root Admin" onClose={() => setCreateRootOpen(false)}>
+        <CreateRootAdminForm
+          onCreated={(u) => {
+            setUsers((xs) => [u, ...xs]);
+            setCreateRootOpen(false);
           }}
         />
       </Modal>
@@ -372,6 +396,55 @@ function CreateUserForm({ onCreated }: { onCreated(u: User): void }) {
       <div className="flex justify-end gap-2 pt-2">
         <Button type="submit" isLoading={isSubmitting}>
           Create
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function CreateRootAdminForm({ onCreated }: { onCreated(u: User): void }) {
+  const toast = useToast();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const created = await usersApi.createRootAdmin({
+        username: username.trim(),
+        password
+      });
+      toast.push("success", "Root Admin created");
+      onCreated(created);
+      setUsername("");
+      setPassword("");
+    } catch (err) {
+      toast.push("error", getErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="space-y-3" onSubmit={submit}>
+      <div className="text-sm text-black/70">
+        Root Admin is an internal system account for maintenance and support. It is hidden from regular Admin user lists.
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+        <Input
+          label="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          required
+        />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="submit" isLoading={isSubmitting}>
+          Create Root Admin
         </Button>
       </div>
     </form>

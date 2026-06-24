@@ -1,6 +1,7 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Role, useAuth } from "../state/auth";
+import { roleSatisfiesAllowed } from "../utils/roles";
 
 export function RequireAuth({
   children,
@@ -17,7 +18,7 @@ export function RequireAuth({
   }
 
   if (roles && roles.length > 0) {
-    if (!auth.role || !roles.includes(auth.role)) {
+    if (!roleSatisfiesAllowed(auth.role, roles)) {
       const fallback =
         auth.role === "finance" ? "/dashboard" : auth.role === "contract_employee" ? "/contract" : "/dashboard";
       return <Navigate to={fallback} replace />;
@@ -26,4 +27,3 @@ export function RequireAuth({
 
   return <>{children}</>;
 }
-

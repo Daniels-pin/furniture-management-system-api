@@ -9,7 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth.auth import forbid_factory, require_role
+from app.auth.auth import forbid_factory, has_admin_privileges, require_role
 from app.database import get_db
 from app.db.alive import customer_alive
 from app.schemas import CustomerCreate, CustomerPublicResponse, CustomerResponse, CustomerUpdate
@@ -56,7 +56,7 @@ def get_customers(
     customers = q.order_by(models.Customer.id.desc()).offset(off).limit(lim).all()
 
     creator_labels: dict[int, str | None] = {}
-    if user.role in ("admin", "showroom"):
+    if has_admin_privileges(user) or user.role == "showroom":
         creator_ids = {int(c.creator_id) for c in customers if getattr(c, "creator_id", None)}
         creator_labels = user_labels_by_id(db, creator_ids)
 
@@ -71,7 +71,7 @@ def get_customers(
             "birth_day": c.birth_day,
             "birth_month": c.birth_month,
         }
-        if user.role in ("admin", "showroom"):
+        if has_admin_privileges(user) or user.role == "showroom":
             cid = getattr(c, "creator_id", None)
             row["created_by"] = creator_labels.get(int(cid)) if cid else None
         result.append(row)
@@ -193,7 +193,7 @@ def birthdays_today(
             "birth_day": c.birth_day,
             "birth_month": c.birth_month,
         }
-        if user.role in ("admin", "showroom"):
+        if has_admin_privileges(user) or user.role == "showroom":
             row["created_by"] = _creator_username(db, c)
         result.append(row)
     return result

@@ -82,10 +82,10 @@ export function OrderDetailsPage() {
   const [wbDriverPhone, setWbDriverPhone] = useState("");
   const [wbVehiclePlate, setWbVehiclePlate] = useState("");
 
-  const canEditOrder = auth.role === "admin" || auth.role === "showroom";
-  const canIssueInvoice = auth.role === "admin" || auth.role === "showroom";
-  const canSeeItemPricing = auth.role === "admin" || auth.role === "showroom" || auth.role === "finance";
-  const canSeePricing = auth.role === "admin" || auth.role === "showroom" || auth.role === "finance";
+  const canEditOrder = auth.isAdmin || auth.role === "showroom";
+  const canIssueInvoice = auth.isAdmin || auth.role === "showroom";
+  const canSeeItemPricing = auth.isAdmin || auth.role === "showroom" || auth.role === "finance";
+  const canSeePricing = auth.isAdmin || auth.role === "showroom" || auth.role === "finance";
 
   async function runIssueInvoice(orderId: number, orderEditedBeforeInvoice: boolean) {
     setIssuingInvoice(true);
@@ -338,7 +338,7 @@ export function OrderDetailsPage() {
               </Card>
             ) : null}
 
-            {auth.role === "admin" || auth.role === "showroom" || auth.role === "finance" ? (
+            {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (
               <Card>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -373,7 +373,7 @@ export function OrderDetailsPage() {
                     {canSeePricing ? "Totals and payment state" : "Pricing is hidden for your role."}
                   </div>
                 </div>
-                {auth.role === "admin" ? (
+                {auth.isAdmin ? (
                   <Button
                     isLoading={paying}
                     onClick={async () => {
@@ -402,7 +402,7 @@ export function OrderDetailsPage() {
                       <div className="text-xs font-semibold text-black/60">Pricing</div>
                       <TaxInlineEditor
                         orderId={data.order_id}
-                        canEdit={auth.role === "admin" || auth.role === "showroom"}
+                        canEdit={auth.isAdmin || auth.role === "showroom"}
                         value={(data as any).tax_percent}
                         onSaved={async () => {
                           const refreshed = await ordersApi.get(data.order_id);
@@ -450,7 +450,7 @@ export function OrderDetailsPage() {
                     </div>
                   </div>
 
-                  {auth.role === "admin" && ((data as any).created_by || (data as any).updated_by) ? (
+                  {auth.isAdmin && ((data as any).created_by || (data as any).updated_by) ? (
                     <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
                       <div className="text-xs font-semibold text-black/60">Admin metadata</div>
                       <div className="mt-2 text-sm text-black/70">

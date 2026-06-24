@@ -29,6 +29,10 @@ def log_activity(
 ) -> None:
     """Append an ActionLog row. Caller must commit; failures are logged and do not raise."""
     try:
+        actor_role = getattr(actor_user, "role", None)
+        row_meta = dict(meta) if meta else {}
+        if actor_role:
+            row_meta.setdefault("actor_role", actor_role)
         db.add(
             models.ActionLog(
                 action=action,
@@ -36,7 +40,7 @@ def log_activity(
                 entity_id=entity_id,
                 actor_user_id=getattr(actor_user, "id", None),
                 actor_username=username_from_email(getattr(actor_user, "email", None)),
-                meta=meta,
+                meta=row_meta or None,
             )
         )
     except Exception:

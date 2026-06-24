@@ -3,7 +3,9 @@ import { authStore } from "./authStore";
 import { decodeJwt, isJwtExpiredForClient, JwtPayload } from "../utils/jwt";
 import { adminApi } from "../services/endpoints";
 
-export type Role = "showroom" | "factory" | "admin" | "finance" | "contract_employee" | "staff";
+import { hasAdminAccess, isRootAdminRole } from "../utils/roles";
+
+export type Role = "showroom" | "factory" | "admin" | "root_admin" | "finance" | "contract_employee" | "staff";
 
 type AuthState = {
   token: string | null;
@@ -20,6 +22,8 @@ type AuthContextValue = AuthState & {
   exitImpersonation(): Promise<void>;
   logout(): void;
   isAuthed: boolean;
+  isAdmin: boolean;
+  isRootAdmin: boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -87,6 +91,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ...state,
       isAuthed: Boolean(state.token),
+      isAdmin: hasAdminAccess(state.role),
+      isRootAdmin: isRootAdminRole(state.role),
       login: (token: string) => {
         authStore.clear();
         if (!authStore.setToken(token)) {

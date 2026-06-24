@@ -20,7 +20,7 @@ function rowKey(row: TrashItem) {
 export function TrashPage() {
   const toast = useToast();
   const auth = useAuth();
-  const isAdmin = auth.role === "admin";
+  const isAdmin = auth.isAdmin;
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<TrashItem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);

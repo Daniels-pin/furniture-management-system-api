@@ -129,7 +129,7 @@ type Props = {
 
 export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
   const auth = useAuth();
-  const isAdmin = auth.role === "admin";
+  const isAdmin = auth.isAdmin;
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();

@@ -824,7 +824,7 @@ export function FinanceDashboardPage() {
                         <span className="text-xs font-semibold text-black/60">
                           {getFinancialActivityStatusLabel(it.transaction)}
                         </span>
-                        {auth.role === "admin" && canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
+                        {auth.isAdmin && canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
                           <Button
                             variant="danger"
                             className="shrink-0"
@@ -854,7 +854,7 @@ export function FinanceDashboardPage() {
                         <th className="py-3 pr-4 font-semibold">Date</th>
                         <th className="py-3 pr-4 font-semibold">Status</th>
                         <th className="py-3 pr-4 text-right font-semibold">Amount to Pay</th>
-                        {auth.role === "admin" ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
+                        {auth.isAdmin ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -897,7 +897,7 @@ export function FinanceDashboardPage() {
                             {getFinancialActivityStatusLabel(it.transaction)}
                           </td>
                           <td className="py-3 pr-4 text-right font-extrabold tabular-nums">{formatMoney(it.transaction.amount)}</td>
-                          {auth.role === "admin" ? (
+                          {auth.isAdmin ? (
                             <td className="py-3 pr-0 text-right">
                               {canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
                                 <Button
@@ -1315,7 +1315,7 @@ export function FinanceDashboardPage() {
 
               <div className="-mx-4 sticky bottom-0 border-t border-black/10 bg-white px-4 py-3 sm:-mx-6 sm:px-6">
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {auth.role === "admin" &&
+                  {auth.isAdmin &&
                   detail.transaction?.id &&
                   canCancelUnpaidPaymentTransfer(detail.transaction.status) ? (
                     <Button
@@ -1333,7 +1333,7 @@ export function FinanceDashboardPage() {
                       Cancel Transfer
                     </Button>
                   ) : null}
-                  {auth.role === "admin" ? (
+                  {auth.isAdmin ? (
                     <Button
                       variant="secondary"
                       isLoading={sendBusy}
@@ -1391,7 +1391,7 @@ export function FinanceDashboardPage() {
                         setAllocEmployeeName(detail.employee_name);
                         setAllocAmount(String(detail.transaction?.amount ?? ""));
                         setOverpayConfirm(false);
-                        setConfirmWithoutReceipt(auth.role === "admin" && !detail.transaction?.receipt_url);
+                        setConfirmWithoutReceipt(auth.isAdmin && !detail.transaction?.receipt_url);
                         setAllocLines({});
                         setAllocJobs([]);
                         setAllocLoading(true);
@@ -1416,7 +1416,7 @@ export function FinanceDashboardPage() {
                       }
                       setConfirmTarget({ id: txId, kind: "monthly" });
                       setOverpayConfirm(false);
-                      setConfirmWithoutReceipt(auth.role === "admin" && !detail.transaction?.receipt_url);
+                      setConfirmWithoutReceipt(auth.isAdmin && !detail.transaction?.receipt_url);
                     }}
                   >
                     Mark paid

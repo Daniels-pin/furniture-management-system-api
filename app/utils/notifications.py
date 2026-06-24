@@ -11,7 +11,7 @@ from app.auth.auth import normalize_role
 
 def payment_notification_kinds_for_role(role: str | None) -> list[str]:
     r = normalize_role(role)
-    if r == "admin":
+    if r in ("admin", "root_admin"):
         return ["payment_request_submitted"]
     if r == "finance":
         return ["payment_sent_to_finance"]

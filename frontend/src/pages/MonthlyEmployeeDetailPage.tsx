@@ -169,7 +169,7 @@ export function MonthlyEmployeeDetailPage() {
 
   async function saveWorkLocation() {
     if (!detail) return;
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       toast.push("error", "Only Admin can assign locations.");
       return;
     }
@@ -234,7 +234,7 @@ export function MonthlyEmployeeDetailPage() {
 
   const computed = useMemo(() => {
     if (!detail) return null;
-    const isAdmin = auth.role === "admin";
+    const isAdmin = auth.isAdmin;
     const baseFromApi = Number(detail.base_salary ?? 0);
     const baseFromInput =
       isAdmin && baseSalary.trim() ? (parseMoneyInput(baseSalary) ?? baseFromApi) : baseFromApi;
@@ -324,7 +324,7 @@ export function MonthlyEmployeeDetailPage() {
 
   async function onSaveTransaction(type: PayrollAdjustmentType) {
     if (!detail) return;
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       toast.push("error", "Only Admin can add payroll adjustments.");
       return;
     }
@@ -368,7 +368,7 @@ export function MonthlyEmployeeDetailPage() {
 
   async function onSaveBaseSalary() {
     if (!detail) return;
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       toast.push("error", "Only Admin can update base salary.");
       return;
     }
@@ -406,7 +406,7 @@ export function MonthlyEmployeeDetailPage() {
 
   async function onSaveAttendanceOverrides() {
     if (!detail) return;
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       toast.push("error", "Only Admin can update attendance deductions.");
       return;
     }
@@ -550,7 +550,7 @@ export function MonthlyEmployeeDetailPage() {
 
   async function removeEmployee() {
     if (!detail) return;
-    if (auth.role !== "admin") {
+    if (!auth.isAdmin) {
       toast.push("error", "Only Admin can remove employees.");
       return;
     }
@@ -587,7 +587,7 @@ export function MonthlyEmployeeDetailPage() {
   }
 
   const backTo = `/employees?tab=monthly&year=${year}&month=${month}`;
-  const isAdmin = auth.role === "admin";
+  const isAdmin = auth.isAdmin;
 
   return (
     <div className="space-y-6">
