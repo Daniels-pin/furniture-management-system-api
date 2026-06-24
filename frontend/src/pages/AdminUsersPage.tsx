@@ -22,6 +22,7 @@ export function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const limit = 10;
 
+  const [createOpen, setCreateOpen] = useState(false);
   const [createRootOpen, setCreateRootOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
