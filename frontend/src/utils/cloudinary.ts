@@ -24,3 +24,12 @@ export function cloudinaryThumbnail(
 export function cloudinaryFull(url: string | null | undefined): string {
   return (url ?? "").trim();
 }
+
+/** Cloudinary URL that prompts a file download when opened. */
+export function cloudinaryDownloadUrl(url: string | null | undefined): string {
+  const u = (url ?? "").trim();
+  if (!u) return "";
+  if (!u.includes("res.cloudinary.com") || !u.includes("/upload/")) return u;
+  if (u.includes("fl_attachment")) return u;
+  return u.replace("/upload/", "/upload/fl_attachment/");
+}

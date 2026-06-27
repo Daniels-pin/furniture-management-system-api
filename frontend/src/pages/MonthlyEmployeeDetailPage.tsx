@@ -21,6 +21,7 @@ import type {
 import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
+import { EmployeeEmploymentDocumentsSection } from "../components/employee/EmployeeEmploymentDocumentsSection";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import {
   absenceDeductionAuto,
@@ -639,6 +640,8 @@ export function MonthlyEmployeeDetailPage() {
           </div>
         </div>
       </Card>
+
+      <EmployeeEmploymentDocumentsSection documents={detail.documents} />
 
       <Card className="!p-4">
         <div className="text-xs font-semibold text-black/55">2b. Work location (Geo-attendance)</div>
