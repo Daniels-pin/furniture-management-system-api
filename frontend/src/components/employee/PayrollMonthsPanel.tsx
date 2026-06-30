@@ -144,6 +144,7 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
   const [bulkNote, setBulkNote] = useState("");
   const [bulkSending, setBulkSending] = useState(false);
   const [exportingKey, setExportingKey] = useState<string | null>(null);
+  const [exportMenuKey, setExportMenuKey] = useState<string | null>(null);
   const [markingKey, setMarkingKey] = useState<string | null>(null);
   const [confirmMarkPeriod, setConfirmMarkPeriod] = useState<SalaryPeriod | null>(null);
   const [employeeNavOpenKeys, setEmployeeNavOpenKeys] = useState<Set<string>>(() => new Set());
@@ -462,6 +463,63 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
                     ▾
                   </span>
                 </button>
+                {isAdmin ? (
+                  <div className="relative shrink-0">
+                    <Button
+                      variant="secondary"
+                      isLoading={exportingKey === key}
+                      onClick={() => setExportMenuKey((prev) => (prev === key ? null : key))}
+                    >
+                      Export Payroll
+                    </Button>
+                    {exportMenuKey === key ? (
+                      <div className="absolute right-0 top-full z-20 mt-1 min-w-[10rem] rounded-xl border border-black/10 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          className="block w-full px-4 py-2.5 text-left text-sm font-semibold hover:bg-black/[0.04]"
+                          onClick={async () => {
+                            setExportMenuKey(null);
+                            setExportingKey(key);
+                            try {
+                              await employeesApi.exportPayrollXlsx({
+                                period_year: period.year,
+                                period_month: period.month
+                              });
+                              onToast("success", "Excel payroll export downloaded.");
+                            } catch (e) {
+                              onToast("error", getErrorMessage(e));
+                            } finally {
+                              setExportingKey(null);
+                            }
+                          }}
+                        >
+                          Excel (.xlsx)
+                        </button>
+                        <button
+                          type="button"
+                          className="block w-full px-4 py-2.5 text-left text-sm font-semibold hover:bg-black/[0.04]"
+                          onClick={async () => {
+                            setExportMenuKey(null);
+                            setExportingKey(key);
+                            try {
+                              await employeesApi.exportPayrollPdf({
+                                period_year: period.year,
+                                period_month: period.month
+                              });
+                              onToast("success", "PDF payroll export downloaded.");
+                            } catch (e) {
+                              onToast("error", getErrorMessage(e));
+                            } finally {
+                              setExportingKey(null);
+                            }
+                          }}
+                        >
+                          PDF
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {showMarkMonthPaid ? (
                   <Button
                     variant="secondary"
@@ -491,27 +549,6 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
                       ) : null}
 
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          isLoading={exportingKey === key}
-                          disabled={!bundle || bundle.loading}
-                          onClick={async () => {
-                            setExportingKey(key);
-                            try {
-                              await employeesApi.exportCsv({
-                                period_year: period.year,
-                                period_month: period.month
-                              });
-                              onToast("success", "Export downloaded.");
-                            } catch (e) {
-                              onToast("error", getErrorMessage(e));
-                            } finally {
-                              setExportingKey(null);
-                            }
-                          }}
-                        >
-                          Download CSV
-                        </Button>
                         {isActive ? (
                           <>
                             <Button

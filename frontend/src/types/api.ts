@@ -552,6 +552,62 @@ export type PayrollSummary = {
   net_payroll: string | number;
 };
 
+export type PayrollExportLineItem = {
+  label: string;
+  amount: string | number;
+  date_label?: string | null;
+};
+
+export type PayrollExportEmployee = {
+  employee_id: number;
+  name: string;
+  department: string;
+  bank_name: string;
+  account_name: string;
+  account_number: string;
+  salary_month: string;
+  base_salary: string | number;
+  bonuses_total: string | number;
+  increments_total: string | number;
+  lateness_deduction: string | number;
+  absence_deduction: string | number;
+  early_sign_out_deduction: string | number;
+  manual_deductions: string | number;
+  other_adjustments: string | number;
+  total_deductions: string | number;
+  final_payable: string | number;
+  payment_status: "Paid" | "Pending";
+  bonus_lines: PayrollExportLineItem[];
+  increment_lines: PayrollExportLineItem[];
+  lateness_lines: PayrollExportLineItem[];
+  absence_lines: PayrollExportLineItem[];
+  early_sign_out_lines: PayrollExportLineItem[];
+  manual_deduction_lines: PayrollExportLineItem[];
+};
+
+export type PayrollExportSummary = {
+  employee_count: number;
+  total_base_salaries: string | number;
+  total_bonuses: string | number;
+  total_increments: string | number;
+  total_deductions: string | number;
+  grand_total_payable: string | number;
+};
+
+export type PayrollExport = {
+  company_name: string;
+  payroll_month: string;
+  payroll_status: string;
+  generated_by: string;
+  generated_date: string;
+  generated_time: string;
+  period_id: number;
+  period_year: number;
+  period_month: number;
+  employees: PayrollExportEmployee[];
+  summary: PayrollExportSummary;
+};
+
 export type EmployeeDocumentItem = {
   id: string;
   url: string;

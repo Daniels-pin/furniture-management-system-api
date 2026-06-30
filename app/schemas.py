@@ -1675,6 +1675,62 @@ class PayrollSummaryOut(BaseModel):
     net_payroll: Decimal
 
 
+class PayrollExportLineItemOut(BaseModel):
+    label: str
+    amount: Decimal
+    date_label: Optional[str] = None
+
+
+class PayrollExportEmployeeOut(BaseModel):
+    employee_id: int
+    name: str
+    department: str = ""
+    bank_name: str = ""
+    account_name: str = ""
+    account_number: str = ""
+    salary_month: str
+    base_salary: Decimal
+    bonuses_total: Decimal
+    increments_total: Decimal
+    lateness_deduction: Decimal
+    absence_deduction: Decimal
+    early_sign_out_deduction: Decimal
+    manual_deductions: Decimal
+    other_adjustments: Decimal = Decimal("0")
+    total_deductions: Decimal
+    final_payable: Decimal
+    payment_status: Literal["Paid", "Pending"]
+    bonus_lines: List[PayrollExportLineItemOut] = []
+    increment_lines: List[PayrollExportLineItemOut] = []
+    lateness_lines: List[PayrollExportLineItemOut] = []
+    absence_lines: List[PayrollExportLineItemOut] = []
+    early_sign_out_lines: List[PayrollExportLineItemOut] = []
+    manual_deduction_lines: List[PayrollExportLineItemOut] = []
+
+
+class PayrollExportSummaryOut(BaseModel):
+    employee_count: int
+    total_base_salaries: Decimal
+    total_bonuses: Decimal
+    total_increments: Decimal
+    total_deductions: Decimal
+    grand_total_payable: Decimal
+
+
+class PayrollExportOut(BaseModel):
+    company_name: str
+    payroll_month: str
+    payroll_status: str
+    generated_by: str
+    generated_date: str
+    generated_time: str
+    period_id: int
+    period_year: int
+    period_month: int
+    employees: List[PayrollExportEmployeeOut]
+    summary: PayrollExportSummaryOut
+
+
 class EmployeeCreate(BaseModel):
     # Conditional requirements:
     # - If user_id is provided (linked employee), all profile fields are optional (employee completes after login).

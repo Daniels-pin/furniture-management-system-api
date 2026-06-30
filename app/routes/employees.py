@@ -12,15 +12,18 @@ from typing import Optional
 from datetime import date as date_type, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import and_, extract, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth.auth import get_current_user, has_admin_privileges, normalize_role, require_role
+from app.auth.pdf_access import require_payroll_period_reader
 from app.database import get_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
+from app.utils.pdf_job import document_pdf_bytes_via_ui
+from app.utils.payroll_export import build_payroll_export_payload, payroll_export_xlsx_bytes, payload_to_api_dict
 from app.utils.root_admin import exclude_system_employee_ids, system_linked_employee_ids
 from app.utils.timezone import (
     early_minutes_before_cutoff,
@@ -74,6 +77,7 @@ from app.schemas import (
     EmployeeSignOutPreviewOut,
     EmployeeWorkLocationAssignIn,
     PayrollPeriodsNavOut,
+    PayrollExportOut,
     PayrollSummaryOut,
     SalaryPeriodOut,
 )
@@ -2794,6 +2798,22 @@ def list_employees(
     ]
 
 
+def _export_actor_name(user) -> str:
+    email = (getattr(user, "email", None) or "").strip()
+    if email == "pdf-render@local":
+        return "Admin"
+    name = (getattr(user, "name", None) or "").strip()
+    if name:
+        return name
+    if email:
+        return email.split("@")[0]
+    return "Admin"
+
+
+def _payroll_export_for_period(db: Session, period: models.SalaryPeriod, user):
+    return build_payroll_export_payload(db, period, generated_by=_export_actor_name(user))
+
+
 @router.get("/export")
 def export_employees_csv(
     db: Session = Depends(get_db),
@@ -2855,6 +2875,61 @@ def export_employees_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="employees_payroll_{safe_label}.csv"'},
     )
+
+
+@router.get("/export/payroll.xlsx")
+def export_payroll_xlsx(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period = resolve_period(db, period_year, period_month)
+    payload = _payroll_export_for_period(db, period, current_user)
+    xlsx_bytes = payroll_export_xlsx_bytes(payload)
+    safe_label = period.label.replace(" ", "_")
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="payroll_{safe_label}.xlsx"'},
+    )
+
+
+@router.get("/export/payroll.pdf")
+def export_payroll_pdf(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+    period_year: Optional[int] = Query(None, ge=2000, le=2100),
+    period_month: Optional[int] = Query(None, ge=1, le=12),
+):
+    period = resolve_period(db, period_year, period_month)
+    try:
+        pdf_bytes = document_pdf_bytes_via_ui("payroll", "payroll", period.id)
+    except RuntimeError as e:
+        logger.exception("Payroll PDF export failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Payroll PDF export failed")
+        raise HTTPException(status_code=500, detail="Could not generate PDF") from e
+    safe_label = period.label.replace(" ", "_")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="payroll_{safe_label}.pdf"'},
+    )
+
+
+@router.get("/periods/{period_id}/payroll-export", response_model=PayrollExportOut)
+def get_payroll_export_data(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_payroll_period_reader),
+):
+    period = db.query(models.SalaryPeriod).filter(models.SalaryPeriod.id == period_id).first()
+    if period is None:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    payload = _payroll_export_for_period(db, period, current_user)
+    return payload_to_api_dict(payload)
 
 
 @router.get("/me", response_model=EmployeeOut)

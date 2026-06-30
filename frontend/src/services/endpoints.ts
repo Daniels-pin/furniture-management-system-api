@@ -81,6 +81,22 @@ import type {
   ProductionMaterialSectionOption
 } from "../types/api";
 
+function downloadBlobResponse(res: { data: Blob; headers: Record<string, unknown> }, fallbackFilename: string) {
+  const blob = res.data as Blob;
+  const cd = res.headers["content-disposition"] as string | undefined;
+  let filename = fallbackFilename;
+  if (cd) {
+    const m = /filename="([^"]+)"/.exec(cd);
+    if (m) filename = m[1];
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const authApi = {
   async login(payload: LoginRequest) {
     const { data } = await api.post<LoginResponse>("/auth/login", payload);
@@ -939,19 +955,21 @@ export const employeesApi = {
   },
   async exportCsv(params?: EmployeePeriodParams) {
     const res = await api.get("/employees/export", { responseType: "blob", params });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = "employees_payroll_export.csv";
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlobResponse(res, "employees_payroll_export.csv");
+  },
+  async exportPayrollXlsx(params: EmployeePeriodParams) {
+    const res = await api.get("/employees/export/payroll.xlsx", { responseType: "blob", params });
+    downloadBlobResponse(res, "payroll_export.xlsx");
+  },
+  async exportPayrollPdf(params: EmployeePeriodParams) {
+    const res = await api.get("/employees/export/payroll.pdf", { responseType: "blob", params });
+    downloadBlobResponse(res, "payroll_export.pdf");
+  },
+  async getPayrollExport(periodId: number) {
+    const { data } = await api.get<import("../types/api").PayrollExport>(
+      `/employees/periods/${periodId}/payroll-export`
+    );
+    return data;
   },
   async getMe() {
     const { data } = await api.get<EmployeeDetail>("/employees/me");

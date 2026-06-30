@@ -112,3 +112,17 @@ def require_order_reader(
     if normalize_role(user.role) not in {"admin", "root_admin", "showroom", "factory", "finance"}:
         raise HTTPException(status_code=403, detail="Not authorized")
     return user
+
+
+def require_payroll_period_reader(
+    period_id: int,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_optional),
+    db: Session = Depends(get_db),
+):
+    tok = _require_bearer(credentials)
+    if verify_pdf_render_token(tok, "payroll", period_id):
+        return _pdf_actor()
+    user = _user_from_login_token(tok, db)
+    if normalize_role(user.role) not in {"admin", "root_admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return user

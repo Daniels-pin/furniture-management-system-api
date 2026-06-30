@@ -76,6 +76,9 @@ const WaybillPdfExportPage = lazy(() =>
 const OrderPdfExportPage = lazy(() =>
   import("./pages/pdf-export/OrderPdfExportPage").then((m) => ({ default: m.OrderPdfExportPage }))
 );
+const PayrollPdfExportPage = lazy(() =>
+  import("./pages/pdf-export/PayrollPdfExportPage").then((m) => ({ default: m.PayrollPdfExportPage }))
+);
 const EmployeesPage = lazy(() => import("./pages/EmployeesPage").then((m) => ({ default: m.EmployeesPage })));
 const EmployeeAdminPage = lazy(() =>
   import("./pages/EmployeeAdminPage").then((m) => ({ default: m.EmployeeAdminPage }))
@@ -206,6 +209,14 @@ export default function App() {
         element={
           <LazyPage>
             <OrderPdfExportPage />
+          </LazyPage>
+        }
+      />
+      <Route
+        path="/pdf-export/payroll/:periodId"
+        element={
+          <LazyPage>
+            <PayrollPdfExportPage />
           </LazyPage>
         }
       />
