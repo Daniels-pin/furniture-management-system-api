@@ -6,6 +6,7 @@ import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { PaginationFooter } from "../components/ui/Pagination";
 import type { QuotationListItem } from "../types/api";
@@ -25,6 +26,15 @@ function statusBadge(status: string) {
   return <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">{status}</span>;
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return v;
+}
+
 export function QuotationListPage() {
   const toast = useToast();
   const auth = useAuth();
@@ -33,24 +43,35 @@ export function QuotationListPage() {
   const [rows, setRows] = useState<QuotationListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q, 300);
   const [deleteTarget, setDeleteTarget] = useState<QuotationListItem | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await quotationApi.list({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
-      setRows(Array.isArray(data.items) ? data.items : []);
-      setTotal(typeof data.total === "number" ? data.total : 0);
-    } catch (e) {
-      toast.push("error", getErrorMessage(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, toast]);
+  const load = useCallback(
+    async (targetPage: number) => {
+      const p = Math.max(1, targetPage);
+      setLoading(true);
+      try {
+        const data = await quotationApi.list({
+          limit: PAGE_SIZE,
+          offset: (p - 1) * PAGE_SIZE,
+          search: debouncedQ.trim() || undefined,
+        });
+        setRows(Array.isArray(data.items) ? data.items : []);
+        setTotal(typeof data.total === "number" ? data.total : 0);
+      } catch (e) {
+        toast.push("error", getErrorMessage(e));
+      } finally {
+        setLoading(false);
+        setPage(p);
+      }
+    },
+    [debouncedQ, toast]
+  );
 
   useEffect(() => {
-    void load();
+    void load(1);
   }, [load]);
 
   async function confirmDeleteQuotation() {
@@ -60,13 +81,15 @@ export function QuotationListPage() {
       await quotationApi.delete(deleteTarget.id);
       toast.push("success", "Quotation moved to Trash.");
       setDeleteTarget(null);
-      await load();
+      await load(page);
     } catch (e) {
       toast.push("error", getErrorMessage(e));
     } finally {
       setDeleteSubmitting(false);
     }
   }
+
+  const emptyMessage = debouncedQ.trim() ? "No quotations found." : "No quotations yet.";
 
   function QuoteCard({ r }: { r: QuotationListItem }) {
     return (
@@ -126,19 +149,27 @@ export function QuotationListPage() {
           {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (
             <Button onClick={() => nav("/quotations/new")}>New quotation</Button>
           ) : null}
-          <Button variant="secondary" onClick={() => void load()} isLoading={loading}>
+          <Button variant="secondary" onClick={() => void load(page)} isLoading={loading}>
             Refresh
           </Button>
         </div>
       </div>
 
       <Card>
+        <div className="mb-4">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by quote number, customer, phone, email, project, or product…"
+          />
+        </div>
+
         {/* Mobile: cards */}
         <div className="space-y-3 md:hidden">
           {loading ? (
             <div className="text-sm text-black/60">Loading…</div>
           ) : rows.length === 0 ? (
-            <div className="text-sm text-black/60">No quotations yet.</div>
+            <div className="text-sm text-black/60">{emptyMessage}</div>
           ) : (
             rows.map((r) => <QuoteCard key={r.id} r={r} />)
           )}
@@ -167,7 +198,7 @@ export function QuotationListPage() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={auth.isAdmin || auth.role === "showroom" ? 6 : 5} className="py-6 text-black/60">
-                    No quotations yet.
+                    {emptyMessage}
                   </td>
                 </tr>
               ) : (
@@ -205,7 +236,7 @@ export function QuotationListPage() {
             </tbody>
           </table>
         </div>
-        <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+        <PaginationFooter page={page} pageSize={PAGE_SIZE} total={total} onPageChange={(p) => void load(p)} />
       </Card>
 
       <Modal

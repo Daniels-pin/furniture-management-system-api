@@ -428,6 +428,61 @@ def test_convert_quotation_to_proforma_subheading_totals(client, admin_token):
     assert Decimal(str(body["grand_total"])) == Decimal("330.00")
 
 
+def test_list_quotations_search(client, admin_token):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    phone = f"084{uuid.uuid4().hex[:8]}"
+    email = f"daniel.search.{uuid.uuid4().hex[:6]}@example.com"
+    q = client.post(
+        "/quotations",
+        json={
+            "customer_name": "Daniels Furniture",
+            "phone": phone,
+            "address": "Street",
+            "email": email,
+            "items": [
+                {"line_type": "subheading", "item_name": "Living Room Project", "description": "", "quantity": 0},
+                {"item_name": "Oak Dining Table", "description": "Solid wood", "quantity": 1, "amount": "250.00"},
+            ],
+            "save_as_draft": False,
+        },
+        headers=headers,
+    )
+    assert q.status_code == 200, q.text
+    body = q.json()
+    quote_number = body["quote_number"]
+    qid = body["id"]
+
+    by_customer = client.get("/quotations", params={"search": "Dan"}, headers=headers)
+    assert by_customer.status_code == 200, by_customer.text
+    ids = {row["id"] for row in by_customer.json()["items"]}
+    assert qid in ids
+
+    by_quote = client.get("/quotations", params={"search": quote_number[:5]}, headers=headers)
+    assert by_quote.status_code == 200, by_quote.text
+    assert any(row["id"] == qid for row in by_quote.json()["items"])
+
+    by_phone = client.get("/quotations", params={"search": phone[-4:]}, headers=headers)
+    assert by_phone.status_code == 200, by_phone.text
+    assert any(row["id"] == qid for row in by_phone.json()["items"])
+
+    by_email = client.get("/quotations", params={"search": "daniel.search"}, headers=headers)
+    assert by_email.status_code == 200, by_email.text
+    assert any(row["id"] == qid for row in by_email.json()["items"])
+
+    by_project = client.get("/quotations", params={"search": "Living Room"}, headers=headers)
+    assert by_project.status_code == 200, by_project.text
+    assert any(row["id"] == qid for row in by_project.json()["items"])
+
+    by_product = client.get("/quotations", params={"search": "Oak Dining"}, headers=headers)
+    assert by_product.status_code == 200, by_product.text
+    assert any(row["id"] == qid for row in by_product.json()["items"])
+
+    empty = client.get("/quotations", params={"search": f"no-match-{uuid.uuid4().hex}"}, headers=headers)
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["total"] == 0
+    assert empty.json()["items"] == []
+
+
 def test_delete_converted_quotation(client, admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     phone = f"083{uuid.uuid4().hex[:8]}"

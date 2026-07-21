@@ -9,9 +9,9 @@ from decimal import Decimal
 from html import escape
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import func
+from sqlalchemy import String as SQLString, cast, exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
@@ -331,20 +331,52 @@ def _render_quotation_email_html(p: models.Quotation) -> str:
     """
 
 
+def _apply_quotation_search(q, search: str):
+    term = search.strip()
+    if not term:
+        return q
+    like_term = f"%{term}%"
+    quote_term = term.lstrip("#").strip()
+    quote_like = f"%{quote_term}%" if quote_term else like_term
+
+    item_match = exists().where(
+        models.QuotationItem.quotation_id == models.Quotation.id,
+        or_(
+            models.QuotationItem.item_name.ilike(like_term),
+            models.QuotationItem.description.ilike(like_term),
+        ),
+    )
+    order_match = exists().where(
+        models.Order.id == models.Quotation.converted_order_id,
+        cast(models.Order.id, SQLString).ilike(like_term),
+    )
+
+    return q.filter(
+        or_(
+            models.Quotation.quote_number.ilike(quote_like),
+            cast(models.Quotation.id, SQLString).ilike(like_term),
+            models.Quotation.customer_name.ilike(like_term),
+            models.Quotation.phone.ilike(like_term),
+            models.Quotation.email.ilike(like_term),
+            item_match,
+            order_match,
+        )
+    )
+
+
 @router.get("/quotations")
 def list_quotations(
     limit: int = 20,
     offset: int = 0,
+    search: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     lim = max(1, min(int(limit or 20), 100))
     off = max(0, int(offset or 0))
-    q = (
-        db.query(models.Quotation)
-        .options(joinedload(models.Quotation.items))
-        .filter(quotation_alive())
-    )
+    q = db.query(models.Quotation).filter(quotation_alive())
+    if search and search.strip():
+        q = _apply_quotation_search(q, search)
     total = q.count()
     rows = q.order_by(models.Quotation.id.desc()).offset(off).limit(lim).all()
     user_ids: set[int] = set()
