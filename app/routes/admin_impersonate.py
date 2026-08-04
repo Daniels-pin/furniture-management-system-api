@@ -17,7 +17,7 @@ from app.utils.activity_log import (
     username_from_email,
 )
 from app.utils.root_admin import is_root_admin_role, is_root_admin_user
-from app.utils.user_account import is_removed_account
+from app.utils.user_account import is_active_account, is_removed_account
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 _security = HTTPBearer()
@@ -49,6 +49,8 @@ def impersonate_user(
         raise HTTPException(status_code=404, detail="User not found")
     if is_removed_account(target):
         raise HTTPException(status_code=400, detail="Cannot impersonate a removed user")
+    if not is_active_account(target):
+        raise HTTPException(status_code=400, detail="Cannot impersonate an inactive user")
     if is_root_admin_role(target.role) and not is_root_admin_user(admin):
         raise HTTPException(status_code=403, detail="Only a Root Admin may impersonate this account.")
 

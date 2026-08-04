@@ -28,6 +28,7 @@ from app.schemas import (
     ContractJobMiniOut,
 )
 from app.utils.cloudinary import upload_asset
+from app.utils.contract_employee_ledger import build_contract_employee_ledger
 from app.utils.financial_audit import log_financial_action
 from app.utils.contract_financials import (
     compute_contract_employee_financials,
@@ -281,6 +282,52 @@ def _fetch_transactions_by_ids(db: Session, txn_ids: list[int]) -> list[models.E
     return [by_id[i] for i in txn_ids if i in by_id]
 
 
+def _linked_job_ids_by_txn(db: Session, txn_ids: list[int]) -> dict[int, list[int]]:
+    ids = sorted({int(x) for x in txn_ids if x})
+    if not ids:
+        return {}
+
+    result: dict[int, list[int]] = {i: [] for i in ids}
+    seen_by_txn: dict[int, set[int]] = {i: set() for i in ids}
+
+    tx_rows = (
+        db.query(models.EmployeeTransaction.id, models.EmployeeTransaction.contract_job_id)
+        .filter(models.EmployeeTransaction.id.in_(ids))
+        .all()
+    )
+    for tx_id, contract_job_id in tx_rows:
+        if contract_job_id is None:
+            continue
+        jid = int(contract_job_id)
+        if jid <= 0 or jid in seen_by_txn[int(tx_id)]:
+            continue
+        seen_by_txn[int(tx_id)].add(jid)
+        result[int(tx_id)].append(jid)
+
+    alloc_rows = (
+        db.query(
+            models.EmployeePaymentAllocation.transaction_id,
+            models.EmployeePaymentAllocation.contract_job_id,
+        )
+        .filter(
+            models.EmployeePaymentAllocation.transaction_id.in_(ids),
+            models.EmployeePaymentAllocation.voided_at.is_(None),
+        )
+        .all()
+    )
+    for tx_id, contract_job_id in alloc_rows:
+        if contract_job_id is None:
+            continue
+        jid = int(contract_job_id)
+        tid = int(tx_id)
+        if jid <= 0 or jid in seen_by_txn[tid]:
+            continue
+        seen_by_txn[tid].add(jid)
+        result[tid].append(jid)
+
+    return result
+
+
 def _txn_to_items(
     db: Session,
     rows: list[models.EmployeeTransaction],
@@ -293,6 +340,7 @@ def _txn_to_items(
     txn_ids = [int(t.id) for t in rows]
     employee_initiated = _employee_initiated_payment_ids(db, txn_ids)
     sent_at_map = _sent_to_finance_at_by_txn(db, txn_ids)
+    linked_job_ids_map = _linked_job_ids_by_txn(db, txn_ids)
 
     ce_ids = sorted({int(t.contract_employee_id) for t in rows if t.contract_employee_id is not None})
     emp_ids = sorted({int(t.employee_id) for t in rows if t.employee_id is not None})
@@ -343,6 +391,7 @@ def _txn_to_items(
                         sent_to_finance_at=sent_to_finance_at,
                         initiated_by=initiated_by,
                         notification_unread=notification_unread,
+                        linked_job_ids=linked_job_ids_map.get(int(t.id), []),
                     )
                 )
                 continue
@@ -364,6 +413,7 @@ def _txn_to_items(
                     sent_to_finance_at=sent_to_finance_at,
                     initiated_by=initiated_by,
                     notification_unread=notification_unread,
+                    linked_job_ids=linked_job_ids_map.get(int(t.id), []),
                 )
             )
         except Exception:
@@ -909,39 +959,73 @@ def export_transactions_csv(
     rows = q.order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc()).all()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(
-        [
-            "ID",
-            "Created at",
-            "Paid at",
-            "Cancelled at",
-            "Type",
-            "Status",
-            "Amount",
-            "Running balance",
-            "Reversal of",
-            "Note",
-            "Receipt URL",
-            "Cancelled reason",
-        ]
-    )
-    for t in rows:
+
+    if contract_employee_id:
+        ledger_entries = build_contract_employee_ledger(db, int(contract_employee_id))
         w.writerow(
             [
-                t.id,
-                t.created_at.isoformat() if t.created_at else "",
-                t.paid_at.isoformat() if t.paid_at else "",
-                t.cancelled_at.isoformat() if getattr(t, "cancelled_at", None) else "",
-                t.txn_type,
-                t.status,
-                str(_as_decimal(t.amount)),
-                str(_as_decimal(t.running_balance)) if t.running_balance is not None else "",
-                str(t.reversal_of_id) if t.reversal_of_id else "",
-                t.note or "",
-                t.receipt_url or "",
-                (getattr(t, "cancelled_reason", None) or ""),
+                "Date",
+                "Description",
+                "Transaction Type",
+                "Reference",
+                "Credit",
+                "Debit",
+                "Balance Before",
+                "Balance After",
+                "Status",
+                "Transaction ID",
             ]
         )
+        for entry in ledger_entries:
+            txn = entry.transaction
+            w.writerow(
+                [
+                    txn.created_at.isoformat() if txn.created_at else "",
+                    entry.description,
+                    entry.transaction_type_label,
+                    entry.reference,
+                    str(entry.credit) if entry.credit else "",
+                    str(entry.debit) if entry.debit else "",
+                    str(entry.balance_before),
+                    str(entry.balance_after),
+                    entry.status_label,
+                    txn.id,
+                ]
+            )
+    else:
+        w.writerow(
+            [
+                "ID",
+                "Created at",
+                "Paid at",
+                "Cancelled at",
+                "Type",
+                "Status",
+                "Amount",
+                "Running balance",
+                "Reversal of",
+                "Note",
+                "Receipt URL",
+                "Cancelled reason",
+            ]
+        )
+        for t in rows:
+            w.writerow(
+                [
+                    t.id,
+                    t.created_at.isoformat() if t.created_at else "",
+                    t.paid_at.isoformat() if t.paid_at else "",
+                    t.cancelled_at.isoformat() if getattr(t, "cancelled_at", None) else "",
+                    t.txn_type,
+                    t.status,
+                    str(_as_decimal(t.amount)),
+                    str(_as_decimal(t.running_balance)) if t.running_balance is not None else "",
+                    str(t.reversal_of_id) if t.reversal_of_id else "",
+                    t.note or "",
+                    t.receipt_url or "",
+                    (getattr(t, "cancelled_reason", None) or ""),
+                ]
+            )
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),

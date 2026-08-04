@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
-import { Button } from "../components/ui/Button";
+import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 import { Input } from "../components/ui/Input";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { employeesApi, usersApi, type EmployeePeriodParams } from "../services/endpoints";
@@ -100,7 +100,7 @@ export function EmployeeAdminPage() {
     let alive = true;
     (async () => {
       try {
-        const list = await usersApi.list();
+        const list = await usersApi.list({ status: "active" });
         if (alive) setUsers(list);
       } catch {
         // non-fatal
@@ -394,7 +394,10 @@ export function EmployeeAdminPage() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <div className="text-2xl font-bold tracking-tight">{isNew ? "New employee" : emp?.full_name ?? "Employee"}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-2xl font-bold tracking-tight">{isNew ? "New employee" : emp?.full_name ?? "Employee"}</div>
+            {!isNew && emp?.user_account_active === false ? <UserAccountInactiveBadge /> : null}
+          </div>
           <div className="mt-1 text-sm text-black/60">
             <Link className="font-semibold underline decoration-black/30" to={`/employees?year=${year}&month=${month}`}>
               ← Employees

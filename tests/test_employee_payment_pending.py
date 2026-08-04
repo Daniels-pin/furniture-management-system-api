@@ -51,6 +51,45 @@ def test_pending_queue_contract_finance_user(client, db_session, admin_token):
     match = next(it for it in body["items"] if it["transaction"]["id"] == txn.id)
     assert match["employee_kind"] == "contract"
     assert match["employee_name"] == "Pending CE"
+    assert match["linked_job_ids"] == []
+
+
+def test_pending_includes_linked_job_ids(client, db_session, admin_token):
+    ce = models.ContractEmployee(
+        full_name="Linked CE",
+        status="active",
+        balance=Decimal("0"),
+        total_paid=Decimal("0"),
+    )
+    db_session.add(ce)
+    db_session.flush()
+    job = models.ContractJob(
+        contract_employee_id=ce.id,
+        status="completed",
+        final_price=Decimal("50000"),
+    )
+    db_session.add(job)
+    db_session.flush()
+    txn = models.EmployeeTransaction(
+        contract_employee_id=ce.id,
+        contract_job_id=job.id,
+        txn_type="payment",
+        amount=Decimal("25000"),
+        status="sent_to_finance",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(txn)
+    db_session.commit()
+
+    r = client.get(
+        "/employee-payments/pending",
+        params={"kind": "contract", "queue_only": True},
+        headers=_auth(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    row = next((it for it in r.json()["items"] if it["transaction"]["id"] == txn.id), None)
+    assert row is not None
+    assert row["linked_job_ids"] == [job.id]
 
 
 def test_pending_empty_search_returns_200(client, admin_token, db_session):

@@ -135,6 +135,7 @@ export type User = {
   id: number;
   username: string;
   role: Role;
+  is_active: boolean;
 };
 
 export type UserCreate = {
@@ -815,6 +816,7 @@ export type EmployeeDetail = {
   documents?: EmployeeDocumentItem[] | null;
   user_id?: number | null;
   linked_username?: string | null;
+  user_account_active?: boolean | null;
   work_location_id?: number | null;
   work_location?: CompanyLocation | null;
   created_at: string;
@@ -837,6 +839,7 @@ export type EmployeeListItem = {
   account_number?: string | null;
   base_salary: string | number;
   user_id?: number | null;
+  user_account_active?: boolean | null;
   period: SalaryPeriod;
   payment: EmployeePayment;
   salary: EmployeeSalaryBreakdown;
@@ -918,6 +921,26 @@ export type EmployeeTransaction = {
   allocations?: EmployeePaymentAllocation[] | null;
 };
 
+export type ContractEmployeeLedgerEntry = EmployeeTransaction & {
+  ledger_type: string;
+  transaction_type_label: string;
+  description: string;
+  reference: string;
+  credit: string | number;
+  debit: string | number;
+  balance_before: string | number;
+  balance_after: string | number;
+  status_label: string;
+};
+
+export type ContractEmployeeLedgerPage = {
+  total: number;
+  limit: number;
+  offset: number;
+  current_balance: string | number;
+  items: ContractEmployeeLedgerEntry[];
+};
+
 export type ContractEmployeeListItem = {
   id: number;
   full_name: string;
@@ -931,6 +954,7 @@ export type ContractEmployeeListItem = {
   active_jobs_count?: number;
   pending_requests?: number;
   unread_pending_requests?: number;
+  user_account_active?: boolean | null;
 };
 
 export type ContractEmployeeDetail = ContractEmployeeListItem & {
@@ -1030,6 +1054,7 @@ export type PendingEmployeePaymentItem = {
   sent_to_finance_at?: string | null;
   initiated_by?: "admin" | "employee" | null;
   notification_unread?: boolean;
+  linked_job_ids?: number[];
 };
 
 export type PendingEmployeePayments = {

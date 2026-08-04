@@ -57,3 +57,51 @@ export function getFinancialActivityStatusLabel(t: EmployeeTransaction): string 
   return String(t.status || "—");
 }
 
+export type LedgerRowTone = "credit" | "debit" | "pending" | "muted";
+
+export function getLedgerRowTone(entry: {
+  credit?: string | number | null;
+  debit?: string | number | null;
+  status?: EmployeeTransaction["status"];
+  txn_type?: EmployeeTransaction["txn_type"];
+}): LedgerRowTone {
+  if (entry.status === "cancelled" || entry.txn_type === "reversal") return "muted";
+  if (entry.status === "requested" || entry.status === "approved_by_admin" || entry.status === "sent_to_finance" || entry.status === "pending" || entry.status === "resolved") {
+    return "pending";
+  }
+  const credit = Number(entry.credit ?? 0);
+  const debit = Number(entry.debit ?? 0);
+  if (credit > 0) return "credit";
+  if (debit > 0) return "debit";
+  return "muted";
+}
+
+export function getLedgerToneClasses(tone: LedgerRowTone): { amount: string; icon: string; status: string } {
+  if (tone === "credit") {
+    return {
+      amount: "text-emerald-700",
+      icon: "text-emerald-600",
+      status: "text-emerald-800 bg-emerald-50 ring-emerald-200"
+    };
+  }
+  if (tone === "debit") {
+    return {
+      amount: "text-red-700",
+      icon: "text-red-600",
+      status: "text-red-800 bg-red-50 ring-red-200"
+    };
+  }
+  if (tone === "pending") {
+    return {
+      amount: "text-amber-800",
+      icon: "text-amber-600",
+      status: "text-amber-900 bg-amber-50 ring-amber-200"
+    };
+  }
+  return {
+    amount: "text-black/55",
+    icon: "text-black/40",
+    status: "text-black/60 bg-black/5 ring-black/10"
+  };
+}
+

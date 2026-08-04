@@ -26,11 +26,15 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 }
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { ExpenseEntry, ExpenseSummary, PendingEmployeePayments } from "../types/api";
+import type { ExpenseEntry, ExpenseSummary, PendingEmployeePaymentItem, PendingEmployeePayments } from "../types/api";
 import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import { canCancelUnpaidPaymentTransfer, getFinancialActivityStatusLabel } from "../utils/financialActivity";
+import {
+  getPendingMarkPaidDisabledReason,
+  getPendingMarkPaidDisabledTooltip
+} from "../utils/pendingPaymentMarkPaid";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmployeeAttendanceCard";
 import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
@@ -42,6 +46,7 @@ export function FinanceDashboardPage() {
   const [searchParams] = useSearchParams();
   const moneyRequestsView = searchParams.get("moneyRequests") === "1";
   const isFinanceRole = auth.role === "finance";
+  const canFinalizePayments = isFinanceRole || auth.isAdmin;
   const showPaymentsPettyToggle = !isFinanceRole;
   const [section, setSection] = useState<"payments" | "petty_cash">(
     isFinanceRole && !moneyRequestsView ? "petty_cash" : "payments"
@@ -329,6 +334,69 @@ export function FinanceDashboardPage() {
     setDetailTxnId(transactionId);
     setDetailReceiptName(null);
     void fetchDetail(transactionId, { clearWhileLoading: true });
+  }
+
+  async function refreshAfterMarkPaid() {
+    await Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]);
+    window.dispatchEvent(new Event("furniture:notifications-updated"));
+  }
+
+  function beginMarkPaidFromRow(it: PendingEmployeePaymentItem) {
+    const tx = it.transaction;
+    const txId = tx.id;
+    setConfirmTarget({ id: txId, kind: it.employee_kind });
+    setOverpayConfirm(false);
+    setConfirmWithoutReceipt(auth.isAdmin && !tx.receipt_url);
+  }
+
+  function renderPendingRowActions(it: PendingEmployeePaymentItem) {
+    const markPaidDisabledReason = getPendingMarkPaidDisabledReason(it, auth.role);
+    const markPaidDisabled = markPaidDisabledReason !== null || busyId === it.transaction.id;
+    const markPaidTooltip = getPendingMarkPaidDisabledTooltip(markPaidDisabledReason);
+    const showCancelTransfer =
+      auth.isAdmin && canCancelUnpaidPaymentTransfer(it.transaction.status);
+
+    if (!canFinalizePayments && !showCancelTransfer) {
+      return <span className="text-xs text-black/40">—</span>;
+    }
+
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {canFinalizePayments ? (
+          <span title={markPaidDisabled ? markPaidTooltip : undefined} className="inline-flex">
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              disabled={markPaidDisabled}
+              isLoading={busyId === it.transaction.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                beginMarkPaidFromRow(it);
+              }}
+            >
+              Mark Paid
+            </Button>
+          </span>
+        ) : null}
+        {showCancelTransfer ? (
+          <Button
+            variant="danger"
+            className="shrink-0"
+            disabled={cancellingTransfer}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCancelTransferTarget({
+                id: it.transaction.id,
+                employeeName: it.employee_name,
+                amount: it.transaction.amount
+              });
+            }}
+          >
+            Cancel Transfer
+          </Button>
+        ) : null}
+      </div>
+    );
   }
 
   useEffect(() => {
@@ -824,23 +892,7 @@ export function FinanceDashboardPage() {
                         <span className="text-xs font-semibold text-black/60">
                           {getFinancialActivityStatusLabel(it.transaction)}
                         </span>
-                        {auth.isAdmin && canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
-                          <Button
-                            variant="danger"
-                            className="shrink-0"
-                            disabled={cancellingTransfer}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCancelTransferTarget({
-                                id: it.transaction.id,
-                                employeeName: it.employee_name,
-                                amount: it.transaction.amount
-                              });
-                            }}
-                          >
-                            Cancel Transfer
-                          </Button>
-                        ) : null}
+                        {renderPendingRowActions(it)}
                       </div>
                     </div>
                   ))}
@@ -854,7 +906,9 @@ export function FinanceDashboardPage() {
                         <th className="py-3 pr-4 font-semibold">Date</th>
                         <th className="py-3 pr-4 font-semibold">Status</th>
                         <th className="py-3 pr-4 text-right font-semibold">Amount to Pay</th>
-                        {auth.isAdmin ? <th className="py-3 pr-0 text-right font-semibold">Actions</th> : null}
+                        {canFinalizePayments || auth.isAdmin ? (
+                          <th className="py-3 pr-0 text-right font-semibold">Actions</th>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -897,27 +951,8 @@ export function FinanceDashboardPage() {
                             {getFinancialActivityStatusLabel(it.transaction)}
                           </td>
                           <td className="py-3 pr-4 text-right font-extrabold tabular-nums">{formatMoney(it.transaction.amount)}</td>
-                          {auth.isAdmin ? (
-                            <td className="py-3 pr-0 text-right">
-                              {canCancelUnpaidPaymentTransfer(it.transaction.status) ? (
-                                <Button
-                                  variant="danger"
-                                  disabled={cancellingTransfer}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setCancelTransferTarget({
-                                      id: it.transaction.id,
-                                      employeeName: it.employee_name,
-                                      amount: it.transaction.amount
-                                    });
-                                  }}
-                                >
-                                  Cancel Transfer
-                                </Button>
-                              ) : (
-                                <span className="text-xs text-black/40">—</span>
-                              )}
-                            </td>
+                          {canFinalizePayments || auth.isAdmin ? (
+                            <td className="py-3 pr-0 text-right">{renderPendingRowActions(it)}</td>
                           ) : null}
                         </tr>
                       ))}
@@ -1350,8 +1385,9 @@ export function FinanceDashboardPage() {
                         setSendBusy(true);
                         void employeePaymentsApi
                           .sendToFinance(detailTxnId)
-                          .then(() => Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]))
-                          .then(() => toast.push("success", "Sent to Finance."))
+                    .then(() => Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]))
+                    .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
+                    .then(() => toast.push("success", "Sent to Finance."))
                           .then(() => setDetailOpen(false))
                           .catch((e) => toast.push("error", getErrorMessage(e)))
                           .finally(() => setSendBusy(false));
@@ -1419,7 +1455,7 @@ export function FinanceDashboardPage() {
                       setConfirmWithoutReceipt(auth.isAdmin && !detail.transaction?.receipt_url);
                     }}
                   >
-                    Mark paid
+                    Mark Paid
                   </Button>
                   <Button variant="ghost" disabled={sendBusy} onClick={() => setDetailOpen(false)}>
                     Close
@@ -1489,7 +1525,7 @@ export function FinanceDashboardPage() {
         ) : null}
       </Modal>
 
-      <Modal open={confirmTarget !== null} title="Confirm payment" onClose={() => (busyId ? null : setConfirmTarget(null))}>
+      <Modal open={confirmTarget !== null} title="Confirm Payment" onClose={() => (busyId ? null : setConfirmTarget(null))}>
         {confirmTarget ? (
           <div className="space-y-4">
             <div className="text-sm text-black/70">
@@ -1497,7 +1533,10 @@ export function FinanceDashboardPage() {
                 <>Are you sure you want to proceed without a receipt?</>
               ) : (
                 <>
-                  Confirm marking this transaction as <span className="font-semibold">Paid</span>?
+                  Are you sure you want to mark this payment as paid?
+                  <div className="mt-2">
+                    This action will complete the payment and update the employee&apos;s financial records.
+                  </div>
                 </>
               )}
             </div>
@@ -1506,7 +1545,18 @@ export function FinanceDashboardPage() {
                 <span className="font-semibold">Overpaid.</span> This payment will make the employee owe the company.
               </div>
             ) : null}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="ghost"
+                disabled={busyId === confirmTarget.id}
+                onClick={() => {
+                  setConfirmTarget(null);
+                  setConfirmWithoutReceipt(false);
+                  setOverpayConfirm(false);
+                }}
+              >
+                Cancel
+              </Button>
               <Button
                 variant={overpayConfirm ? "danger" : "secondary"}
                 isLoading={busyId === confirmTarget.id}
@@ -1522,9 +1572,16 @@ export function FinanceDashboardPage() {
                       : undefined;
                   void employeePaymentsApi
                     .markPaid(confirmTarget.id, options)
-                    .then(() => Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]))
+                    .then(() => refreshAfterMarkPaid())
                     .then(() => toast.push("success", "Marked paid."))
-                    .then(() => setConfirmTarget(null))
+                    .then(() => {
+                      setConfirmTarget(null);
+                      if (detailTxnId === confirmTarget.id) {
+                        setDetailOpen(false);
+                        setDetailTxnId(null);
+                        setDetail(null);
+                      }
+                    })
                     .catch((er: any) => {
                       const detail = er?.response?.data?.detail;
                       if (detail?.code === "OVERPAY_CONFIRM_REQUIRED") {
@@ -1536,18 +1593,7 @@ export function FinanceDashboardPage() {
                     .finally(() => setBusyId(null));
                 }}
               >
-                {overpayConfirm ? "Confirm overpay" : confirmWithoutReceipt ? "Yes" : "Confirm"}
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busyId === confirmTarget.id}
-                onClick={() => {
-                  setConfirmTarget(null);
-                  setConfirmWithoutReceipt(false);
-                  setOverpayConfirm(false);
-                }}
-              >
-                {confirmWithoutReceipt ? "No" : "Cancel"}
+                {overpayConfirm ? "Confirm overpay" : confirmWithoutReceipt ? "Yes" : "Mark Paid"}
               </Button>
             </div>
           </div>
@@ -1760,7 +1806,7 @@ export function FinanceDashboardPage() {
                       allocations: cleanedAllocations
                     }
                   )
-                  .then(() => Promise.all([refreshPending({ offset: pendingOffset }), refreshHistory({ offset: historyOffset })]))
+                  .then(() => refreshAfterMarkPaid())
                   .then(() => toast.push("success", "Marked paid."))
                   .then(() => setAllocOpen(false))
                   .catch((er: any) => {

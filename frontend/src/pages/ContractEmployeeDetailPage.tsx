@@ -7,7 +7,6 @@ import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import type { ContractEmployeeDetail, ContractJob, NotificationItem } from "../types/api";
@@ -17,13 +16,8 @@ import {
   getUnreadNotifsForJob,
   sortJobsByAttention
 } from "../utils/jobNotifications";
-import {
-  canCancelUnpaidPaymentTransfer,
-  getFinancialActivityClasses,
-  getFinancialActivityColor,
-  getFinancialActivityStatusLabel,
-  getFinancialActivityTypeLabel
-} from "../utils/financialActivity";
+import { ContractEmployeeLedger } from "../components/ContractEmployeeLedger";
+import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 
 function getNumber(v: unknown): number {
   if (typeof v === "number") return v;
@@ -169,6 +163,7 @@ export function ContractEmployeeDetailPage() {
 
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [ledgerRefreshKey, setLedgerRefreshKey] = useState(0);
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -387,7 +382,10 @@ export function ContractEmployeeDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div className="min-w-0">
-          <div className="text-2xl font-bold tracking-tight truncate">{title}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="truncate text-2xl font-bold tracking-tight">{title}</div>
+            {detail?.user_account_active === false ? <UserAccountInactiveBadge /> : null}
+          </div>
           <div className="mt-1 text-sm text-black/60">Contract employee details, jobs, and finances.</div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -691,6 +689,7 @@ export function ContractEmployeeDetailPage() {
                             setDetail(d);
                             setOwedAmt("");
                             setOwedNote("");
+                            setLedgerRefreshKey((k) => k + 1);
                             toast.push("success", "Owed increased.");
                           })
                           .catch((e) => toast.push("error", getErrorMessage(e)))
@@ -749,6 +748,7 @@ export function ContractEmployeeDetailPage() {
                             setDetail(d);
                             setOwedDecAmt("");
                             setOwedDecNote("");
+                            setLedgerRefreshKey((k) => k + 1);
                             toast.push("success", "Owed decreased.");
                           })
                           .catch((e) => toast.push("error", getErrorMessage(e)))
@@ -849,6 +849,7 @@ export function ContractEmployeeDetailPage() {
                             setDetail(d);
                             setPayNote("");
                             setPayNowAmt("");
+                            setLedgerRefreshKey((k) => k + 1);
                             toast.push("success", "Sent to Finance.");
                           })
                           .catch((e) => toast.push("error", getErrorMessage(e)))
@@ -939,6 +940,7 @@ export function ContractEmployeeDetailPage() {
                               setAdminPayAmt("");
                               setAdminPayJobId(null);
                               setAdminPayNote("");
+                              setLedgerRefreshKey((k) => k + 1);
                               toast.push("success", "Sent to Finance.");
                             })
                             .catch((e) => toast.push("error", getErrorMessage(e)))
@@ -1040,102 +1042,13 @@ export function ContractEmployeeDetailPage() {
               </Card>
 
           <Card className="!p-4">
-            <div className="flex items-end justify-between gap-2">
-              <div className="text-sm font-semibold text-black">Transactions</div>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  void employeePaymentsApi
-                    .exportTransactions({ contract_employee_id: detail.id })
-                    .then(() => toast.push("success", "Export downloaded."))
-                    .catch((e) => toast.push("error", getErrorMessage(e)));
-                }}
-              >
-                Export CSV
-              </Button>
-            </div>
-            {detail.transactions.length === 0 ? (
-              <div className="mt-2 text-sm text-black/60">No transactions yet.</div>
-            ) : (
-              <ul className="mt-3 divide-y divide-black/10 rounded-xl border border-black/10">
-                {detail.transactions
-                  .slice()
-                  .reverse()
-                  .map((t) => {
-                    const color = getFinancialActivityColor(t);
-                    const cls = getFinancialActivityClasses(color);
-                    const typeLabel = getFinancialActivityTypeLabel(t);
-                    const statusLabel = getFinancialActivityStatusLabel(t);
-                    const relatedJob =
-                      typeof (t as any)?.contract_job_id !== "undefined" && (t as any)?.contract_job_id !== null
-                        ? `Job #${Number((t as any).contract_job_id)}`
-                        : Array.isArray((t as any)?.allocations) && (t as any).allocations.length
-                          ? `Jobs: ${(t as any).allocations
-                              .slice(0, 4)
-                              .map((a: any) => `#${Number(a.contract_job_id)}`)
-                              .join(", ")}${(t as any).allocations.length > 4 ? "…" : ""}`
-                          : null;
-
-                    return (
-                      <li
-                      key={t.id}
-                      className={[
-                        "px-3 py-2 text-sm",
-                        cls.bg,
-                        cls.text
-                      ].join(" ")}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold">{typeLabel}</div>
-                        <div className="font-bold tabular-nums">{formatMoney(t.amount)}</div>
-                      </div>
-                      <div className="mt-0.5 text-xs text-black/55">
-                        {formatLagosDateTime(t.created_at)} • <span className="font-semibold">{statusLabel}</span>
-                        {relatedJob ? ` • ${relatedJob}` : ""}
-                        {typeof t.running_balance !== "undefined" && t.running_balance !== null
-                          ? ` • Balance: ${formatMoney(t.running_balance)}`
-                          : ""}
-                      </div>
-                      <div className="mt-2">
-                        <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset", cls.ring].join(" ")}>
-                          {statusLabel}
-                        </span>
-                        {t.txn_type === "payment" && (t as any).initiated_by ? (
-                          <span
-                            className={[
-                              "ml-2 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
-                              (t as any).initiated_by === "admin"
-                                ? "bg-blue-100 text-blue-900 ring-blue-200"
-                                : "bg-purple-100 text-purple-900 ring-purple-200"
-                            ].join(" ")}
-                          >
-                            {(t as any).initiated_by === "admin" ? "Admin initiated" : "Employee requested"}
-                          </span>
-                        ) : null}
-                      </div>
-                      {typeof t.running_balance !== "undefined" && t.running_balance !== null && Number(t.running_balance) < 0 ? (
-                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900">
-                          Overpaid (Employee owes company)
-                        </div>
-                      ) : null}
-                      {t.note ? <div className="mt-1 text-xs text-black/60">{t.note}</div> : null}
-                      <div className="mt-2 flex justify-end gap-2">
-                        {auth.isAdmin && t.txn_type === "payment" && canCancelUnpaidPaymentTransfer(t.status) ? (
-                          <Button variant="danger" onClick={() => setCancelTargetId(t.id)}>
-                            Cancel
-                          </Button>
-                        ) : null}
-                        {t.status === "paid" && t.txn_type !== "reversal" ? (
-                          <Button variant="danger" onClick={() => setReverseTargetId(t.id)}>
-                            Reverse
-                          </Button>
-                        ) : null}
-                      </div>
-                    </li>
-                    );
-                  })}
-              </ul>
-            )}
+            <ContractEmployeeLedger
+              employeeId={detail.id}
+              isAdmin={auth.isAdmin}
+              refreshKey={ledgerRefreshKey}
+              onCancel={(id) => setCancelTargetId(id)}
+              onReverse={(id) => setReverseTargetId(id)}
+            />
           </Card>
 
           <Modal
@@ -1158,6 +1071,7 @@ export function ContractEmployeeDetailPage() {
                         .then(() => contractEmployeesApi.get(detail.id))
                         .then((d) => setDetail(d))
                         .then(() => {
+                          setLedgerRefreshKey((k) => k + 1);
                           window.dispatchEvent(new Event("furniture:notifications-updated"));
                           toast.push("success", "Transfer cancelled.");
                         })
@@ -1202,7 +1116,10 @@ export function ContractEmployeeDetailPage() {
                         .reverse(reverseTargetId, { reason: reverseReason.trim() || undefined })
                         .then(() => contractEmployeesApi.get(detail.id))
                         .then((d) => setDetail(d))
-                        .then(() => toast.push("success", "Reversed."))
+                        .then(() => {
+                          setLedgerRefreshKey((k) => k + 1);
+                          toast.push("success", "Reversed.");
+                        })
                         .then(() => {
                           setReverseTargetId(null);
                           setReverseReason("");

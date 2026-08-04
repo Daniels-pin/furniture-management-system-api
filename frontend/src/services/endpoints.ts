@@ -62,6 +62,7 @@ import type {
   ContractJob,
   PendingEmployeePayments,
   ContractEmployeeFinance,
+  ContractEmployeeLedgerPage,
   AdminJobsSummary,
   ExpenseEntry,
   ExpenseSummary,
@@ -422,8 +423,8 @@ export const invoicesApi = {
 };
 
 export const usersApi = {
-  async list() {
-    const { data } = await api.get<User[]>("/users");
+  async list(params?: { status?: "active" | "inactive" | "all" }) {
+    const { data } = await api.get<User[]>("/users", { params });
     return data;
   },
   async create(payload: UserCreate) {
@@ -432,6 +433,14 @@ export const usersApi = {
   },
   async createRootAdmin(payload: { username: string; password: string }) {
     const { data } = await api.post<User>("/users/root-admins", payload);
+    return data;
+  },
+  async activate(userId: number) {
+    const { data } = await api.post<User>(`/users/${userId}/activate`);
+    return data;
+  },
+  async deactivate(userId: number) {
+    const { data } = await api.post<User>(`/users/${userId}/deactivate`);
     return data;
   },
   async delete(userId: number) {
@@ -1257,6 +1266,24 @@ export const contractEmployeesApi = {
   },
   async finances(employeeId: number) {
     const { data } = await api.get<ContractEmployeeFinance>(`/contract-employees/${employeeId}/finances`);
+    return data;
+  },
+  async ledger(
+    employeeId: number,
+    params?: {
+      limit?: number;
+      offset?: number;
+      sort?: "newest" | "oldest";
+      ledger_type?: string;
+      status?: string;
+      job_id?: number;
+      payment_request_id?: number;
+      date_from?: string;
+      date_to?: string;
+      search?: string;
+    }
+  ) {
+    const { data } = await api.get<ContractEmployeeLedgerPage>(`/contract-employees/${employeeId}/ledger`, { params });
     return data;
   },
   async sendPaymentToFinance(employeeId: number, body: { request_id: number; amount: string | number; note?: string | null }) {

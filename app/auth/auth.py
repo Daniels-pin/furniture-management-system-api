@@ -11,7 +11,7 @@ from jose import JWTError, jwt
 from app.schemas import ChangePasswordRequest, LoginRequest
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.utils.activity_log import log_activity, LOGIN, PASSWORD_CHANGED
-from app.utils.user_account import is_removed_account
+from app.utils.user_account import DEACTIVATED_LOGIN_DETAIL, is_active_account, is_removed_account
 
 router = APIRouter()
 
@@ -33,6 +33,9 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
     if not user or is_removed_account(user) or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    if not is_active_account(user):
+        raise HTTPException(status_code=403, detail=DEACTIVATED_LOGIN_DETAIL)
 
     username = (user.email or "").split("@")[0] if user.email else None
     token = create_access_token(
@@ -76,7 +79,7 @@ def get_current_user(
 
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
-    if is_removed_account(user):
+    if is_removed_account(user) or not is_active_account(user):
         raise HTTPException(status_code=401, detail="User not found")
 
     return user

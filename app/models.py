@@ -33,6 +33,8 @@ class User(Base):
     # Enforce first-login password change (used for contract employees and admin resets).
     must_change_password = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
     password_changed_at = Column(DateTime, nullable=True)
+    # When false, login and system access are disabled while historical records remain intact.
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
 
 
 # CUSTOMERS TABLE

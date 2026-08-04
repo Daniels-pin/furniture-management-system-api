@@ -11,6 +11,9 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Select } from "../components/ui/Select";
+import { UserAccountStatusBadge } from "../components/UserAccountStatusBadge";
+
+type StatusFilter = "all" | "active" | "inactive";
 
 export function AdminUsersPage() {
   const toast = useToast();
@@ -19,13 +22,17 @@ export function AdminUsersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [page, setPage] = useState(1);
   const limit = 10;
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createRootOpen, setCreateRootOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null);
+  const [confirmActivateId, setConfirmActivateId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [statusChangingId, setStatusChangingId] = useState<number | null>(null);
   const [impersonateConfirmId, setImpersonateConfirmId] = useState<number | null>(null);
   const [impersonatingId, setImpersonatingId] = useState<number | null>(null);
 
@@ -48,7 +55,7 @@ export function AdminUsersPage() {
   async function refresh() {
     setIsLoading(true);
     try {
-      const data = await usersApi.list();
+      const data = await usersApi.list({ status: statusFilter });
       setUsers(Array.isArray(data) ? data : []);
     } catch (err) {
       toast.push("error", getErrorMessage(err));
@@ -60,11 +67,11 @@ export function AdminUsersPage() {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [statusFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [q]);
+  }, [q, statusFilter]);
 
   async function doDelete(userId: number) {
     if (!Number.isFinite(userId)) return;
@@ -83,18 +90,110 @@ export function AdminUsersPage() {
     }
   }
 
+  async function doDeactivate(userId: number) {
+    setStatusChangingId(userId);
+    try {
+      const updated = await usersApi.deactivate(userId);
+      setUsers((xs) => xs.map((x) => (x.id === userId ? updated : x)));
+      toast.push("success", "User deactivated");
+    } catch (err) {
+      toast.push("error", getErrorMessage(err));
+    } finally {
+      setStatusChangingId(null);
+      setConfirmDeactivateId(null);
+    }
+  }
+
+  async function doActivate(userId: number) {
+    setStatusChangingId(userId);
+    try {
+      const updated = await usersApi.activate(userId);
+      setUsers((xs) => xs.map((x) => (x.id === userId ? updated : x)));
+      toast.push("success", "User activated");
+    } catch (err) {
+      toast.push("error", getErrorMessage(err));
+    } finally {
+      setStatusChangingId(null);
+      setConfirmActivateId(null);
+    }
+  }
+
+  function renderStatusActions(u: User, layout: "card" | "table") {
+    const isProtectedRoot = isRootAdminRole(u.role);
+    const canManage = !isProtectedRoot || auth.isRootAdmin;
+    if (!canManage) return null;
+
+    const busy = deletingId === u.id || statusChangingId === u.id;
+    const deactivateBtn =
+      u.is_active ? (
+        <Button
+          variant={layout === "card" ? "secondary" : "ghost"}
+          className={layout === "card" ? "w-full" : undefined}
+          disabled={busy}
+          onClick={() => {
+            if (typeof u.id === "number") setConfirmDeactivateId(u.id);
+          }}
+        >
+          Deactivate
+        </Button>
+      ) : (
+        <Button
+          variant={layout === "card" ? "secondary" : "ghost"}
+          className={layout === "card" ? "w-full" : undefined}
+          disabled={busy}
+          onClick={() => {
+            if (typeof u.id === "number") setConfirmActivateId(u.id);
+          }}
+        >
+          Activate
+        </Button>
+      );
+
+    const deleteBtn = (
+      <Button
+        variant={layout === "card" ? "danger" : "ghost"}
+        className={layout === "card" ? "w-full" : undefined}
+        disabled={busy}
+        onClick={() => {
+          if (typeof u.id === "number") setConfirmDeleteId(u.id);
+        }}
+      >
+        Delete
+      </Button>
+    );
+
+    if (layout === "table") {
+      return (
+        <>
+          {deactivateBtn}
+          {deleteBtn}
+        </>
+      );
+    }
+
+    return (
+      <>
+        {deactivateBtn}
+        {deleteBtn}
+      </>
+    );
+  }
+
   function UserCard({ u, displayNumber }: { u: User; displayNumber: string }) {
     const isProtectedRoot = isRootAdminRole(u.role);
     const canManage = !isProtectedRoot || auth.isRootAdmin;
-    const canImpersonate = canManage && typeof u.id === "number" && u.id !== auth.userId;
+    const canImpersonate = canManage && u.is_active && typeof u.id === "number" && u.id !== auth.userId;
     return (
       <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-soft">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-bold">User #{displayNumber}</div>
             <div className="mt-1 break-words text-sm font-semibold text-black/80">{u.username}</div>
-            <div className="mt-1 inline-flex rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
-              {roleLabel(u.role)}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
+                {roleLabel(u.role)}
+              </span>
+              <UserAccountStatusBadge active={u.is_active} />
             </div>
           </div>
         </div>
@@ -103,7 +202,7 @@ export function AdminUsersPage() {
             <Button
               variant="secondary"
               className="w-full"
-              disabled={impersonatingId !== null || deletingId === u.id}
+              disabled={impersonatingId !== null || deletingId === u.id || statusChangingId === u.id}
               onClick={() => {
                 if (typeof u.id === "number") setImpersonateConfirmId(u.id);
               }}
@@ -111,18 +210,7 @@ export function AdminUsersPage() {
               Login as User
             </Button>
           ) : null}
-          {canManage ? (
-          <Button
-            variant="danger"
-            className="w-full"
-            disabled={deletingId === u.id}
-            onClick={() => {
-              if (typeof u.id === "number") setConfirmDeleteId(u.id);
-            }}
-          >
-            Delete
-          </Button>
-          ) : null}
+          {renderStatusActions(u, "card")}
         </div>
       </div>
     );
@@ -149,7 +237,19 @@ export function AdminUsersPage() {
       </div>
 
       <Card>
-        <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, username, role…" />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+          <Input label="Search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, username, role…" />
+          <Select
+            label="Status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            options={[
+              { value: "all", label: "All" },
+              { value: "active", label: "Active" },
+              { value: "inactive", label: "Inactive" }
+            ]}
+          />
+        </div>
         {/* Mobile: cards */}
         <div className="mt-4 space-y-3 md:hidden">
           {isLoading ? (
@@ -172,19 +272,20 @@ export function AdminUsersPage() {
                 <th className="py-3 pr-4 font-semibold">ID</th>
                 <th className="py-3 pr-4 font-semibold">Username</th>
                 <th className="py-3 pr-4 font-semibold">Role</th>
+                <th className="py-3 pr-4 font-semibold">Status</th>
                 <th className="py-3 pr-0 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td className="py-6 text-black/60" colSpan={4}>
+                  <td className="py-6 text-black/60" colSpan={5}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td className="py-6 text-black/60" colSpan={4}>
+                  <td className="py-6 text-black/60" colSpan={5}>
                     No users found.
                   </td>
                 </tr>
@@ -193,34 +294,27 @@ export function AdminUsersPage() {
                   const displayNumber = String((safePage - 1) * limit + idx + 1).padStart(3, "0");
                   const isProtectedRoot = isRootAdminRole(u.role);
                   const canManage = !isProtectedRoot || auth.isRootAdmin;
-                  const canImpersonate = canManage && typeof u.id === "number" && u.id !== auth.userId;
+                  const canImpersonate = canManage && u.is_active && typeof u.id === "number" && u.id !== auth.userId;
                   return (
                     <tr key={u.id} className="border-b border-black/5">
                       <td className="py-3 pr-4 font-semibold">#{displayNumber}</td>
                       <td className="py-3 pr-4">{u.username}</td>
                       <td className="py-3 pr-4">{roleLabel(u.role)}</td>
+                      <td className="py-3 pr-4">
+                        <UserAccountStatusBadge active={u.is_active} />
+                      </td>
                       <td className="py-3 pr-0 text-right">
                         <div className="flex flex-wrap items-center justify-end gap-1">
                           {canImpersonate ? (
                             <Button
                               variant="secondary"
-                              disabled={impersonatingId !== null || deletingId === u.id}
+                              disabled={impersonatingId !== null || deletingId === u.id || statusChangingId === u.id}
                               onClick={() => setImpersonateConfirmId(u.id)}
                             >
                               Login as User
                             </Button>
                           ) : null}
-                          {canManage ? (
-                            <Button
-                              variant="ghost"
-                              disabled={deletingId === u.id}
-                              onClick={() => {
-                                if (typeof u.id === "number") setConfirmDeleteId(u.id);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          ) : null}
+                          {canManage ? renderStatusActions(u, "table") : null}
                         </div>
                       </td>
                     </tr>
@@ -288,6 +382,54 @@ export function AdminUsersPage() {
               }}
             >
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={confirmDeactivateId !== null} title="Deactivate User" onClose={() => setConfirmDeactivateId(null)}>
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            This user will no longer be able to log in.
+            <br />
+            <br />
+            All historical records, attendance, payroll, jobs, and financial history will remain intact.
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmDeactivateId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={confirmDeactivateId !== null && statusChangingId === confirmDeactivateId}
+              onClick={() => {
+                if (confirmDeactivateId === null) return;
+                void doDeactivate(confirmDeactivateId);
+              }}
+            >
+              Deactivate
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={confirmActivateId !== null} title="Activate User" onClose={() => setConfirmActivateId(null)}>
+        <div className="space-y-4">
+          <div className="text-sm text-black/70">
+            This user will regain access to the system using their existing credentials.
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmActivateId(null)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={confirmActivateId !== null && statusChangingId === confirmActivateId}
+              onClick={() => {
+                if (confirmActivateId === null) return;
+                void doActivate(confirmActivateId);
+              }}
+            >
+              Activate
             </Button>
           </div>
         </div>
@@ -451,4 +593,3 @@ function CreateRootAdminForm({ onCreated }: { onCreated(u: User): void }) {
     </form>
   );
 }
-

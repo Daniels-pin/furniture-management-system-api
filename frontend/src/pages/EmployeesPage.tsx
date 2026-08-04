@@ -14,10 +14,14 @@ import type {
   EmployeeListItem,
   EmployeeTransaction,
   PayrollPeriodsNav,
-  PayrollSummary,
+  PendingEmployeePaymentItem,
   PendingEmployeePayments
 } from "../types/api";
 import { formatMoney } from "../utils/money";
+import {
+  getPendingMarkPaidDisabledReason,
+  getPendingMarkPaidDisabledTooltip
+} from "../utils/pendingPaymentMarkPaid";
 import {
   hasActiveMoneyRequests,
   hasUnreadMoneyRequestNotifications,
@@ -26,6 +30,7 @@ import {
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
 import { PayrollMonthsPanel } from "../components/employee/PayrollMonthsPanel";
+import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 
 function patchSearchParams(
   setSearchParams: SetURLSearchParams,
@@ -63,7 +68,6 @@ export function EmployeesPage() {
   const [monthlySelectedIds, setMonthlySelectedIds] = useState<number[]>([]);
   const [bulkNote, setBulkNote] = useState("");
   const [bulkSending, setBulkSending] = useState(false);
-  const [summary, setSummary] = useState<PayrollSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [startingMonth, setStartingMonth] = useState(false);
@@ -86,6 +90,24 @@ export function EmployeesPage() {
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
+  function renderFinanceMarkPaidButton(it: PendingEmployeePaymentItem) {
+    const disabledReason = getPendingMarkPaidDisabledReason(it, auth.role);
+    const disabled = disabledReason !== null || pendingBusyId === it.transaction.id;
+    const tooltip = getPendingMarkPaidDisabledTooltip(disabledReason);
+    return (
+      <span title={disabled ? tooltip : undefined} className="inline-flex">
+        <Button
+          variant="secondary"
+          className={it.employee_kind === "contract" ? undefined : "w-full"}
+          disabled={disabled}
+          isLoading={pendingBusyId === it.transaction.id}
+          onClick={() => setConfirmMarkPaid({ id: it.transaction.id })}
+        >
+          Mark Paid
+        </Button>
+      </span>
+    );
+  }
   function isInteractiveTarget(target: EventTarget | null): boolean {
     const el = target instanceof Element ? target : null;
     if (!el) return false;
@@ -112,39 +134,6 @@ export function EmployeesPage() {
           ? "Create employee records for monthly and contract staff."
         : "Monthly payroll and contract employees, with a controlled Admin → Finance workflow."
   });
-
-  if (auth.role === "factory") {
-    return (
-      <div className="space-y-6">
-        <Card>
-          <div className="text-lg font-bold tracking-tight">Employees</div>
-          <p className="mt-2 text-sm text-black/70">
-            Factory can create employee records. Attendance location assignment is managed by Admin only.
-          </p>
-        </Card>
-        <Card>
-          <div className="text-sm font-semibold">Create employee records</div>
-          <p className="mt-2 text-sm text-black/70">
-            Factory can create employee records but cannot edit payroll, payments, or attendance locations.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              to="/contract-employees/new"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
-            >
-              Create Contract Employee
-            </Link>
-            <Link
-              to="/employees/new"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
-            >
-              Create Monthly Employee
-            </Link>
-          </div>
-        </Card>
-      </div>
-    );
-  }
 
   // Drawer removed: monthly employees use list → click → detail page pattern.
 
@@ -222,9 +211,6 @@ export function EmployeesPage() {
         if (!alive) return;
         setRows(listData);
         setLoading(false);
-        const sum = await employeesApi.payrollSummary(periodParams);
-        if (!alive) return;
-        setSummary(sum);
       } catch (e) {
         toast.push("error", getErrorMessage(e));
         if (alive) setLoading(false);
@@ -368,7 +354,36 @@ export function EmployeesPage() {
     );
   }
 
-  return (
+  return auth.role === "factory" ? (
+    <div className="space-y-6">
+      <Card>
+        <div className="text-lg font-bold tracking-tight">Employees</div>
+        <p className="mt-2 text-sm text-black/70">
+          Factory can create employee records. Attendance location assignment is managed by Admin only.
+        </p>
+      </Card>
+      <Card>
+        <div className="text-sm font-semibold">Create employee records</div>
+        <p className="mt-2 text-sm text-black/70">
+          Factory can create employee records but cannot edit payroll, payments, or attendance locations.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            to="/contract-employees/new"
+            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black/90 active:translate-y-[1px]"
+          >
+            Create Contract Employee
+          </Link>
+          <Link
+            to="/employees/new"
+            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-black/15 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-black/5"
+          >
+            Create Monthly Employee
+          </Link>
+        </div>
+      </Card>
+    </div>
+  ) : (
     <div className="space-y-6">
       {auth.isAdmin ? (
         <div className="inline-flex rounded-2xl border border-black/10 bg-white p-1">
@@ -392,41 +407,6 @@ export function EmployeesPage() {
           >
             Contract Employees
           </button>
-        </div>
-      ) : null}
-
-      {auth.isAdmin && tab === "monthly" && false ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Card className="!p-4">
-            <div className="text-xs font-semibold text-black/55">Period</div>
-            <div className="mt-1 text-sm font-bold">{summary.period.label}</div>
-            <div className="mt-1 text-xs text-black/50">{summary.employee_count} employees</div>
-            {summary.period.is_active ? (
-              <div className="mt-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
-                Active payroll
-              </div>
-            ) : (
-              <div className="mt-2 inline-block rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
-                Archived
-              </div>
-            )}
-          </Card>
-          <Card className="!p-4">
-            <div className="text-xs font-semibold text-black/55">Total base salaries</div>
-            <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(summary.total_base_salary)}</div>
-          </Card>
-          <Card className="!p-4">
-            <div className="text-xs font-semibold text-black/55">Total deductions</div>
-            <div className="mt-1 text-lg font-bold tabular-nums text-red-800">{formatMoney(summary.total_deductions)}</div>
-          </Card>
-          <Card className="!p-4">
-            <div className="text-xs font-semibold text-black/55">Total bonuses</div>
-            <div className="mt-1 text-lg font-bold tabular-nums text-emerald-800">{formatMoney(summary.total_bonuses)}</div>
-          </Card>
-          <Card className="!border-black !bg-black !p-4 text-white">
-            <div className="text-xs font-semibold text-white/70">Net payroll</div>
-            <div className="mt-1 text-lg font-bold tabular-nums">{formatMoney(summary.net_payroll)}</div>
-          </Card>
         </div>
       ) : null}
 
@@ -553,21 +533,7 @@ export function EmployeesPage() {
                         </div>
                       </div>
 
-                      {it.employee_kind === "contract" ? (
-                        <Button variant="secondary" className="w-full" onClick={() => navigate("/finance")}>
-                          Open in Finance
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          className="w-full"
-                          disabled={pendingBusyId === it.transaction.id || !it.transaction.receipt_url}
-                          isLoading={pendingBusyId === it.transaction.id}
-                          onClick={() => setConfirmMarkPaid({ id: it.transaction.id })}
-                        >
-                          Mark paid
-                        </Button>
-                      )}
+                      {renderFinanceMarkPaidButton(it)}
                     </div>
                   </div>
                 ))}
@@ -634,31 +600,15 @@ export function EmployeesPage() {
                             />
                           )}
                         </td>
-                        <td className="py-3 pr-0 text-right">
-                          {it.employee_kind === "contract" ? (
-                            <Button variant="secondary" onClick={() => navigate("/finance")}>
-                              Open in Finance
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="secondary"
-                              disabled={pendingBusyId === it.transaction.id || !it.transaction.receipt_url}
-                              isLoading={pendingBusyId === it.transaction.id}
-                              onClick={() => {
-                                setConfirmMarkPaid({ id: it.transaction.id });
-                              }}
-                            >
-                              Mark paid
-                            </Button>
-                          )}
-                        </td>
+                        <td className="py-3 pr-0 text-right">{renderFinanceMarkPaidButton(it)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <div className="text-xs text-black/50">
-                Finance can only finalize pending payments and must upload a receipt first. Contract payments are finalized from the Finance page (job allocation required).
+                Upload a receipt before marking paid. Contract payments without linked jobs must be finalized from the
+                Finance page detail view.
               </div>
             </div>
           )}
@@ -824,6 +774,7 @@ export function EmployeesPage() {
                               <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-semibold text-black/70">
                                 {r.status === "active" ? "Active" : "Inactive"}
                               </span>
+                              {r.user_account_active === false ? <UserAccountInactiveBadge /> : null}
                               {renderMoneyRequestIndicators(r)}
                               {(r.pending_requests ?? 0) === 0 ? (
                                 <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-black/10 px-2 py-0.5 text-xs font-bold text-black/70">
@@ -948,6 +899,7 @@ export function EmployeesPage() {
                             >
                               {r.full_name}
                             </Link>
+                            {r.user_account_active === false ? <UserAccountInactiveBadge /> : null}
                             {renderMoneyRequestIndicators(r)}
                           </div>
                         </td>
@@ -1020,20 +972,26 @@ export function EmployeesPage() {
 
       <Modal
         open={confirmMarkPaid !== null}
-        title="Confirm payment"
+        title="Confirm Payment"
         onClose={() => (pendingBusyId ? null : setConfirmMarkPaid(null))}
       >
         {confirmMarkPaid ? (
           <div className="space-y-4">
             <div className="text-sm text-black/70">
-              Confirm marking this transaction as <span className="font-semibold">Paid</span>?
+              Are you sure you want to mark this payment as paid?
+              <div className="mt-2">
+                This action will complete the payment and update the employee&apos;s financial records.
+              </div>
             </div>
             {confirmMarkPaid.overpay ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
                 <span className="font-semibold">Overpaid.</span> This payment will make the employee owe the company.
               </div>
             ) : null}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmMarkPaid(null)} disabled={pendingBusyId === confirmMarkPaid.id}>
+                Cancel
+              </Button>
               <Button
                 variant={confirmMarkPaid.overpay ? "danger" : "secondary"}
                 disabled={pendingBusyId === confirmMarkPaid.id}
@@ -1050,6 +1008,7 @@ export function EmployeesPage() {
                       })
                     )
                     .then((res) => setPending(res))
+                    .then(() => window.dispatchEvent(new Event("furniture:notifications-updated")))
                     .then(() => toast.push("success", "Marked paid."))
                     .then(() => setConfirmMarkPaid(null))
                     .catch((er: any) => {
@@ -1063,10 +1022,7 @@ export function EmployeesPage() {
                     .finally(() => setPendingBusyId(null));
                 }}
               >
-                {confirmMarkPaid.overpay ? "Confirm overpay" : "Confirm"}
-              </Button>
-              <Button variant="ghost" onClick={() => setConfirmMarkPaid(null)} disabled={pendingBusyId === confirmMarkPaid.id}>
-                Cancel
+                {confirmMarkPaid.overpay ? "Confirm overpay" : "Mark Paid"}
               </Button>
             </div>
           </div>

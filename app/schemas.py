@@ -153,6 +153,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: UserRole
+    is_active: bool = True
 
     class Config:
         orm_mode = True
@@ -1579,6 +1580,7 @@ class EmployeeOut(BaseModel):
     documents: Optional[List[dict]] = None
     user_id: Optional[int] = None
     linked_username: Optional[str] = None
+    user_account_active: Optional[bool] = None
     work_location_id: Optional[int] = None
     work_location: Optional[CompanyLocationOut] = None
     created_at: datetime
@@ -1606,6 +1608,7 @@ class EmployeeListItemOut(BaseModel):
     account_number: Optional[str] = None
     base_salary: Decimal
     user_id: Optional[int] = None
+    user_account_active: Optional[bool] = None
     period: SalaryPeriodOut
     payment: EmployeePaymentOut
     salary: EmployeeSalaryBreakdown
@@ -1959,6 +1962,7 @@ class ContractEmployeeListItemOut(BaseModel):
     active_jobs_count: int = 0
     pending_requests: int = 0
     unread_pending_requests: int = 0
+    user_account_active: Optional[bool] = None
 
     @computed_field(return_type=Decimal)
     @property
@@ -2280,6 +2284,28 @@ class ContractEmployeeFinanceOut(BaseModel):
         return (self.total_paid or Decimal("0")) + (self.balance or Decimal("0"))
 
 
+class ContractEmployeeLedgerEntryOut(EmployeeTransactionOut):
+    """Bank-style ledger row for contract employee financial history."""
+
+    ledger_type: str
+    transaction_type_label: str
+    description: str
+    reference: str
+    credit: Decimal
+    debit: Decimal
+    balance_before: Decimal
+    balance_after: Decimal
+    status_label: str
+
+
+class ContractEmployeeLedgerPageOut(BaseModel):
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
+    current_balance: Decimal = Decimal("0")
+    items: List[ContractEmployeeLedgerEntryOut] = []
+
+
 class PendingEmployeePaymentItem(BaseModel):
     transaction: EmployeeTransactionOut
     employee_kind: Literal["monthly", "contract"]
@@ -2292,6 +2318,8 @@ class PendingEmployeePaymentItem(BaseModel):
     sent_to_finance_at: Optional[datetime] = None
     initiated_by: Optional[Literal["admin", "employee"]] = None
     notification_unread: bool = False
+    # Jobs explicitly tied to this payment (direct link and/or allocation lines).
+    linked_job_ids: List[int] = []
 
 
 class EmployeePaymentsPageOut(BaseModel):

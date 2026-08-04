@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { UserAccountInactiveBadge } from "../UserAccountStatusBadge";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { ConfirmModal } from "../ui/ConfirmModal";
@@ -640,7 +641,10 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
                                               to={`/employees/${r.id}/detail?year=${period.year}&month=${period.month}`}
                                               className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-black hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
                                             >
-                                              <span className="min-w-0 truncate">{r.full_name}</span>
+                                              <span className="flex min-w-0 items-center gap-2 truncate">
+                                                <span className="truncate">{r.full_name}</span>
+                                                {r.user_account_active === false ? <UserAccountInactiveBadge /> : null}
+                                              </span>
                                               <span
                                                 className={
                                                   r.payment.status === "paid"
@@ -724,7 +728,12 @@ export function PayrollMonthsPanel({ nav, onNavRefresh, onToast }: Props) {
                                       ) : (
                                         <td className="py-3 pr-4" />
                                       )}
-                                      <td className="py-3 pr-4 font-semibold">{r.full_name}</td>
+                                      <td className="py-3 pr-4 font-semibold">
+                                        <span className="inline-flex flex-wrap items-center gap-2">
+                                          {r.full_name}
+                                          {r.user_account_active === false ? <UserAccountInactiveBadge /> : null}
+                                        </span>
+                                      </td>
                                       <td className="py-3 pr-0">
                                         <span
                                           className={

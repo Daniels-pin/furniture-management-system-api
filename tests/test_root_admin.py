@@ -34,12 +34,12 @@ def test_root_admin_inherits_admin_dashboard(client, root_admin_token):
 
 
 def test_root_admin_hidden_from_regular_admin_list(client, admin_token, root_admin_token, db_session):
-    r = client.get("/users", headers={"Authorization": f"Bearer {admin_token}"})
+    r = client.get("/users?status=all", headers={"Authorization": f"Bearer {admin_token}"})
     assert r.status_code == 200, r.text
     roles = {u["role"] for u in r.json()}
     assert "root_admin" not in roles
 
-    r_root = client.get("/users", headers={"Authorization": f"Bearer {root_admin_token}"})
+    r_root = client.get("/users?status=all", headers={"Authorization": f"Bearer {root_admin_token}"})
     assert r_root.status_code == 200, r_root.text
     root_roles = {u["role"] for u in r_root.json()}
     assert "root_admin" in root_roles

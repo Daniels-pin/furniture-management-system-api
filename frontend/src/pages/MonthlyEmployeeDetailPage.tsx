@@ -22,6 +22,7 @@ import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
 import { EmployeeEmploymentDocumentsSection } from "../components/employee/EmployeeEmploymentDocumentsSection";
+import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import {
   absenceDeductionAuto,
@@ -594,7 +595,10 @@ export function MonthlyEmployeeDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div className="min-w-0">
-          <div className="truncate text-2xl font-bold tracking-tight">{detail.full_name}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="truncate text-2xl font-bold tracking-tight">{detail.full_name}</div>
+            {detail.user_account_active === false ? <UserAccountInactiveBadge /> : null}
+          </div>
           <div className="mt-1 text-sm text-black/60">Monthly employee details and payroll.</div>
         </div>
         <div className="flex flex-wrap gap-2">

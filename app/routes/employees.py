@@ -25,6 +25,7 @@ from app.utils.financial_audit import log_financial_action
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.payroll_export import build_payroll_export_payload, payroll_export_xlsx_bytes, payload_to_api_dict
 from app.utils.root_admin import exclude_system_employee_ids, system_linked_employee_ids
+from app.utils.user_account import assert_account_active, linked_user_account_active
 from app.utils.timezone import (
     early_minutes_before_cutoff,
     lagos_date_of,
@@ -2513,6 +2514,7 @@ def _employee_to_out(
         documents=emp.documents or [],
         user_id=emp.user_id,
         linked_username=linked_username,
+        user_account_active=linked_user_account_active(db, emp.user_id),
         work_location_id=getattr(emp, "work_location_id", None),
         work_location=CompanyLocationOut.model_validate(emp.work_location) if getattr(emp, "work_location", None) else None,
         created_at=emp.created_at,
@@ -2556,6 +2558,7 @@ def _list_item(
         account_number=emp.account_number,
         base_salary=base,
         user_id=emp.user_id,
+        user_account_active=linked_user_account_active(ctx.db, emp.user_id),
         period=ctx.period_out,
         payment=pay,
         salary=salary,
@@ -3011,6 +3014,7 @@ def clock_in_my_attendance(
 
     When late (after 08:15), automatically creates one EmployeeLatenessEntry linked to this attendance row.
     """
+    assert_account_active(current_user)
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
@@ -3148,6 +3152,7 @@ def clock_in_my_attendance_geo(
     - Stores the employee coordinates and computed distance.
     - When late (after 08:15), creates one EmployeeLatenessEntry linked to this attendance row (₦500 deduction is derived from lateness count).
     """
+    assert_account_active(current_user)
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
@@ -3301,6 +3306,7 @@ def clock_out_my_attendance_geo(
 
     Requires a prior check-in for today and validates the employee is still within the assigned location radius.
     """
+    assert_account_active(current_user)
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))
@@ -3438,6 +3444,7 @@ def preview_sign_out_my_attendance(
     current_user=Depends(get_current_user),
 ):
     """Preview sign-out confirmation using the shift locked at check-in."""
+    assert_account_active(current_user)
     emp = (
         db.query(models.Employee)
         .filter(models.Employee.user_id == current_user.id, models.Employee.deleted_at.is_(None))

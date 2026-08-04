@@ -67,9 +67,7 @@ def exclude_system_employee_ids(db, emp_ids: list[int]) -> list[int]:
 def admin_user_ids_for_notifications(db) -> list[int]:
     """Portal user IDs that should receive admin-targeted notifications."""
     from app import models
+    from app.utils.user_account import is_active_account
 
-    return [
-        int(uid)
-        for (uid,) in db.query(models.User.id).filter(models.User.role.in_(tuple(ADMIN_ROLES))).all()
-        if uid is not None
-    ]
+    rows = db.query(models.User).filter(models.User.role.in_(tuple(ADMIN_ROLES))).all()
+    return [int(u.id) for u in rows if u.id is not None and is_active_account(u)]

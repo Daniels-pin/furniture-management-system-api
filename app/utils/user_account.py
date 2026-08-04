@@ -3,9 +3,15 @@ from __future__ import annotations
 
 import secrets
 
+from fastapi import HTTPException
+
 from app import models
 from app.auth.utils import hash_password
 from app.utils.activity_log import username_from_email
+
+
+DEACTIVATED_LOGIN_DETAIL = "Your account has been deactivated. Please contact your administrator."
+ACCOUNT_INACTIVE_DETAIL = "Account is inactive."
 
 
 def removed_placeholder_email(user_id: int) -> str:
@@ -18,6 +24,26 @@ def is_removed_account(user: models.User | None) -> bool:
         return False
     email = (getattr(user, "email", None) or "").strip().lower()
     return email.endswith("@example.invalid") and email.startswith("deleted_user_")
+
+
+def is_active_account(user: models.User | None) -> bool:
+    if user is None or is_removed_account(user):
+        return False
+    return bool(getattr(user, "is_active", True))
+
+
+def assert_account_active(user: models.User) -> None:
+    if not is_active_account(user):
+        raise HTTPException(status_code=403, detail=ACCOUNT_INACTIVE_DETAIL)
+
+
+def linked_user_account_active(db, user_id: int | None) -> bool | None:
+    if user_id is None:
+        return None
+    u = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if u is None:
+        return None
+    return is_active_account(u)
 
 
 def derive_historical_first_name(user: models.User) -> str:
@@ -56,6 +82,7 @@ def apply_user_account_removal(user: models.User) -> None:
     user.email = removed_placeholder_email(user.id)
     user.password = hash_password(secrets.token_urlsafe(32))
     user.must_change_password = False
+    user.is_active = False
 
 
 def historical_attribution_label(user: models.User | None) -> str | None:

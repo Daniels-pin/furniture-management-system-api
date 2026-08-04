@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.auth.auth import normalize_role
+from app.utils.user_account import is_active_account
 
 
 def payment_notification_kinds_for_role(role: str | None) -> list[str]:
@@ -162,8 +163,13 @@ def create_notifications(
     """
     now = datetime.utcnow()
     count = 0
-    for uid in recipient_user_ids:
-        if not uid:
+    active_ids: set[int] | None = None
+    recipient_list = [int(uid) for uid in recipient_user_ids if uid]
+    if recipient_list:
+        users = db.query(models.User).filter(models.User.id.in_(recipient_list)).all()
+        active_ids = {int(u.id) for u in users if u.id is not None and is_active_account(u)}
+    for uid in recipient_list:
+        if active_ids is not None and uid not in active_ids:
             continue
         et = (str(entity_type).strip() if isinstance(entity_type, str) and entity_type.strip() else None)
         eid = (int(entity_id) if entity_id is not None else None)

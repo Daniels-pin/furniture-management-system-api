@@ -29,11 +29,19 @@ from app.schemas import (
     ContractEmployeeListItemOut,
     ContractEmployeeOut,
     ContractEmployeeFinanceOut,
+    ContractEmployeeLedgerEntryOut,
+    ContractEmployeeLedgerPageOut,
     ContractJobFinanceRow,
     ContractEmployeeUpdate,
     ContractEmployeeSendPaymentToFinanceIn,
     EmployeeSendPaymentToFinance,
     EmployeeTransactionOut,
+)
+from app.utils.user_account import linked_user_account_active
+from app.utils.contract_employee_ledger import (
+    build_contract_employee_ledger,
+    filter_ledger_entries,
+    paginate_ledger_entries,
 )
 
 router = APIRouter(prefix="/contract-employees", tags=["Contract Employees"])
@@ -49,6 +57,7 @@ def _to_out(
     *,
     derived_totals: ContractEmployeeDerivedTotals | None = None,
     initiated_by_by_txn_id: dict[int, str] | None = None,
+    db: Session | None = None,
 ) -> ContractEmployeeOut:
     total_paid = derived_totals.total_paid if derived_totals is not None else Decimal(str(emp.total_paid or 0))
     balance = derived_totals.balance if derived_totals is not None else Decimal(str(emp.balance or 0))
@@ -64,6 +73,7 @@ def _to_out(
         status=emp.status,
         total_paid=total_paid,
         balance=balance,
+        user_account_active=linked_user_account_active(db, emp.user_id) if db is not None else None,
         transactions=[
             EmployeeTransactionOut.model_validate(
                 (setattr(t, "initiated_by", initiated_by_by_txn_id.get(int(t.id))) or t) if getattr(t, "id", None) else t
@@ -135,6 +145,12 @@ def list_contract_employees(
             active_job_counts[int(ce_id)] = int(cnt)
 
     # Enrich list rows with dashboard metrics (use denormalized ledger columns on the row).
+    user_ids = [int(r.user_id) for r in rows if r.user_id is not None]
+    user_active_map: dict[int, bool | None] = {}
+    if user_ids:
+        for uid in user_ids:
+            user_active_map[uid] = linked_user_account_active(db, uid)
+
     out: list[ContractEmployeeListItemOut] = []
     for r in rows:
         bal = _as_decimal(r.balance)
@@ -152,6 +168,8 @@ def list_contract_employees(
         item.active_jobs_count = int(active_jobs)
         item.pending_requests = int(pending_requests)
         item.unread_pending_requests = int(unread_pending_requests)
+        if r.user_id is not None:
+            item.user_account_active = user_active_map.get(int(r.user_id))
         out.append(item)
     # Unread money-request notifications first; then other active requests.
     out.sort(
@@ -184,7 +202,7 @@ def create_contract_employee(
     db.commit()
     db.refresh(emp)
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.post("/create-with-login", response_model=ContractEmployeeOut)
@@ -209,6 +227,7 @@ def create_contract_employee_with_login(
         password=hash_password(body.password),
         role="contract_employee",
         must_change_password=True,
+        is_active=True,
     )
     db.add(u)
     db.flush()
@@ -231,7 +250,7 @@ def create_contract_employee_with_login(
     db.commit()
     db.refresh(emp)
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.get("/{employee_id}", response_model=ContractEmployeeOut)
@@ -271,7 +290,7 @@ def get_contract_employee(
     except Exception:
         initiated_by_by_txn_id = {}
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived, initiated_by_by_txn_id=initiated_by_by_txn_id)
+    return _to_out(emp, derived_totals=derived, initiated_by_by_txn_id=initiated_by_by_txn_id, db=db)
 
 
 @router.post("/financials/recalculate")
@@ -334,7 +353,7 @@ def patch_contract_employee(
     db.commit()
     db.refresh(emp)
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.post("/{employee_id}/link-user", response_model=ContractEmployeeOut)
@@ -364,7 +383,7 @@ def link_contract_employee_user(
     db.commit()
     db.refresh(emp)
     derived, _debug = compute_contract_employee_financials(db, emp.id)
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.post("/{employee_id}/owed/increase", response_model=ContractEmployeeOut)
@@ -415,7 +434,7 @@ def increase_total_owed(
     db.refresh(emp)
     derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
     db.expire(emp, ["transactions"])
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.post("/{employee_id}/owed/decrease", response_model=ContractEmployeeOut)
@@ -466,7 +485,7 @@ def decrease_total_owed(
     db.refresh(emp)
     derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
     db.expire(emp, ["transactions"])
-    return _to_out(emp, derived_totals=derived)
+    return _to_out(emp, derived_totals=derived, db=db)
 
 
 @router.get("/{employee_id}/finances", response_model=ContractEmployeeFinanceOut)
@@ -611,6 +630,69 @@ def get_contract_employee_finances(
         pending_payment=(EmployeeTransactionOut.model_validate(pending) if pending else None),
         jobs=job_rows,
         transactions=[EmployeeTransactionOut.model_validate(t) for t in txns],
+    )
+
+
+def _ledger_entry_to_out(entry) -> ContractEmployeeLedgerEntryOut:
+    txn = entry.transaction
+    if entry.initiated_by:
+        setattr(txn, "initiated_by", entry.initiated_by)
+    base = EmployeeTransactionOut.model_validate(txn).model_dump()
+    base["running_balance"] = entry.balance_after
+    return ContractEmployeeLedgerEntryOut(
+        **base,
+        ledger_type=entry.ledger_type,
+        transaction_type_label=entry.transaction_type_label,
+        description=entry.description,
+        reference=entry.reference,
+        credit=entry.credit,
+        debit=entry.debit,
+        balance_before=entry.balance_before,
+        balance_after=entry.balance_after,
+        status_label=entry.status_label,
+    )
+
+
+@router.get("/{employee_id}/ledger", response_model=ContractEmployeeLedgerPageOut)
+def get_contract_employee_ledger(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    sort: str = Query("newest", pattern="^(newest|oldest)$"),
+    ledger_type: str | None = Query(None, description="Filter by ledger type slug"),
+    status: str | None = Query(None, description="Filter by transaction status"),
+    job_id: int | None = Query(None, ge=1),
+    payment_request_id: int | None = Query(None, ge=1),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    search: str | None = Query(None, max_length=200),
+):
+    emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Contract employee not found")
+
+    derived, _debug = compute_contract_employee_financials(db, employee_id, debug=False)
+    entries = build_contract_employee_ledger(db, employee_id)
+    filtered = filter_ledger_entries(
+        entries,
+        ledger_type=ledger_type,
+        status=status,
+        job_id=job_id,
+        payment_request_id=payment_request_id,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    page, total = paginate_ledger_entries(filtered, limit=limit, offset=offset, sort=sort)  # type: ignore[arg-type]
+
+    return ContractEmployeeLedgerPageOut(
+        total=total,
+        limit=limit,
+        offset=offset,
+        current_balance=derived.balance,
+        items=[_ledger_entry_to_out(e) for e in page],
     )
 
 
