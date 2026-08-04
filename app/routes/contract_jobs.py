@@ -406,7 +406,7 @@ def _create_owed_increase_for_job(db: Session, ce: models.ContractEmployee, job:
     # `total_owed` is the live/net amount owed to the employee (can go negative after overpayment).
     # `balance` is kept in sync for backward compatibility with older UI fields.
     ce.total_owed = _as_decimal(ce.total_owed) + amt
-    ce.balance = _as_decimal(ce.total_owed)
+    ce.balance = _as_decimal(ce.total_owed) - _as_decimal(ce.total_paid)
     ce.updated_at = now
 
     txn = models.EmployeeTransaction(
@@ -484,7 +484,7 @@ def _reverse_owed_increase_for_job(db: Session, job: models.ContractJob, actor: 
     )
     if ce:
         ce.total_owed = _as_decimal(ce.total_owed) - amt
-        ce.balance = _as_decimal(ce.total_owed)
+        ce.balance = _as_decimal(ce.total_owed) - _as_decimal(ce.total_paid)
         ce.updated_at = now
         rev.running_balance = ce.balance
 

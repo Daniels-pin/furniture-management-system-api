@@ -403,11 +403,7 @@ def increase_total_owed(
     if not note:
         raise HTTPException(status_code=400, detail="note is required")
 
-    # Manual adjustments affect the live/net amount owed.
-    emp.total_owed = (Decimal(str(emp.total_owed or 0)) + amt)
-    emp.balance = Decimal(str(emp.total_owed))
-    emp.updated_at = datetime.utcnow()
-
+    now = datetime.utcnow()
     txn = models.EmployeeTransaction(
         contract_employee_id=emp.id,
         txn_type="owed_increase",
@@ -417,8 +413,7 @@ def increase_total_owed(
         created_by_id=current_user.id,
         processed_by_id=current_user.id,
         processed_by_role="admin",
-        paid_at=datetime.utcnow(),
-        running_balance=emp.balance,
+        paid_at=now,
     )
     db.add(txn)
     db.flush()
@@ -430,9 +425,9 @@ def increase_total_owed(
         actor_user=current_user,
         meta={"contract_employee_id": emp.id, "amount": str(amt), "note": note},
     )
+    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=False)
     db.commit()
     db.refresh(emp)
-    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
     db.expire(emp, ["transactions"])
     return _to_out(emp, derived_totals=derived, db=db)
 
@@ -455,10 +450,6 @@ def decrease_total_owed(
         raise HTTPException(status_code=400, detail="note is required")
 
     now = datetime.utcnow()
-    emp.total_owed = (Decimal(str(emp.total_owed or 0)) - amt)
-    emp.balance = Decimal(str(emp.total_owed))
-    emp.updated_at = now
-
     txn = models.EmployeeTransaction(
         contract_employee_id=emp.id,
         txn_type="owed_decrease",
@@ -469,7 +460,6 @@ def decrease_total_owed(
         processed_by_id=current_user.id,
         processed_by_role="admin",
         paid_at=now,
-        running_balance=emp.balance,
     )
     db.add(txn)
     db.flush()
@@ -481,9 +471,9 @@ def decrease_total_owed(
         actor_user=current_user,
         meta={"contract_employee_id": emp.id, "amount": str(amt), "note": note},
     )
+    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=False)
     db.commit()
     db.refresh(emp)
-    derived = recalculate_contract_employee_financials(db, emp.id, actor_user=None, debug=False, commit=True)
     db.expire(emp, ["transactions"])
     return _to_out(emp, derived_totals=derived, db=db)
 

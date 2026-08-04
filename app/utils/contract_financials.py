@@ -1,19 +1,34 @@
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app import models
+from app.utils.contract_employee_balance_rules import (
+    AccountingInvariantError,
+    aggregate_financials_from_transactions,
+    build_accounting_context,
+    get_reversed_payment_ids,
+    get_reversed_payment_ids_batch,
+    get_reversed_transaction_ids,
+    job_is_valid_for_financials,
+    walk_balance_from_transactions,
+)
 from app.utils.financial_audit import log_financial_action
 
+logger = logging.getLogger(__name__)
 
-def _as_decimal(v: Any) -> Decimal:
-    return Decimal(str(v or 0))
+# Backward-compatible re-exports for existing imports.
+_get_reversed_payment_ids = get_reversed_payment_ids
+_get_reversed_payment_ids_batch = get_reversed_payment_ids_batch
+_get_reversed_transaction_ids = get_reversed_transaction_ids
+_job_is_valid_for_financials = job_is_valid_for_financials
 
 
 @dataclass(frozen=True)
@@ -23,133 +38,6 @@ class ContractEmployeeDerivedTotals:
     balance: Decimal
 
 
-def _job_is_valid_for_financials(job: models.ContractJob) -> tuple[bool, str]:
-    # Requirement mapping:
-    # - Include only: accepted (price_accepted_at) OR in_progress OR completed
-    # - Exclude: cancelled
-    # - Exclude: no final accepted price (final_price missing / <= 0)
-    if job.status == "cancelled":
-        return False, "cancelled"
-    if job.final_price is None:
-        return False, "no_final_price"
-
-    fp = _as_decimal(job.final_price)
-    if fp <= 0:
-        return False, "invalid_final_price"
-
-    if job.status in ("in_progress", "completed"):
-        return True, "in_progress_or_completed"
-
-    # "accepted" isn't a stored status in the DB; we use the price-locked timestamp.
-    if getattr(job, "price_accepted_at", None) is not None:
-        return True, "accepted_by_price_lock"
-
-    return False, "not_accepted_in_progress_or_completed"
-
-
-def _get_reversed_payment_ids_batch(db: Session, contract_employee_ids: list[int]) -> dict[int, set[int]]:
-    """Batch variant of _get_reversed_payment_ids for list endpoints."""
-    ce_ids = sorted({int(x) for x in contract_employee_ids if x})
-    out: dict[int, set[int]] = {cid: set() for cid in ce_ids}
-    if not ce_ids:
-        return out
-
-    rev = aliased(models.EmployeeTransaction)
-    orig = aliased(models.EmployeeTransaction)
-    rows = (
-        db.query(orig.contract_employee_id, rev.reversal_of_id)
-        .join(orig, rev.reversal_of_id == orig.id)
-        .filter(
-            rev.txn_type == "reversal",
-            rev.status == "paid",
-            rev.reversal_of_id.isnot(None),
-            orig.txn_type == "payment",
-            orig.contract_employee_id.in_(ce_ids),
-        )
-        .all()
-    )
-    for ce_id, reversal_of_id in rows:
-        if ce_id is None or reversal_of_id is None:
-            continue
-        out.setdefault(int(ce_id), set()).add(int(reversal_of_id))
-    return out
-
-
-def _get_reversed_payment_ids(db: Session, contract_employee_id: int) -> set[int]:
-    """
-    Identify payment transactions that have been reversed by a corresponding reversal row.
-
-    We exclude these payments even if allocations were not voided, so payment impact stays correct.
-    """
-
-    rev = aliased(models.EmployeeTransaction)
-    orig = aliased(models.EmployeeTransaction)
-    rows = (
-        db.query(rev.reversal_of_id)
-        .join(orig, rev.reversal_of_id == orig.id)
-        .filter(
-            rev.txn_type == "reversal",
-            rev.status == "paid",
-            rev.reversal_of_id.isnot(None),
-            orig.txn_type == "payment",
-            orig.contract_employee_id == contract_employee_id,
-        )
-        .all()
-    )
-    return {int(r[0]) for r in rows if r[0] is not None}
-
-
-def _get_reversed_transaction_ids(db: Session, contract_employee_id: int) -> set[int]:
-    """Original transaction ids that have a paid reversal row for this contract employee."""
-
-    rev = aliased(models.EmployeeTransaction)
-    rows = (
-        db.query(rev.reversal_of_id)
-        .filter(
-            rev.contract_employee_id == contract_employee_id,
-            rev.txn_type == "reversal",
-            rev.status == "paid",
-            rev.reversal_of_id.isnot(None),
-        )
-        .all()
-    )
-    return {int(r[0]) for r in rows if r[0] is not None}
-
-
-def _sum_manual_owed_adjustments(db: Session, contract_employee_id: int, *, reversed_ids: set[int]) -> Decimal:
-    """
-    Net manual owed adjustments (admin increase/decrease), excluding job-linked rows.
-
-    Job acceptance creates job-linked owed_increase rows; those amounts are already included
-    in the job final_price sum and must not be double-counted here.
-    """
-
-    rows = (
-        db.query(
-            models.EmployeeTransaction.id,
-            models.EmployeeTransaction.txn_type,
-            models.EmployeeTransaction.amount,
-        )
-        .filter(
-            models.EmployeeTransaction.contract_employee_id == contract_employee_id,
-            models.EmployeeTransaction.status == "paid",
-            models.EmployeeTransaction.contract_job_id.is_(None),
-            models.EmployeeTransaction.txn_type.in_(["owed_increase", "owed_decrease"]),
-        )
-        .all()
-    )
-    net = Decimal("0")
-    for txn_id, txn_type, amount in rows:
-        if int(txn_id) in reversed_ids:
-            continue
-        amt = _as_decimal(amount)
-        if txn_type == "owed_increase":
-            net += amt
-        elif txn_type == "owed_decrease":
-            net -= amt
-    return net
-
-
 def compute_contract_employee_financials(
     db: Session,
     contract_employee_id: int,
@@ -157,20 +45,28 @@ def compute_contract_employee_financials(
     debug: bool = False,
 ) -> tuple[ContractEmployeeDerivedTotals, dict[str, Any]]:
     """
-    Derive all financial totals from:
-    - ContractJobs: only accepted/in_progress/completed jobs with a locked final price
-    - EmployeeTransaction (manual owed_increase / owed_decrease): paid rows not linked to a job
-    - EmployeeTransaction (payment): only status=paid and finance-confirmed (best-effort)
+    Derive financial totals by walking all transactions with canonical accounting rules.
 
-    Excludes:
-    - cancelled jobs
-    - voided payment allocations
-    - reversed transactions
-    - allocations tied to invalid jobs
-    - job-linked owed_increase rows (already represented by job final_price)
+    total_owed and total_paid decompose the same walk used for balance; balance equals
+    the chronological sum of transaction_balance_delta (Option A symmetric reversals).
     """
 
-    # Snapshot jobs to determine which are valid and which are excluded (for debug logging).
+    transactions = (
+        db.query(models.EmployeeTransaction)
+        .filter(models.EmployeeTransaction.contract_employee_id == contract_employee_id)
+        .order_by(models.EmployeeTransaction.created_at.asc(), models.EmployeeTransaction.id.asc())
+        .all()
+    )
+    ctx = build_accounting_context(db, contract_employee_id, transactions=transactions)
+
+    total_owed, total_paid, balance = aggregate_financials_from_transactions(transactions, ctx)
+    walk_balance = walk_balance_from_transactions(transactions, ctx)
+    if walk_balance != balance:
+        raise AccountingInvariantError(
+            f"Internal aggregation mismatch for contract employee {contract_employee_id}: "
+            f"walk={walk_balance} aggregate={balance}"
+        )
+
     job_rows = (
         db.query(
             models.ContractJob.id,
@@ -191,146 +87,21 @@ def compute_contract_employee_financials(
             final_price=final_price,
             price_accepted_at=price_accepted_at,
         )
-        ok, reason = _job_is_valid_for_financials(tmp)
+        ok, reason = job_is_valid_for_financials(tmp)
         if ok:
             job_valid[int(jid)] = reason
         else:
             job_excluded.append({"id": int(jid), "status": status, "reason": reason})
 
-    valid_job_ids = set(job_valid.keys())
-
-    # Total owed: sum final_price for valid jobs only.
-    total_owed = Decimal("0")
-    if valid_job_ids:
-        owed_sum = (
-            db.query(func.coalesce(func.sum(models.ContractJob.final_price), 0))
-            .filter(models.ContractJob.contract_employee_id == contract_employee_id)
-            .filter(models.ContractJob.id.in_(valid_job_ids))
-            .scalar()
-        )
-        total_owed = _as_decimal(owed_sum)
-
-    # Payments:
-    # Include "confirmed" paid payments (best-effort).
-    # - Primary: processed_by_role in ('finance', 'admin')
-    # - Legacy fallback: receipt_url present
-    reversed_payment_ids = _get_reversed_payment_ids(db, contract_employee_id)
-    reversed_transaction_ids = _get_reversed_transaction_ids(db, contract_employee_id)
-    manual_owed_adjustment = _sum_manual_owed_adjustments(
-        db, contract_employee_id, reversed_ids=reversed_transaction_ids
-    )
-    total_owed = total_owed + manual_owed_adjustment
-
-    payments_candidate_rows = (
-        db.query(models.EmployeeTransaction.id)
-        .filter(
-            models.EmployeeTransaction.contract_employee_id == contract_employee_id,
-            models.EmployeeTransaction.txn_type == "payment",
-            models.EmployeeTransaction.status == "paid",
-            or_(
-                models.EmployeeTransaction.processed_by_role.in_(["finance", "admin"]),
-                models.EmployeeTransaction.receipt_url.isnot(None),
-            ),
-        )
-        .all()
-    )
-    candidate_payment_ids = {int(r[0]) for r in payments_candidate_rows}
-    candidate_payment_ids -= reversed_payment_ids
-
-    # Aggregate paid allocations ONLY for valid jobs and non-voided allocation lines.
-    job_paid: dict[int, Decimal] = {}
-    payments_used: set[int] = set()
-    excluded_allocations_count = 0
-
-    if valid_job_ids and candidate_payment_ids:
-        alloc_rows = (
-            db.query(
-                models.EmployeePaymentAllocation.contract_job_id,
-                models.EmployeePaymentAllocation.amount,
-                models.EmployeePaymentAllocation.transaction_id,
-            )
-            .join(
-                models.EmployeeTransaction,
-                models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id,
-            )
-            .filter(
-                models.EmployeeTransaction.contract_employee_id == contract_employee_id,
-                models.EmployeeTransaction.txn_type == "payment",
-                models.EmployeeTransaction.status == "paid",
-                models.EmployeePaymentAllocation.voided_at.is_(None),
-                models.EmployeePaymentAllocation.contract_job_id.in_(valid_job_ids),
-                models.EmployeePaymentAllocation.transaction_id.in_(candidate_payment_ids),
-            )
-            .all()
-        )
-
-        for job_id, amt, txn_id in alloc_rows:
-            jid = int(job_id)
-            payments_used.add(int(txn_id))
-            job_paid[jid] = job_paid.get(jid, Decimal("0")) + _as_decimal(amt)
-
-        # Debug: count allocations excluded due to voiding or invalid linked jobs.
-        if valid_job_ids:
-            excluded_allocations_count = (
-                db.query(func.count(models.EmployeePaymentAllocation.id))
-                .join(
-                    models.EmployeeTransaction,
-                    models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id,
-                )
-                .filter(
-                    models.EmployeeTransaction.contract_employee_id == contract_employee_id,
-                    models.EmployeeTransaction.txn_type == "payment",
-                    models.EmployeeTransaction.status == "paid",
-                    models.EmployeePaymentAllocation.transaction_id.in_(candidate_payment_ids),
-                    or_(
-                        models.EmployeePaymentAllocation.voided_at.isnot(None),
-                        models.EmployeePaymentAllocation.contract_job_id.notin_(valid_job_ids),
-                    ),
-                )
-                .scalar()
-                or 0
-            )
-        else:
-            # No valid jobs means every allocation linked to this employee is excluded.
-            excluded_allocations_count = (
-                db.query(func.count(models.EmployeePaymentAllocation.id))
-                .join(
-                    models.EmployeeTransaction,
-                    models.EmployeeTransaction.id == models.EmployeePaymentAllocation.transaction_id,
-                )
-                .filter(
-                    models.EmployeeTransaction.contract_employee_id == contract_employee_id,
-                    models.EmployeeTransaction.txn_type == "payment",
-                    models.EmployeeTransaction.status == "paid",
-                    models.EmployeePaymentAllocation.transaction_id.in_(candidate_payment_ids),
-                )
-                .scalar()
-                or 0
-            )
-
-    total_paid = Decimal("0")
-    for _, amt in job_paid.items():
-        total_paid += amt
-    balance = total_owed - total_paid
-
-    payments_excluded = sorted(list(candidate_payment_ids - payments_used))
-
     debug_info: dict[str, Any] = {
-        "jobs_used": sorted(list(valid_job_ids)),
+        "jobs_used": sorted(list(job_valid.keys())),
         "jobs_excluded": job_excluded,
-        "manual_owed_adjustment": str(manual_owed_adjustment),
-        "payments_used_count": len(payments_used),
-        "payments_used_sample": sorted(list(payments_used))[:25],
-        "payments_excluded_count": len(payments_excluded),
-        "payments_excluded_sample": payments_excluded[:25],
-        "excluded_allocations_count": int(excluded_allocations_count),
+        "transaction_count": len(transactions),
+        "walk_balance": str(walk_balance),
     }
-    if not debug:
-        # Keep debug small for logs.
-        # jobs_excluded can still be large; truncate unless requested.
-        if len(debug_info["jobs_excluded"]) > 50:
-            debug_info["jobs_excluded_truncated"] = len(debug_info["jobs_excluded"])
-            debug_info["jobs_excluded"] = debug_info["jobs_excluded"][:50]
+    if not debug and len(debug_info["jobs_excluded"]) > 50:
+        debug_info["jobs_excluded_truncated"] = len(debug_info["jobs_excluded"])
+        debug_info["jobs_excluded"] = debug_info["jobs_excluded"][:50]
 
     return (
         ContractEmployeeDerivedTotals(
@@ -340,6 +111,23 @@ def compute_contract_employee_financials(
         ),
         debug_info,
     )
+
+
+def _verify_accounting_invariant(
+    contract_employee_id: int,
+    stored_balance: Decimal,
+    derived: ContractEmployeeDerivedTotals,
+    ledger_final_balance: Decimal,
+) -> None:
+    if stored_balance == derived.balance == ledger_final_balance:
+        return
+    msg = (
+        f"Accounting invariant violated for contract employee {contract_employee_id}: "
+        f"stored={stored_balance} computed={derived.balance} ledger_final={ledger_final_balance}"
+    )
+    logger.critical(msg)
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        raise AccountingInvariantError(msg)
 
 
 def recalculate_contract_employee_financials(
@@ -361,12 +149,14 @@ def recalculate_contract_employee_financials(
     emp.balance = derived.balance
     emp.updated_at = datetime.utcnow()
 
-    # Make transaction UI balance consistent after recalculation.
-    # (We keep running_balance as a cached field, but ensure it reflects the rebuilt totals.)
-    db.query(models.EmployeeTransaction).filter(models.EmployeeTransaction.contract_employee_id == contract_employee_id).update(
-        {models.EmployeeTransaction.running_balance: derived.balance},
-        synchronize_session=False,
-    )
+    from app.utils.contract_employee_ledger import build_contract_employee_ledger
+
+    entries = build_contract_employee_ledger(db, contract_employee_id)
+    ledger_final = entries[-1].balance_after if entries else Decimal("0")
+    for entry in entries:
+        entry.transaction.running_balance = entry.balance_after
+
+    _verify_accounting_invariant(contract_employee_id, emp.balance, derived, ledger_final)
 
     if actor_user is not None:
         log_financial_action(
@@ -411,4 +201,3 @@ def recalculate_all_contract_employees_financials(
         "finished_at": finished.isoformat(),
         "elapsed_seconds": (finished - started).total_seconds(),
     }
-

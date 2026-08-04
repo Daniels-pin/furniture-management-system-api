@@ -8,9 +8,9 @@ from typing import Any, Literal, Optional
 from sqlalchemy.orm import Session
 
 from app import models
-from app.utils.contract_financials import (
-    _get_reversed_payment_ids,
-    _get_reversed_transaction_ids,
+from app.utils.contract_employee_balance_rules import (
+    build_accounting_context,
+    transaction_balance_delta,
 )
 
 LedgerType = Literal[
@@ -42,15 +42,6 @@ LEDGER_TYPE_LABELS: dict[str, str] = {
 
 def _as_decimal(v: Any) -> Decimal:
     return Decimal(str(v or 0))
-
-
-def _is_finance_confirmed_payment(txn: models.EmployeeTransaction) -> bool:
-    if txn.txn_type != "payment" or txn.status != "paid":
-        return False
-    role = (getattr(txn, "processed_by_role", None) or "").strip().lower()
-    if role in ("finance", "admin"):
-        return True
-    return bool(getattr(txn, "receipt_url", None))
 
 
 def _payment_initiated_by(
@@ -193,57 +184,6 @@ def _display_credit_debit(
     return Decimal("0"), Decimal("0")
 
 
-def _balance_delta(
-    txn: models.EmployeeTransaction,
-    *,
-    reversed_transaction_ids: set[int],
-    reversed_payment_ids: set[int],
-    orig_by_id: dict[int, models.EmployeeTransaction],
-) -> Decimal:
-    """Signed change to employee balance (positive = credit / company owes more)."""
-    amt = _as_decimal(txn.amount)
-    if amt <= 0:
-        return Decimal("0")
-
-    if txn.status == "cancelled":
-        return Decimal("0")
-
-    if txn.txn_type == "owed_increase":
-        if txn.status == "paid" and int(txn.id) not in reversed_transaction_ids:
-            return amt
-        return Decimal("0")
-
-    if txn.txn_type == "owed_decrease":
-        if txn.status == "paid" and int(txn.id) not in reversed_transaction_ids:
-            return -amt
-        return Decimal("0")
-
-    if txn.txn_type == "payment":
-        if (
-            txn.status == "paid"
-            and _is_finance_confirmed_payment(txn)
-            and int(txn.id) not in reversed_payment_ids
-        ):
-            return -amt
-        return Decimal("0")
-
-    if txn.txn_type == "reversal":
-        if txn.status != "paid":
-            return Decimal("0")
-        orig = orig_by_id.get(int(txn.reversal_of_id)) if txn.reversal_of_id else None
-        if orig is None:
-            return Decimal("0")
-        if orig.txn_type == "payment":
-            return amt
-        if orig.txn_type == "owed_increase":
-            return -amt
-        if orig.txn_type == "owed_decrease":
-            return amt
-        return Decimal("0")
-
-    return Decimal("0")
-
-
 @dataclass(frozen=True)
 class ContractEmployeeLedgerEntry:
     transaction: models.EmployeeTransaction
@@ -278,18 +218,8 @@ def build_contract_employee_ledger(
     if initiated_by_by_txn_id is None:
         initiated_by_by_txn_id = _payment_initiated_by(db, payment_ids)
 
-    reversal_orig_ids = [int(t.reversal_of_id) for t in rows if t.reversal_of_id is not None]
-    orig_rows: list[models.EmployeeTransaction] = []
-    if reversal_orig_ids:
-        orig_rows = (
-            db.query(models.EmployeeTransaction)
-            .filter(models.EmployeeTransaction.id.in_(reversal_orig_ids))
-            .all()
-        )
-    orig_by_id = {int(o.id): o for o in orig_rows if o.id is not None}
-
-    reversed_transaction_ids = _get_reversed_transaction_ids(db, contract_employee_id)
-    reversed_payment_ids = _get_reversed_payment_ids(db, contract_employee_id)
+    ctx = build_accounting_context(db, contract_employee_id, transactions=rows)
+    orig_by_id = ctx.orig_by_id
 
     running = Decimal("0")
     entries: list[ContractEmployeeLedgerEntry] = []
@@ -300,12 +230,7 @@ def build_contract_employee_ledger(
         ledger_type = _classify_ledger_type(txn, initiated_by=initiated_by, orig_by_id=orig_by_id)
         credit, debit = _display_credit_debit(txn, ledger_type=ledger_type, orig_by_id=orig_by_id)
         balance_before = running
-        delta = _balance_delta(
-            txn,
-            reversed_transaction_ids=reversed_transaction_ids,
-            reversed_payment_ids=reversed_payment_ids,
-            orig_by_id=orig_by_id,
-        )
+        delta = transaction_balance_delta(txn, ctx)
         balance_after = balance_before + delta
         running = balance_after
 
