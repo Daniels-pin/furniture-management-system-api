@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
-import { contractEmployeesApi, employeePaymentsApi, expensesApi } from "../services/endpoints";
+import { employeePaymentsApi, expensesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 
 function financeListErrorMessage(err: unknown, section: "pending" | "history"): string {
@@ -29,7 +29,6 @@ import { useAuth } from "../state/auth";
 import type { ExpenseEntry, ExpenseSummary, PendingEmployeePaymentItem, PendingEmployeePayments } from "../types/api";
 import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
-import { parseMoneyInput, sanitizeMoneyInput } from "../utils/moneyInput";
 import { canCancelUnpaidPaymentTransfer, getFinancialActivityStatusLabel } from "../utils/financialActivity";
 import {
   getPendingMarkPaidDisabledReason,
@@ -38,6 +37,8 @@ import {
 import { usePageHeader } from "../components/layout/pageHeader";
 import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmployeeAttendanceCard";
 import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
+import { useContractPaymentAllocation } from "../hooks/useContractPaymentAllocation";
+import { collectLinkedJobIds } from "../utils/paymentAllocation";
 
 export function FinanceDashboardPage() {
   const auth = useAuth();
@@ -76,20 +77,6 @@ export function FinanceDashboardPage() {
     amount: string | number;
   }>(null);
   const [cancellingTransfer, setCancellingTransfer] = useState(false);
-  const [allocOpen, setAllocOpen] = useState(false);
-  const [allocLoading, setAllocLoading] = useState(false);
-  const [allocTxId, setAllocTxId] = useState<number | null>(null);
-  const [allocEmployeeId, setAllocEmployeeId] = useState<number | null>(null);
-  const [allocEmployeeName, setAllocEmployeeName] = useState<string>("");
-  const [allocAmount, setAllocAmount] = useState<string>("");
-  const [allocJobs, setAllocJobs] = useState<
-    Array<{ id: number; status: string; final_price?: string | number | null; amount_paid: string | number; balance?: string | number | null }>
-  >([]);
-  const [allocLines, setAllocLines] = useState<Record<number, string>>({});
-  const [allocLinkedJobIds, setAllocLinkedJobIds] = useState<number[]>([]);
-  const [allocLinkedJobsPreview, setAllocLinkedJobsPreview] = useState<
-    Array<{ id: number; status: string; final_price?: string | number | null }>
-  >([]);
   const [overpayConfirm, setOverpayConfirm] = useState(false);
   const [confirmWithoutReceipt, setConfirmWithoutReceipt] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -123,130 +110,6 @@ export function FinanceDashboardPage() {
   function fmtSentToFinanceDate(it: { sent_to_finance_at?: string | null; transaction: { created_at: string } }) {
     const raw = it.sent_to_finance_at ?? it.transaction.created_at;
     return formatLagosDateTime(raw);
-  }
-
-  function toFiniteNumber(x: unknown): number | null {
-    if (typeof x === "number") return Number.isFinite(x) ? x : null;
-    if (typeof x === "string") {
-      const n = Number(sanitizeMoneyInput(x));
-      return Number.isFinite(n) ? n : null;
-    }
-    return null;
-  }
-
-  type AllocJobRow = {
-    id: number;
-    status: string;
-    final_price?: string | number | null;
-    amount_paid: string | number;
-    balance?: string | number | null;
-  };
-
-  function mergeAllocJobRows(
-    financeJobs: AllocJobRow[],
-    linkedJobs: Array<{ id: number; status: string; final_price?: string | number | null }>,
-    linkedJobIds: number[]
-  ): AllocJobRow[] {
-    const byId = new Map<number, AllocJobRow>();
-    for (const j of financeJobs) {
-      byId.set(j.id, j);
-    }
-    for (const j of linkedJobs) {
-      if (byId.has(j.id)) continue;
-      const fp = toFiniteNumber(j.final_price);
-      byId.set(j.id, {
-        id: j.id,
-        status: j.status,
-        final_price: j.final_price ?? null,
-        amount_paid: 0,
-        balance: fp
-      });
-    }
-    for (const jobId of linkedJobIds) {
-      if (jobId <= 0 || byId.has(jobId)) continue;
-      byId.set(jobId, {
-        id: jobId,
-        status: "linked",
-        final_price: null,
-        amount_paid: 0,
-        balance: null
-      });
-    }
-    return Array.from(byId.values()).sort((a, b) => b.id - a.id);
-  }
-
-  function collectLinkedJobIds(
-    linkedJobs: Array<{ id: number }> | null | undefined,
-    contractJobId?: number | null
-  ): number[] {
-    const ids: number[] = [];
-    const seen = new Set<number>();
-    for (const j of linkedJobs ?? []) {
-      if (j.id > 0 && !seen.has(j.id)) {
-        seen.add(j.id);
-        ids.push(j.id);
-      }
-    }
-    if (contractJobId && contractJobId > 0 && !seen.has(contractJobId)) {
-      ids.push(contractJobId);
-    }
-    return ids;
-  }
-
-  const activeAllocJobs = useMemo(() => {
-    const linkedSet = new Set(allocLinkedJobIds);
-    return allocJobs.filter((j) => {
-      if (j.status === "cancelled") return false;
-      if (linkedSet.has(j.id)) return true;
-      const bal = toFiniteNumber(j.balance);
-      if (bal === null) return false;
-      if (bal <= 0) return false;
-      // Allocations are allowed for any non-cancelled job with an outstanding balance.
-      // (Jobs may be "completed" but still unpaid/partially paid.)
-      return true;
-    });
-  }, [allocJobs, allocLinkedJobIds]);
-
-  useEffect(() => {
-    // Smart default: when modal opens (and jobs are loaded), auto-select smallest-balance active job
-    // and auto-fill with min(payment, remaining balance).
-    if (!allocOpen) return;
-    if (allocLoading) return;
-    if (Object.keys(allocLines).length > 0) return;
-    if (activeAllocJobs.length === 0) return;
-
-    const pay = parseMoneyInput(allocAmount);
-    const payAmount = pay === null || Number.isNaN(pay) ? 0 : pay;
-
-    let chosenIdx = 0;
-    let chosenBal = toFiniteNumber(activeAllocJobs[0]?.balance) ?? Number.POSITIVE_INFINITY;
-    for (let i = 1; i < activeAllocJobs.length; i++) {
-      const bal = toFiniteNumber(activeAllocJobs[i]?.balance);
-      if (bal === null) continue;
-      if (bal < chosenBal) {
-        chosenBal = bal;
-        chosenIdx = i;
-      }
-    }
-    const chosen = activeAllocJobs[chosenIdx];
-    const remaining = toFiniteNumber(chosen.balance) ?? 0;
-    const autoAlloc = Math.max(0, Math.min(payAmount, remaining));
-
-    setAllocLines({ [chosen.id]: autoAlloc > 0 ? String(autoAlloc) : "" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allocOpen, allocLoading, activeAllocJobs, allocAmount]);
-
-  function setAllocation(jobId: number, raw: string, maxBalance: unknown) {
-    const n = parseMoneyInput(raw);
-    if (n !== null && !Number.isNaN(n)) {
-      const max = toFiniteNumber(maxBalance);
-      if (max !== null) {
-        const clamped = Math.max(0, Math.min(n, max));
-        setAllocLines({ ...allocLines, [jobId]: String(clamped) });
-        return;
-      }
-    }
-    setAllocLines({ ...allocLines, [jobId]: raw });
   }
 
   const kindForTab = tab;
@@ -341,12 +204,23 @@ export function FinanceDashboardPage() {
     window.dispatchEvent(new Event("furniture:notifications-updated"));
   }
 
+  const contractPaymentAllocation = useContractPaymentAllocation({
+    auth,
+    busyId,
+    setBusyId,
+    onMarkedPaid: async () => {
+      await refreshAfterMarkPaid();
+      toast.push("success", "Marked paid.");
+    },
+    onError: (message) => toast.push("error", message)
+  });
+
   function beginMarkPaidFromRow(it: PendingEmployeePaymentItem) {
-    const tx = it.transaction;
-    const txId = tx.id;
-    setConfirmTarget({ id: txId, kind: it.employee_kind });
-    setOverpayConfirm(false);
-    setConfirmWithoutReceipt(auth.isAdmin && !tx.receipt_url);
+    contractPaymentAllocation.beginMarkPaidFromPendingItem(it, (target) => {
+      setConfirmTarget(target);
+      setOverpayConfirm(false);
+      setConfirmWithoutReceipt(auth.isAdmin && !it.transaction.receipt_url);
+    });
   }
 
   function renderPendingRowActions(it: PendingEmployeePaymentItem) {
@@ -774,7 +648,7 @@ export function FinanceDashboardPage() {
             </div>
             <div className="mt-1 text-sm text-black/60">
               {tab === "contract"
-                ? "Pending queue requires receipt; contract payments also require job allocation."
+                ? "Pending queue requires receipt; job allocation can be completed from Mark Paid when needed."
                 : "Pending queue requires receipt; monthly salaries can be confirmed once paid."}
             </div>
             {moneyRequestsView ? (
@@ -1415,39 +1289,18 @@ export function FinanceDashboardPage() {
                     onClick={() => {
                       const txId = detail.transaction?.id;
                       if (!txId) return;
-                      const contractEmpId = detail.employee_kind === "contract" ? detail.employee_id : null;
-                      if (contractEmpId) {
+                      if (detail.employee_kind === "contract") {
                         const linkedJobs = detail.jobs ?? [];
-                        const linkedJobIds = collectLinkedJobIds(linkedJobs, detail.transaction?.contract_job_id);
-                        setAllocLinkedJobsPreview(linkedJobs);
-                        setAllocLinkedJobIds(linkedJobIds);
-                        setAllocOpen(true);
-                        setAllocTxId(txId);
-                        setAllocEmployeeId(contractEmpId);
-                        setAllocEmployeeName(detail.employee_name);
-                        setAllocAmount(String(detail.transaction?.amount ?? ""));
-                        setOverpayConfirm(false);
-                        setConfirmWithoutReceipt(auth.isAdmin && !detail.transaction?.receipt_url);
-                        setAllocLines({});
-                        setAllocJobs([]);
-                        setAllocLoading(true);
-                        void contractEmployeesApi
-                          .finances(contractEmpId)
-                          .then((d) => {
-                            const financeJobs = Array.isArray(d?.jobs) ? d.jobs : [];
-                            setAllocJobs(mergeAllocJobRows(financeJobs, linkedJobs, linkedJobIds));
-                            const primaryLinkedId = linkedJobIds[0];
-                            if (primaryLinkedId) {
-                              const pay = parseMoneyInput(String(detail.transaction?.amount ?? ""));
-                              const payAmount = pay === null || Number.isNaN(pay) ? 0 : pay;
-                              setAllocLines({ [primaryLinkedId]: payAmount > 0 ? String(payAmount) : "" });
-                            }
-                          })
-                          .catch((er) => {
-                            setAllocJobs(mergeAllocJobRows([], linkedJobs, linkedJobIds));
-                            toast.push("error", getErrorMessage(er));
-                          })
-                          .finally(() => setAllocLoading(false));
+                        contractPaymentAllocation.openForPayment({
+                          transactionId: txId,
+                          employeeId: detail.employee_id,
+                          employeeName: detail.employee_name,
+                          amount: detail.transaction?.amount ?? "",
+                          linkedJobs,
+                          linkedJobIds: collectLinkedJobIds(linkedJobs, detail.transaction?.contract_job_id),
+                          contractJobId: detail.transaction?.contract_job_id,
+                          receiptUrl: detail.transaction?.receipt_url
+                        });
                         return;
                       }
                       setConfirmTarget({ id: txId, kind: "monthly" });
@@ -1600,234 +1453,7 @@ export function FinanceDashboardPage() {
         ) : null}
       </Modal>
 
-      <Modal
-        open={allocOpen}
-        title={allocEmployeeName ? `Allocate payment — ${allocEmployeeName}` : "Allocate payment"}
-        onClose={() => (busyId || allocLoading ? null : setAllocOpen(false))}
-      >
-        <div className="space-y-4">
-          <div className="text-sm text-black/70">
-            Select one or more jobs and allocate amounts. Total allocations must equal the payment amount.
-          </div>
-
-          {allocLinkedJobsPreview.length || allocLinkedJobIds.length ? (
-            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-sm">
-              <div className="text-xs font-semibold text-black/55">Linked to this payment</div>
-              <ul className="mt-2 space-y-2">
-                {(allocLinkedJobsPreview.length
-                  ? allocLinkedJobsPreview
-                  : allocLinkedJobIds.map((id) => ({ id, status: "linked", final_price: null }))
-                ).map((j) => (
-                  <li key={j.id} className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">Job #{j.id}</span>
-                    <span className="text-xs font-semibold text-black/55">{j.status}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <label className="text-xs font-semibold text-black/60">
-            Amount to pay (optional adjustment)
-            <input
-              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-              value={allocAmount}
-              onChange={(e) => setAllocAmount(e.target.value)}
-              inputMode="decimal"
-              placeholder="0"
-            />
-          </label>
-
-          {allocLoading ? (
-            <div className="text-sm text-black/60">Loading jobs…</div>
-          ) : activeAllocJobs.length === 0 ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-              No active jobs available for allocation
-            </div>
-          ) : (
-            <>
-              <div className="md:hidden space-y-3">
-                {activeAllocJobs.map((j) => {
-                  const v = allocLines[j.id] ?? "";
-                  const checked = typeof allocLines[j.id] !== "undefined";
-                  return (
-                    <div
-                      key={j.id}
-                      className={[
-                        "rounded-2xl border bg-white p-4",
-                        checked ? "border-black/30 ring-2 ring-black/10" : "border-black/10"
-                      ].join(" ")}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <label className="flex items-start gap-3">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const next = { ...allocLines };
-                              if (e.target.checked) next[j.id] = next[j.id] ?? "";
-                              else delete next[j.id];
-                              setAllocLines(next);
-                            }}
-                            className="mt-1 h-4 w-4"
-                            aria-label={`Use job ${j.id}`}
-                          />
-                          <div>
-                            <div className="text-sm font-bold">Job #{j.id}</div>
-                            <div className="mt-0.5 text-xs font-semibold text-black/55">{j.status}</div>
-                          </div>
-                        </label>
-                        <div className="text-right text-xs">
-                          <div className="font-semibold text-black/55">Balance</div>
-                          <div className="mt-0.5 text-sm font-bold tabular-nums">{formatMoney(j.balance ?? 0)}</div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
-                          <div className="font-semibold text-black/55">Total</div>
-                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.final_price ?? 0)}</div>
-                        </div>
-                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
-                          <div className="font-semibold text-black/55">Paid</div>
-                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</div>
-                        </div>
-                        <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
-                          <div className="font-semibold text-black/55">Balance</div>
-                          <div className="mt-0.5 font-bold tabular-nums">{formatMoney(j.balance ?? 0)}</div>
-                        </div>
-                      </div>
-
-                      <label className="mt-3 block text-xs font-semibold text-black/60">
-                        Allocate amount
-                        <input
-                          className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold text-right"
-                          disabled={!checked}
-                          value={v}
-                          onChange={(e) => setAllocation(j.id, e.target.value, j.balance)}
-                          inputMode="decimal"
-                          placeholder="0"
-                        />
-                      </label>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="hidden md:block min-w-0 overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="text-black/60">
-                  <tr className="border-b border-black/10">
-                    <th className="py-2 pr-3 font-semibold">Use</th>
-                    <th className="py-2 pr-3 font-semibold">Job</th>
-                    <th className="py-2 pr-3 font-semibold">Status</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Total</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Paid</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Balance</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Allocate</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeAllocJobs.map((j) => {
-                    const v = allocLines[j.id] ?? "";
-                    const checked = typeof allocLines[j.id] !== "undefined";
-                    return (
-                      <tr
-                        key={j.id}
-                        className={[
-                          "border-b border-black/5",
-                          checked ? "bg-black/[0.03]" : ""
-                        ].join(" ")}
-                      >
-                        <td className="py-2 pr-3">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const next = { ...allocLines };
-                              if (e.target.checked) next[j.id] = next[j.id] ?? "";
-                              else delete next[j.id];
-                              setAllocLines(next);
-                            }}
-                          />
-                        </td>
-                        <td className="py-2 pr-3 font-semibold">#{j.id}</td>
-                        <td className="py-2 pr-3 text-xs font-semibold text-black/60">{j.status}</td>
-                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.final_price ?? 0)}</td>
-                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.amount_paid ?? 0)}</td>
-                        <td className="py-2 pr-3 text-right font-semibold tabular-nums">{formatMoney(j.balance ?? 0)}</td>
-                        <td className="py-2 pr-0 text-right">
-                          <input
-                            className="w-[140px] rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-semibold text-right"
-                            disabled={!checked}
-                            value={v}
-                            onChange={(e) => setAllocation(j.id, e.target.value, j.balance)}
-                            inputMode="decimal"
-                            placeholder="0"
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              </div>
-            </>
-          )}
-
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="secondary"
-              isLoading={busyId === allocTxId}
-              disabled={!allocTxId || busyId === allocTxId || allocLoading}
-              onClick={() => {
-                if (!allocTxId) return;
-                const entries = Object.entries(allocLines)
-                  .map(([jobId, amt]) => ({ contract_job_id: Number(jobId), amount: amt }))
-                  .filter((x) => x.contract_job_id > 0);
-                const cleanedAllocations = entries
-                  .map((x) => ({
-                    contract_job_id: x.contract_job_id,
-                    amount: String(x.amount ?? "").replaceAll(",", "").trim()
-                  }))
-                  .filter((x) => x.amount);
-                setBusyId(allocTxId);
-                void employeePaymentsApi
-                  .markPaid(
-                    allocTxId,
-                    confirmWithoutReceipt || overpayConfirm
-                      ? {
-                          confirm_without_receipt: confirmWithoutReceipt ? true : undefined,
-                          confirm_overpay: overpayConfirm ? true : undefined
-                        }
-                      : undefined,
-                    {
-                      amount_override: allocAmount?.trim() ? allocAmount.replaceAll(",", "").trim() : null,
-                      allocations: cleanedAllocations
-                    }
-                  )
-                  .then(() => refreshAfterMarkPaid())
-                  .then(() => toast.push("success", "Marked paid."))
-                  .then(() => setAllocOpen(false))
-                  .catch((er: any) => {
-                    const detail = er?.response?.data?.detail;
-                    if (detail?.code === "OVERPAY_CONFIRM_REQUIRED") {
-                      setOverpayConfirm(true);
-                      return;
-                    }
-                    toast.push("error", getErrorMessage(er));
-                  })
-                  .finally(() => setBusyId(null));
-              }}
-            >
-              Mark paid
-            </Button>
-            <Button variant="ghost" disabled={busyId === allocTxId || allocLoading} onClick={() => setAllocOpen(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      {contractPaymentAllocation.modal}
 
       <Modal
         open={cancelTransferTarget !== null}

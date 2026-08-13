@@ -44,10 +44,6 @@ export function getPendingMarkPaidDisabledReason(
   const hasReceipt = Boolean(tx.receipt_url?.trim());
   if (isFinance && !hasReceipt) return "receipt";
 
-  if (item.employee_kind === "contract" && getPendingLinkedJobIds(item).length === 0) {
-    return "requirements";
-  }
-
   return null;
 }
 

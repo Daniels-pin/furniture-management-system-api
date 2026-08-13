@@ -31,6 +31,7 @@ import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInpu
 import { usePageHeader } from "../components/layout/pageHeader";
 import { PayrollMonthsPanel } from "../components/employee/PayrollMonthsPanel";
 import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
+import { useContractPaymentAllocation } from "../hooks/useContractPaymentAllocation";
 
 function patchSearchParams(
   setSearchParams: SetURLSearchParams,
@@ -90,6 +91,29 @@ export function EmployeesPage() {
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
+  async function refreshPendingPayments() {
+    const res = await employeePaymentsApi.pending({
+      search: pendingSearch.trim() || undefined,
+      overpaid: pendingOverpaidOnly ? true : undefined,
+      sort: pendingSort,
+      prioritize_employee_requests: moneyRequestsView
+    });
+    setPending(res);
+    window.dispatchEvent(new Event("furniture:notifications-updated"));
+    return res;
+  }
+
+  const contractPaymentAllocation = useContractPaymentAllocation({
+    auth,
+    busyId: pendingBusyId,
+    setBusyId: setPendingBusyId,
+    onMarkedPaid: async () => {
+      await refreshPendingPayments();
+      toast.push("success", "Marked paid.");
+    },
+    onError: (message) => toast.push("error", message)
+  });
+
   function renderFinanceMarkPaidButton(it: PendingEmployeePaymentItem) {
     const disabledReason = getPendingMarkPaidDisabledReason(it, auth.role);
     const disabled = disabledReason !== null || pendingBusyId === it.transaction.id;
@@ -101,7 +125,11 @@ export function EmployeesPage() {
           className={it.employee_kind === "contract" ? undefined : "w-full"}
           disabled={disabled}
           isLoading={pendingBusyId === it.transaction.id}
-          onClick={() => setConfirmMarkPaid({ id: it.transaction.id })}
+          onClick={() =>
+            contractPaymentAllocation.beginMarkPaidFromPendingItem(it, () => {
+              setConfirmMarkPaid({ id: it.transaction.id });
+            })
+          }
         >
           Mark Paid
         </Button>
@@ -227,14 +255,7 @@ export function EmployeesPage() {
     (async () => {
       setPendingLoading(true);
       try {
-        const res = await employeePaymentsApi.pending({
-          search: pendingSearch.trim() || undefined,
-          overpaid: pendingOverpaidOnly ? true : undefined,
-          sort: pendingSort,
-          prioritize_employee_requests: moneyRequestsView
-        });
-        if (!alive) return;
-        setPending(res);
+        await refreshPendingPayments();
       } catch (e) {
         toast.push("error", getErrorMessage(e));
       } finally {
@@ -1028,6 +1049,8 @@ export function EmployeesPage() {
           </div>
         ) : null}
       </Modal>
+
+      {contractPaymentAllocation.modal}
 
       <Modal
         open={confirmStartMonthOpen}
