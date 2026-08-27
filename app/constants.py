@@ -38,6 +38,14 @@ def company_contact_line_html(escape) -> str:
     return ", ".join(parts)
 
 
+def company_rc_line_html(escape, rc_number: str | None) -> str:
+    """RC number line for Bill From blocks; omitted when unset."""
+    rc = (rc_number or "").strip()
+    if not rc:
+        return ""
+    return f"<div>RC: {escape(rc)}</div>"
+
+
 COMPANY_BANK_ACCOUNT_NUMBER = "0077929221"
 COMPANY_BANK_ACCOUNT_NAME = "No Limits Furniture Nig Ltd"
 COMPANY_BANK_NAME = "Access Bank"

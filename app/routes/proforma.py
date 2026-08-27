@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session, joinedload
 from app import models
 from app.auth.auth import require_role
 from app.auth.pdf_access import require_proforma_reader
-from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
 from app.database import get_db
+from app.utils.company_settings import get_rc_number
 from app.utils.route_db import route_db_session
 from app.db.alive import customer_alive, proforma_alive
 from app.schemas import ConvertPresalesToInvoiceRequest, ProformaCreate, ProformaDetailResponse, ProformaItemIn, ProformaUpdate
@@ -103,6 +104,7 @@ def _proforma_to_detail(db: Session, p: models.ProformaInvoice) -> dict:
         "created_by": _user_label(db, p.created_by),
         "updated_by": _user_label(db, p.updated_by),
         "converted_order_id": p.converted_order_id,
+        "company_rc_number": get_rc_number(db),
     }
 
 
@@ -121,7 +123,7 @@ def _link_customer(db: Session, phone: str, email: str | None) -> int | None:
     return None
 
 
-def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
+def _render_proforma_email_html(p: models.ProformaInvoice, rc_number: str | None = None) -> str:
     issued = p.created_at.strftime("%B %d, %Y") if p.created_at else "—"
     logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
     logo_html = (
@@ -129,7 +131,8 @@ def _render_proforma_email_html(p: models.ProformaInvoice) -> str:
         if logo_url
         else ""
     )
-    company_lines = "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
+    company_lines = company_rc_line_html(escape, rc_number)
+    company_lines += "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
     company_lines += (
         f'\n<div style="margin-top:2px;word-break:break-word">'
         f"{company_contact_line_html(escape)}</div>"
@@ -527,7 +530,8 @@ def send_proforma_email(
         pid = p.id
         to_email = p.email.strip()
         subject = f"{APP_NAME} - Proforma {p.proforma_number}"
-        html = _render_proforma_email_html(p)
+        rc_number = get_rc_number(db)
+        html = _render_proforma_email_html(p, rc_number)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
 
     try:

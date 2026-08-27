@@ -311,6 +311,7 @@ class InvoiceListItem(BaseModel):
 
 class InvoiceDetailResponse(InvoiceListItem):
     items: List[OrderItemResponse]
+    company_rc_number: Optional[str] = None
 
 
 class OrderUploadResponse(BaseModel):
@@ -461,6 +462,7 @@ class ProformaDetailResponse(BaseModel):
     created_by: Optional[str] = None
     updated_by: Optional[str] = None
     converted_order_id: Optional[int] = None
+    company_rc_number: Optional[str] = None
 
 
 class QuotationItemIn(BaseModel):
@@ -561,6 +563,7 @@ class QuotationDetailResponse(BaseModel):
     updated_by: Optional[str] = None
     converted_order_id: Optional[int] = None
     converted_proforma_id: Optional[int] = None
+    company_rc_number: Optional[str] = None
 
 
 class WaybillCreate(BaseModel):
@@ -1041,6 +1044,23 @@ class EmployeeLatenessEntryOut(BaseModel):
 
 
 AttendanceShiftKey = Literal["morning", "full_day"]
+
+
+class CompanySettingsOut(BaseModel):
+    rc_number: Optional[str] = None
+    updated_at: datetime
+
+
+class CompanySettingsUpdate(BaseModel):
+    rc_number: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("rc_number")
+    @classmethod
+    def _strip_rc_number(cls, v: str) -> str:
+        trimmed = (v or "").strip()
+        if not trimmed:
+            raise ValueError("RC Number cannot be empty.")
+        return trimmed
 
 
 class CompanyLocationOut(BaseModel):

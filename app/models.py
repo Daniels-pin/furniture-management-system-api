@@ -459,6 +459,16 @@ class CompanyLocation(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class CompanySettings(Base):
+    """Singleton row (id=1) for company-wide settings such as RC number."""
+
+    __tablename__ = "company_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rc_number = Column(String(100), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class SalaryPeriod(Base):
     """Calendar month bucket for payroll (lateness, penalties, bonuses, payment status)."""
 

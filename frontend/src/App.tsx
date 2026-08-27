@@ -26,6 +26,9 @@ const AdminJobDetailPage = lazy(() =>
 const AdminCompanyLocationsPage = lazy(() =>
   import("./pages/AdminCompanyLocationsPage").then((m) => ({ default: m.AdminCompanyLocationsPage }))
 );
+const CompanySettingsPage = lazy(() =>
+  import("./pages/CompanySettingsPage").then((m) => ({ default: m.CompanySettingsPage }))
+);
 const TrashPage = lazy(() => import("./pages/TrashPage").then((m) => ({ default: m.TrashPage })));
 const InventoryPage = lazy(() => import("./pages/InventoryPage").then((m) => ({ default: m.InventoryPage })));
 const InventoryMaterialDetailPage = lazy(() =>
@@ -613,6 +616,16 @@ export default function App() {
             <RequireAuth roles={["admin"]}>
               <LazyPage>
                 <AdminCompanyLocationsPage />
+              </LazyPage>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="admin/settings"
+          element={
+            <RequireAuth roles={["admin"]}>
+              <LazyPage>
+                <CompanySettingsPage />
               </LazyPage>
             </RequireAuth>
           }

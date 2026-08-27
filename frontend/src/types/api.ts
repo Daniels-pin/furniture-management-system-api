@@ -168,6 +168,7 @@ export type InvoiceListItem = {
 
 export type InvoiceDetail = InvoiceListItem & {
   items: OrderItem[];
+  company_rc_number?: string | null;
 };
 
 export type ProformaItem = {
@@ -212,6 +213,7 @@ export type ProformaDetail = {
   created_by?: string | null;
   updated_by?: string | null;
   converted_order_id?: number | null;
+  company_rc_number?: string | null;
 };
 
 export type ProformaPayload = {
@@ -269,6 +271,7 @@ export type QuotationDetail = {
   updated_by?: string | null;
   converted_order_id?: number | null;
   converted_proforma_id?: number | null;
+  company_rc_number?: string | null;
 };
 
 export type QuotationPayload = ProformaPayload;

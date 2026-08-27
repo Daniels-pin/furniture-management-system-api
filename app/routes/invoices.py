@@ -19,7 +19,8 @@ from app.database import get_db
 from app.utils.route_db import route_db_session
 from app.db.alive import invoice_alive, order_alive
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
-from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
+from app.utils.company_settings import get_rc_number
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.order_item_amounts import compute_subtotal, display_unit_amounts
@@ -54,7 +55,7 @@ def _money(v: object) -> str:
         return escape(str(v))
 
 
-def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) -> str:
+def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem], rc_number: str | None = None) -> str:
     c = inv.customer
     due = inv.due_date.strftime("%B %d, %Y") if inv.due_date else "—"
     issued = inv.created_at.strftime("%B %d, %Y") if inv.created_at else "—"
@@ -121,7 +122,8 @@ def _render_invoice_email(inv: models.Invoice, items: list[models.OrderItem]) ->
     discount_display = _money(discount_amount if discount_amount is not None else Decimal("0.00"))
     tax_display = _money(tax if tax is not None else Decimal("0.00"))
 
-    company_lines = "\n".join(
+    company_lines = company_rc_line_html(escape, rc_number)
+    company_lines += "\n".join(
         f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES
     )
     company_lines += (
@@ -370,6 +372,7 @@ def get_invoice_by_order(
     ]
     if base.get("total_price") is None and subtotal_from_items is not None:
         base["total_price"] = subtotal_from_items
+    base["company_rc_number"] = get_rc_number(db)
     return base
 
 
@@ -467,6 +470,7 @@ def get_invoice(
     ]
     if base.get("total_price") is None and subtotal_from_items is not None:
         base["total_price"] = subtotal_from_items
+    base["company_rc_number"] = get_rc_number(db)
     return base
 
 
@@ -549,7 +553,8 @@ def send_invoice_email(
         inv_id = inv.id
         to_email = inv.customer.email.strip()
         subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
-        html = _render_invoice_email(inv, items)
+        rc_number = get_rc_number(db)
+        html = _render_invoice_email(inv, items, rc_number)
         safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
 
     try:

@@ -150,6 +150,7 @@ const NAV_GROUPS: NavGroupModel[] = [
           { key: "account", label: "Account", to: "/account", roles: ["admin", "factory", "finance", "showroom"] },
           { key: "staff-profile", label: "Profile", to: "/profile", roles: ["staff"] },
           { key: "admin-users", label: "Admin Users", to: "/admin/users", roles: ["admin"] },
+          { key: "company-settings", label: "Company Settings", to: "/admin/settings", roles: ["admin"] },
           { key: "activity-log", label: "Activity Log", to: "/admin/activity", roles: ["admin"] },
           { key: "trash", label: "Trash", to: "/trash", roles: ["admin", "showroom", "factory"] }
         ]

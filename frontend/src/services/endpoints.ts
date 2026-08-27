@@ -942,6 +942,22 @@ export const companyLocationsApi = {
   }
 };
 
+export type CompanySettings = {
+  rc_number: string | null;
+  updated_at: string;
+};
+
+export const companySettingsApi = {
+  async get() {
+    const { data } = await api.get<CompanySettings>("/company-settings");
+    return data;
+  },
+  async update(body: { rc_number: string }) {
+    const { data } = await api.put<CompanySettings>("/company-settings", body);
+    return data;
+  }
+};
+
 export const employeesApi = {
   async payrollPeriodsNav() {
     const { data } = await api.get<PayrollPeriodsNav>("/employees/periods");

@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session, joinedload
 from app import models
 from app.auth.auth import require_role
 from app.auth.pdf_access import require_quotation_reader
-from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
+from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
 from app.database import get_db
+from app.utils.company_settings import get_rc_number
 from app.utils.route_db import route_db_session
 from app.db.alive import customer_alive, invoice_alive, order_alive, proforma_alive, quotation_alive
 from app.schemas import (
@@ -163,6 +164,7 @@ def _quotation_to_detail(db: Session, p: models.Quotation) -> dict:
         "updated_by": _user_label(db, p.updated_by),
         "converted_order_id": p.converted_order_id,
         "converted_proforma_id": p.converted_proforma_id,
+        "company_rc_number": get_rc_number(db),
     }
 
 
@@ -181,7 +183,7 @@ def _link_customer(db: Session, phone: str, email: str | None) -> int | None:
     return None
 
 
-def _render_quotation_email_html(p: models.Quotation) -> str:
+def _render_quotation_email_html(p: models.Quotation, rc_number: str | None = None) -> str:
     issued = p.created_at.strftime("%B %d, %Y") if p.created_at else "—"
     logo_url = (os.getenv("INVOICE_LOGO_URL", "") or "").strip() or (os.getenv("PUBLIC_LOGO_URL", "") or "").strip()
     logo_html = (
@@ -189,7 +191,8 @@ def _render_quotation_email_html(p: models.Quotation) -> str:
         if logo_url
         else ""
     )
-    company_lines = "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
+    company_lines = company_rc_line_html(escape, rc_number)
+    company_lines += "\n".join(f"<div>{escape(addr)}</div>" for addr in COMPANY_ADDRESSES)
     company_lines += (
         f'\n<div style="margin-top:2px;word-break:break-word">'
         f"{company_contact_line_html(escape)}</div>"
@@ -623,7 +626,8 @@ def send_quotation_email(
         qid = p.id
         to_email = p.email.strip()
         subject = f"{APP_NAME} - Quotation {p.quote_number}"
-        html = _render_quotation_email_html(p)
+        rc_number = get_rc_number(db)
+        html = _render_quotation_email_html(p, rc_number)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
 
     try:
