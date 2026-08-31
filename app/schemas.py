@@ -1260,6 +1260,109 @@ class EmployeeAttendanceEntryOut(BaseModel):
         from_attributes = True
 
 
+class AttendanceWaiverInfoOut(BaseModel):
+    id: int
+    deduction_type: Literal["late", "early_sign_out", "absence"]
+    waived_by_name: str
+    reason: str
+    waived_at: datetime
+    original_amount_naira: Decimal
+    credited_amount_naira: Decimal
+    waiver_kind: Literal["individual", "daily"]
+    can_reverse: bool = True
+
+    @field_serializer("waived_at")
+    def _serialize_waived_at(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
+
+class AttendanceWaiverReasonOptionOut(BaseModel):
+    code: str
+    label: str
+
+
+class AttendanceWaiverDeductionPreviewOut(BaseModel):
+    deduction_type: Literal["late", "early_sign_out", "absence"]
+    available: bool
+    amount_naira: Decimal
+    already_waived: bool = False
+
+
+class AttendanceIndividualWaiverPreviewOut(BaseModel):
+    employee_id: int
+    full_name: str
+    attendance_date: date
+    check_in_at: Optional[datetime] = None
+    check_out_at: Optional[datetime] = None
+    work_location: Optional[CompanyLocationOut] = None
+    shift_label: Optional[str] = None
+    status: str
+    deductions: list[AttendanceWaiverDeductionPreviewOut]
+    total_credit_naira: Decimal
+    payroll_finalized: bool = False
+
+    @field_serializer("check_in_at", "check_out_at")
+    def _serialize_preview_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
+
+
+class AttendanceDailyWaiverPreviewOut(BaseModel):
+    attendance_date: date
+    late_count: int = 0
+    early_sign_out_count: int = 0
+    absence_count: int = 0
+    payroll_finalized_any: bool = False
+
+
+class AttendanceIndividualWaiverIn(BaseModel):
+    employee_id: int = Field(..., ge=1)
+    attendance_date: date
+    waive_late: bool = False
+    waive_early_sign_out: bool = False
+    waive_absence: bool = False
+    reason_code: str = Field(..., min_length=1, max_length=64)
+    reason_text: Optional[str] = Field(None, max_length=500)
+
+
+class AttendanceDailyWaiverIn(BaseModel):
+    attendance_date: date
+    waive_late: bool = False
+    waive_early_sign_out: bool = False
+    waive_absence: bool = False
+    reason_code: str = Field(..., min_length=1, max_length=64)
+    reason_text: Optional[str] = Field(None, max_length=500)
+
+
+class AttendanceWaiverReverseIn(BaseModel):
+    reversal_reason: str = Field(..., min_length=1, max_length=500)
+
+
+class AttendanceWaiverApplyOut(BaseModel):
+    waivers: list[AttendanceWaiverInfoOut]
+    message: str
+
+
+class AttendanceWaiverAuditOut(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    attendance_date: date
+    deduction_type: Literal["late", "early_sign_out", "absence"]
+    original_amount_naira: Decimal
+    credited_amount_naira: Decimal
+    reason: str
+    admin_name: str
+    created_at: datetime
+    waiver_kind: Literal["individual", "daily"]
+    reversed_at: Optional[datetime] = None
+    reversed_by_name: Optional[str] = None
+    reversal_reason: Optional[str] = None
+
+    @field_serializer("created_at", "reversed_at")
+    def _serialize_audit_times(self, v: Optional[datetime]) -> Optional[datetime]:
+        return datetime_for_api(v) if v is not None else None
+
+
 class EmployeeAttendanceHistoryOut(BaseModel):
     """Unified attendance history row: present, late, absent, incomplete, or checked in (today)."""
 
@@ -1291,10 +1394,15 @@ class EmployeeAttendanceHistoryOut(BaseModel):
     attendance_duration_minutes: Optional[int] = None
     late_deduction_naira: Decimal = Decimal("0")
     early_sign_out_deduction_naira: Decimal = Decimal("0")
+    absence_deduction_naira: Decimal = Decimal("0")
     deduction_naira: Decimal = Decimal("0")
     lateness_entry_id: Optional[int] = None
     early_sign_out_entry_id: Optional[int] = None
     absence_entry_id: Optional[int] = None
+    waivers: list[AttendanceWaiverInfoOut] = []
+    late_waived: bool = False
+    early_sign_out_waived: bool = False
+    absence_waived: bool = False
     work_location_id: Optional[int] = None
     employee_latitude: Optional[float] = None
     employee_longitude: Optional[float] = None
@@ -1378,6 +1486,7 @@ class AttendanceMonitorSummaryOut(BaseModel):
 class AttendanceMonitorRowOut(BaseModel):
     employee_id: int
     full_name: str
+    attendance_date: date
     work_location: Optional[CompanyLocationOut] = None
     shift_label: Optional[str] = None
     check_in_at: Optional[datetime] = None
@@ -1393,6 +1502,17 @@ class AttendanceMonitorRowOut(BaseModel):
         "short_session",
     ]
     monitor_filter_status: AttendanceMonitorFilterStatus
+    late_deduction_naira: Decimal = Decimal("0")
+    early_sign_out_deduction_naira: Decimal = Decimal("0")
+    absence_deduction_naira: Decimal = Decimal("0")
+    total_attendance_deductions_naira: Decimal = Decimal("0")
+    period_late_deduction_total_naira: Decimal = Decimal("0")
+    period_early_sign_out_deduction_total_naira: Decimal = Decimal("0")
+    period_absence_deduction_total_naira: Decimal = Decimal("0")
+    period_total_attendance_deductions_naira: Decimal = Decimal("0")
+    waivers: list[AttendanceWaiverInfoOut] = []
+    payroll_finalized: bool = False
+    can_adjust_attendance: bool = False
 
     @field_serializer("check_in_at", "check_out_at")
     def _serialize_monitor_times(self, v: Optional[datetime]) -> Optional[datetime]:

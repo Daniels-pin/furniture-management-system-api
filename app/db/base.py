@@ -28,6 +28,8 @@ from app.models import (
     EmployeeAbsenceEntry,
     EmployeeEarlySignOutEntry,
     EmployeeAttendanceEntry,
+    AttendanceDailyWaiverBatch,
+    AttendanceDeductionWaiver,
     EmployeePenalty,
     EmployeeBonus,
     ContractEmployee,

@@ -558,6 +558,12 @@ class Employee(Base):
         back_populates="employee",
         cascade="all, delete-orphan",
     )
+    attendance_deduction_waivers = relationship(
+        "AttendanceDeductionWaiver",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="AttendanceDeductionWaiver.id",
+    )
 
 
 class EmployeePeriodPayroll(Base):
@@ -805,6 +811,66 @@ class EmployeePayrollAdjustment(Base):
     created_by = relationship("User", foreign_keys=[created_by_id])
     updated_by = relationship("User", foreign_keys=[updated_by_id])
     voided_by_user = relationship("User", foreign_keys=[voided_by_id])
+
+
+class AttendanceDailyWaiverBatch(Base):
+    """Groups daily attendance waivers applied in one admin action."""
+
+    __tablename__ = "attendance_daily_waiver_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    attendance_date = Column(Date, nullable=False, index=True)
+    waive_late = Column(Boolean, nullable=False, default=False)
+    waive_early_sign_out = Column(Boolean, nullable=False, default=False)
+    waive_absence = Column(Boolean, nullable=False, default=False)
+    reason_code = Column(String(64), nullable=False)
+    reason_text = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    waivers = relationship("AttendanceDeductionWaiver", back_populates="daily_batch")
+
+
+class AttendanceDeductionWaiver(Base):
+    """Audit record for admin attendance deduction waivers (individual or daily)."""
+
+    __tablename__ = "attendance_deduction_waivers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("salary_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    attendance_date = Column(Date, nullable=False, index=True)
+    deduction_type = Column(String(32), nullable=False, index=True)  # late | early_sign_out | absence
+    lateness_entry_id = Column(Integer, ForeignKey("employee_lateness_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    early_sign_out_entry_id = Column(
+        Integer, ForeignKey("employee_early_sign_out_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    absence_entry_id = Column(Integer, ForeignKey("employee_absence_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    original_amount_naira = Column(Numeric(14, 2), nullable=False)
+    credited_amount_naira = Column(Numeric(14, 2), nullable=False)
+    reason_code = Column(String(64), nullable=False)
+    reason_text = Column(String, nullable=True)
+    waiver_kind = Column(String(16), nullable=False, index=True)  # individual | daily
+    daily_batch_id = Column(Integer, ForeignKey("attendance_daily_waiver_batches.id", ondelete="SET NULL"), nullable=True, index=True)
+    financial_transaction_id = Column(Integer, ForeignKey("employee_transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reversed_at = Column(DateTime, nullable=True, index=True)
+    reversed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reversal_reason = Column(String, nullable=True)
+    reversal_transaction_id = Column(Integer, ForeignKey("employee_transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    employee = relationship("Employee", back_populates="attendance_deduction_waivers")
+    period = relationship("SalaryPeriod")
+    daily_batch = relationship("AttendanceDailyWaiverBatch", back_populates="waivers")
+    lateness_entry = relationship("EmployeeLatenessEntry", foreign_keys=[lateness_entry_id])
+    early_sign_out_entry = relationship("EmployeeEarlySignOutEntry", foreign_keys=[early_sign_out_entry_id])
+    absence_entry = relationship("EmployeeAbsenceEntry", foreign_keys=[absence_entry_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    reversed_by = relationship("User", foreign_keys=[reversed_by_id])
+    financial_transaction = relationship("EmployeeTransaction", foreign_keys=[financial_transaction_id])
+    reversal_transaction = relationship("EmployeeTransaction", foreign_keys=[reversal_transaction_id])
 
 
 # --- Contract employees (non-payroll) + unified ledger ---

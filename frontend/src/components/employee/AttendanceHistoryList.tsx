@@ -5,7 +5,10 @@ import {
   attendanceHistoryRowHighlight,
   attendanceHistoryStatusBadgeClass,
   attendanceHistoryStatusLabel,
-  attendanceTodayKey
+  attendanceTodayKey,
+  attendanceWaivedBadgeClass,
+  attendanceWaivedBadgeLabel,
+  formatWaiverTooltip
 } from "../../utils/attendance";
 import { formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
@@ -95,6 +98,17 @@ export function AttendanceHistoryList({
                 >
                   {attendanceHistoryStatusLabel(item)}
                 </span>
+                {attendanceWaivedBadgeLabel(item) ? (
+                  <span
+                    className={[
+                      "rounded-full px-2 py-0.5 text-xs font-semibold",
+                      attendanceWaivedBadgeClass()
+                    ].join(" ")}
+                    title={item.waivers?.length ? formatWaiverTooltip(item.waivers) : undefined}
+                  >
+                    {attendanceWaivedBadgeLabel(item)}
+                  </span>
+                ) : null}
                 <span className="text-xs font-semibold tabular-nums text-red-800">{deductionLabel(item)}</span>
               </div>
             </li>

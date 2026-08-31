@@ -657,3 +657,39 @@ export function attendanceHistoryRowHighlight(item: EmployeeAttendanceHistoryIte
     Boolean(item.is_early_check_out)
   );
 }
+
+export function attendanceWaivedBadgeLabel(
+  item: Pick<
+    EmployeeAttendanceHistoryItem,
+    "status" | "late_waived" | "early_sign_out_waived" | "absence_waived" | "waivers"
+  >
+): string | null {
+  if (item.late_waived && (item.status === "late" || item.status === "late_early_check_out")) {
+    return "Late (Waived by Admin)";
+  }
+  if (item.early_sign_out_waived && (item.status === "early_check_out" || item.status === "late_early_check_out")) {
+    return "Early Sign-Out (Waived by Admin)";
+  }
+  if (item.absence_waived && item.status === "absent") {
+    return "Absent (Waived by Admin)";
+  }
+  if (item.waivers?.length) {
+    return "Waived by Admin";
+  }
+  return null;
+}
+
+export function attendanceWaivedBadgeClass(): string {
+  return "bg-violet-100 text-violet-900";
+}
+
+export function formatWaiverTooltip(
+  waivers: NonNullable<EmployeeAttendanceHistoryItem["waivers"]>
+): string {
+  return waivers
+    .map((w) => {
+      const when = new Date(w.waived_at).toLocaleString();
+      return `Waived by ${w.waived_by_name}\nReason: ${w.reason}\n${when}`;
+    })
+    .join("\n\n");
+}

@@ -680,6 +680,62 @@ export type EmployeeAttendanceHistoryItem = {
   check_out_longitude?: number | null;
   check_out_distance_meters?: number | null;
   work_location?: CompanyLocation | null;
+  absence_deduction_naira?: string | number;
+  waivers?: AttendanceWaiverInfo[];
+  late_waived?: boolean;
+  early_sign_out_waived?: boolean;
+  absence_waived?: boolean;
+};
+
+export type AttendanceWaiverDeductionType = "late" | "early_sign_out" | "absence";
+
+export type AttendanceWaiverInfo = {
+  id: number;
+  deduction_type: AttendanceWaiverDeductionType;
+  waived_by_name: string;
+  reason: string;
+  waived_at: string;
+  original_amount_naira: string | number;
+  credited_amount_naira: string | number;
+  waiver_kind: "individual" | "daily";
+  can_reverse?: boolean;
+};
+
+export type AttendanceWaiverReasonOption = {
+  code: string;
+  label: string;
+};
+
+export type AttendanceIndividualWaiverPreview = {
+  employee_id: number;
+  full_name: string;
+  attendance_date: string;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  work_location?: CompanyLocation | null;
+  shift_label?: string | null;
+  status: string;
+  deductions: {
+    deduction_type: AttendanceWaiverDeductionType;
+    available: boolean;
+    amount_naira: string | number;
+    already_waived: boolean;
+  }[];
+  total_credit_naira: string | number;
+  payroll_finalized: boolean;
+};
+
+export type AttendanceDailyWaiverPreview = {
+  attendance_date: string;
+  late_count: number;
+  early_sign_out_count: number;
+  absence_count: number;
+  payroll_finalized_any: boolean;
+};
+
+export type AttendanceWaiverApplyResponse = {
+  waivers: AttendanceWaiverInfo[];
+  message: string;
 };
 
 /** Clock-in responses use attendance rows; history lists use {@link EmployeeAttendanceHistoryItem}. */
@@ -730,12 +786,24 @@ export type AttendanceMonitorSummary = {
 export type AttendanceMonitorRow = {
   employee_id: number;
   full_name: string;
+  attendance_date: string;
   work_location?: CompanyLocation | null;
   shift_label?: string | null;
   check_in_at?: string | null;
   check_out_at?: string | null;
   status: EmployeeAttendanceHistoryItem["status"];
   monitor_filter_status: AttendanceMonitorFilterStatus;
+  late_deduction_naira?: string | number;
+  early_sign_out_deduction_naira?: string | number;
+  absence_deduction_naira?: string | number;
+  total_attendance_deductions_naira?: string | number;
+  period_late_deduction_total_naira?: string | number;
+  period_early_sign_out_deduction_total_naira?: string | number;
+  period_absence_deduction_total_naira?: string | number;
+  period_total_attendance_deductions_naira?: string | number;
+  waivers?: AttendanceWaiverInfo[];
+  payroll_finalized?: boolean;
+  can_adjust_attendance?: boolean;
 };
 
 export type AttendanceMonitorResponse = {

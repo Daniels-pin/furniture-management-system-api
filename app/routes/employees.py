@@ -25,6 +25,14 @@ from app.utils.financial_audit import log_financial_action
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.payroll_export import build_payroll_export_payload, payroll_export_xlsx_bytes, payload_to_api_dict
 from app.utils.root_admin import exclude_system_employee_ids, system_linked_employee_ids
+from app.utils.attendance_waiver import (
+    exclude_waived_absence,
+    exclude_waived_early_sign_out,
+    exclude_waived_lateness,
+    is_payroll_finalized_for_waiver,
+    load_active_waivers_for_employees_dates,
+    waiver_info_dict,
+)
 from app.utils.user_account import assert_account_active, linked_user_account_active
 from app.utils.timezone import (
     early_minutes_before_cutoff,
@@ -72,6 +80,7 @@ from app.schemas import (
     AttendanceMonitorOut,
     AttendanceMonitorRowOut,
     AttendanceMonitorSummaryOut,
+    AttendanceWaiverInfoOut,
     EmployeeClockInOut,
     EmployeeClockInGeoIn,
     EmployeeClockOutOut,
@@ -793,6 +802,7 @@ def _lateness_deduction_sum_for_payroll(db: Session, emp: models.Employee, perio
                     ),
                 )
             )
+    q = exclude_waived_lateness(q, db, period_id=period_id)
     return _decimal_fee(q.scalar())
 
 
@@ -851,6 +861,7 @@ def _early_sign_out_deduction_sum_for_payroll(db: Session, emp: models.Employee,
                     ),
                 )
             )
+    q = exclude_waived_early_sign_out(q, db, period_id=period_id)
     return _decimal_fee(q.scalar())
 
 
@@ -872,6 +883,7 @@ def _absence_deduction_sum_for_payroll(db: Session, emp: models.Employee, period
         assigned = _work_location_assigned_date(emp)
         if assigned is not None:
             q = q.filter(models.EmployeeAbsenceEntry.absence_date >= assigned)
+    q = exclude_waived_absence(q, db, period_id=period.id)
     return _decimal_fee(q.scalar())
 
 
@@ -948,6 +960,45 @@ def _create_early_sign_out_entry(
     return row
 
 
+def _waiver_info_out(waiver: models.AttendanceDeductionWaiver) -> AttendanceWaiverInfoOut:
+    return AttendanceWaiverInfoOut(**waiver_info_dict(waiver))
+
+
+def _apply_waivers_to_history_item(
+    item: EmployeeAttendanceHistoryOut,
+    waivers: list[models.AttendanceDeductionWaiver],
+) -> EmployeeAttendanceHistoryOut:
+    if not waivers:
+        return item
+    waiver_outs = [_waiver_info_out(w) for w in waivers]
+    waived_types = {w.deduction_type for w in waivers}
+    late = item.late_deduction_naira
+    early = item.early_sign_out_deduction_naira
+    absence = item.absence_deduction_naira
+    if item.record_type == "absence" and absence <= 0:
+        absence = item.deduction_naira
+    if "late" in waived_types:
+        late = Decimal("0")
+    if "early_sign_out" in waived_types:
+        early = Decimal("0")
+    if "absence" in waived_types:
+        absence = Decimal("0")
+    data = item.model_dump()
+    data.update(
+        {
+            "waivers": waiver_outs,
+            "late_waived": "late" in waived_types,
+            "early_sign_out_waived": "early_sign_out" in waived_types,
+            "absence_waived": "absence" in waived_types,
+            "late_deduction_naira": late,
+            "early_sign_out_deduction_naira": early,
+            "absence_deduction_naira": absence,
+            "deduction_naira": late + early + absence,
+        }
+    )
+    return EmployeeAttendanceHistoryOut(**data)
+
+
 def _attendance_history_from_row(
     r: models.EmployeeAttendanceEntry,
     *,
@@ -997,6 +1048,7 @@ def _attendance_history_from_row(
         attendance_duration_minutes=attendance_duration_minutes,
         late_deduction_naira=late_fee,
         early_sign_out_deduction_naira=early_fee,
+        absence_deduction_naira=Decimal("0"),
         deduction_naira=late_fee + early_fee,
         lateness_entry_id=int(late_id) if late_id is not None else None,
         early_sign_out_entry_id=int(early_id) if early_id is not None else None,
@@ -1099,6 +1151,7 @@ def _absence_history_item(
         attendance_duration_minutes=None,
         late_deduction_naira=Decimal("0"),
         early_sign_out_deduction_naira=Decimal("0"),
+        absence_deduction_naira=_decimal_fee(getattr(a, "deduction_amount_naira", 0)),
         deduction_naira=_decimal_fee(getattr(a, "deduction_amount_naira", 0)),
         lateness_entry_id=None,
         early_sign_out_entry_id=None,
@@ -1172,6 +1225,18 @@ def _attendance_history_items_for_range(
         items.append(_absence_history_item(a))
 
     items.sort(key=lambda x: (x.attendance_date, 0 if x.record_type == "attendance" else 1), reverse=True)
+
+    if items:
+        waiver_map = load_active_waivers_for_employees_dates(
+            db,
+            [employee_id],
+            [item.attendance_date for item in items],
+        )
+        if waiver_map:
+            items = [
+                _apply_waivers_to_history_item(item, waiver_map.get((employee_id, item.attendance_date), []))
+                for item in items
+            ]
     return items
 
 
@@ -1215,6 +1280,18 @@ def _collect_attendance_history_items(
         items.append(_absence_history_item(a))
 
     items.sort(key=lambda x: (x.attendance_date, 0 if x.record_type == "attendance" else 1), reverse=True)
+
+    if items:
+        waiver_map = load_active_waivers_for_employees_dates(
+            db,
+            [employee_id],
+            [item.attendance_date for item in items],
+        )
+        if waiver_map:
+            items = [
+                _apply_waivers_to_history_item(item, waiver_map.get((employee_id, item.attendance_date), []))
+                for item in items
+            ]
     return items
 
 
@@ -1330,38 +1407,65 @@ def _monitor_row_for_employee(
     today: date_type,
     att_by_emp: dict[int, models.EmployeeAttendanceEntry],
     abs_by_emp: dict[int, models.EmployeeAbsenceEntry],
+    waiver_map: dict[tuple[int, date_type], list[models.AttendanceDeductionWaiver]],
+    period: models.SalaryPeriod,
 ) -> AttendanceMonitorRowOut | None:
     if _is_sunday(target_date):
         return None
 
+    history: EmployeeAttendanceHistoryOut | None = None
     att = att_by_emp.get(emp.id)
     if att is not None:
         history = _attendance_history_from_row(att, today=today)
-        raw_status = history.status
-        return AttendanceMonitorRowOut(
-            employee_id=emp.id,
-            full_name=emp.full_name or "",
-            work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
-            shift_label=history.shift_label,
-            check_in_at=history.check_in_at,
-            check_out_at=history.check_out_at,
-            status=raw_status,  # type: ignore[arg-type]
-            monitor_filter_status=_monitor_filter_status(raw_status),  # type: ignore[arg-type]
-        )
+    else:
+        abs_row = abs_by_emp.get(emp.id)
+        if abs_row is not None:
+            history = _absence_history_item(abs_row)
 
-    abs_row = abs_by_emp.get(emp.id)
-    if abs_row is not None or target_date < today or target_date == today:
-        return AttendanceMonitorRowOut(
-            employee_id=emp.id,
-            full_name=emp.full_name or "",
-            work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
-            shift_label=None,
-            check_in_at=None,
-            check_out_at=None,
-            status="absent",
-            monitor_filter_status="absent",
-        )
-    return None
+    if history is None:
+        if target_date < today or target_date == today:
+            history = EmployeeAttendanceHistoryOut(
+                id=0,
+                record_type="absence",
+                employee_id=emp.id,
+                period_id=period.id,
+                attendance_date=target_date,
+                status="absent",
+            )
+        else:
+            return None
+
+    history = _apply_waivers_to_history_item(history, waiver_map.get((emp.id, target_date), []))
+    raw_status = history.status
+    payroll_finalized, _ = is_payroll_finalized_for_waiver(db, emp.id, period.id)
+    period_late = _lateness_deduction_sum_for_payroll(db, emp, period.id)
+    period_early = _early_sign_out_deduction_sum_for_payroll(db, emp, period.id)
+    period_absence = _absence_deduction_sum_for_payroll(db, emp, period)
+    period_total = period_late + period_early + period_absence
+    day_total = history.deduction_naira
+
+    return AttendanceMonitorRowOut(
+        employee_id=emp.id,
+        full_name=emp.full_name or "",
+        attendance_date=target_date,
+        work_location=CompanyLocationOut.model_validate(emp.work_location) if emp.work_location else None,
+        shift_label=history.shift_label,
+        check_in_at=history.check_in_at,
+        check_out_at=history.check_out_at,
+        status=raw_status,  # type: ignore[arg-type]
+        monitor_filter_status=_monitor_filter_status(raw_status),  # type: ignore[arg-type]
+        late_deduction_naira=history.late_deduction_naira,
+        early_sign_out_deduction_naira=history.early_sign_out_deduction_naira,
+        absence_deduction_naira=history.absence_deduction_naira,
+        total_attendance_deductions_naira=day_total,
+        period_late_deduction_total_naira=period_late,
+        period_early_sign_out_deduction_total_naira=period_early,
+        period_absence_deduction_total_naira=period_absence,
+        period_total_attendance_deductions_naira=period_total,
+        waivers=history.waivers,
+        payroll_finalized=payroll_finalized,
+        can_adjust_attendance=not payroll_finalized,
+    )
 
 
 def _build_attendance_monitor(
@@ -1406,6 +1510,8 @@ def _build_attendance_monitor(
 
     att_by_emp = {r.employee_id: r for r in att_rows}
     abs_by_emp = {r.employee_id: r for r in abs_rows}
+    period = get_or_create_period(db, target_date.year, target_date.month)
+    waiver_map = load_active_waivers_for_employees_dates(db, emp_ids, [target_date])
 
     summary_counts = {
         "expected_employees": 0,
@@ -1425,6 +1531,8 @@ def _build_attendance_monitor(
             today=today,
             att_by_emp=att_by_emp,
             abs_by_emp=abs_by_emp,
+            waiver_map=waiver_map,
+            period=period,
         )
         if row is None:
             continue

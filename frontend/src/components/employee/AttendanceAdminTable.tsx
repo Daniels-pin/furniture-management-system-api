@@ -2,7 +2,10 @@ import type { EmployeeAttendanceHistoryItem } from "../../types/api";
 import {
   attendanceHistoryRowHighlight,
   attendanceHistoryStatusBadgeClass,
-  attendanceHistoryStatusLabel
+  attendanceHistoryStatusLabel,
+  attendanceWaivedBadgeClass,
+  attendanceWaivedBadgeLabel,
+  formatWaiverTooltip
 } from "../../utils/attendance";
 import { formatAttendanceDuration, formatLagosTime } from "../../utils/datetime";
 import { formatMoney } from "../../utils/money";
@@ -58,6 +61,17 @@ export function AttendanceAdminTable({ rows }: { rows: EmployeeAttendanceHistory
               >
                 {attendanceHistoryStatusLabel(a)}
               </span>
+              {attendanceWaivedBadgeLabel(a) ? (
+                <span
+                  className={[
+                    "ml-2 rounded-full px-2 py-0.5 text-xs font-semibold",
+                    attendanceWaivedBadgeClass()
+                  ].join(" ")}
+                  title={a.waivers?.length ? formatWaiverTooltip(a.waivers) : undefined}
+                >
+                  {attendanceWaivedBadgeLabel(a)}
+                </span>
+              ) : null}
               {a.is_late && typeof a.late_minutes === "number" ? (
                 <span className="ml-2 text-xs font-semibold text-black/55">{a.late_minutes} min late</span>
               ) : null}

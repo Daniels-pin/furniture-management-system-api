@@ -25,6 +25,7 @@ from app.routes.inventory import router as inventory_router
 from app.routes.tools import router as tools_router
 from app.routes.machines import router as machines_router
 from app.routes.employees import router as employees_router
+from app.routes.attendance_waivers import router as attendance_waivers_router
 from app.routes.contract_employees import router as contract_employees_router
 from app.routes.contract_jobs import router as contract_jobs_router
 from app.routes.contract_employee_portal import router as contract_employee_portal_router
@@ -206,6 +207,7 @@ app.include_router(inventory_router, tags=["Inventory"])
 app.include_router(tools_router)
 app.include_router(machines_router)
 app.include_router(employees_router)
+app.include_router(attendance_waivers_router)
 app.include_router(contract_employees_router)
 app.include_router(contract_jobs_router)
 app.include_router(contract_employee_portal_router)

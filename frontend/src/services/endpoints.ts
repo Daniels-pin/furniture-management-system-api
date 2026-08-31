@@ -1084,6 +1084,73 @@ export const employeesApi = {
     );
     return data;
   },
+  async attendanceWaiverReasons() {
+    const { data } = await api.get<import("../types/api").AttendanceWaiverReasonOption[]>(
+      "/employees/attendance/waiver-reasons"
+    );
+    return data;
+  },
+  async attendanceWaiverPreview(params: {
+    employee_id: number;
+    date: string;
+    waive_late?: boolean;
+    waive_early_sign_out?: boolean;
+    waive_absence?: boolean;
+  }) {
+    const { data } = await api.get<import("../types/api").AttendanceIndividualWaiverPreview>(
+      "/employees/attendance/waiver-preview",
+      { params }
+    );
+    return data;
+  },
+  async applyAttendanceWaiver(body: {
+    employee_id: number;
+    attendance_date: string;
+    waive_late?: boolean;
+    waive_early_sign_out?: boolean;
+    waive_absence?: boolean;
+    reason_code: string;
+    reason_text?: string | null;
+  }) {
+    const { data } = await api.post<import("../types/api").AttendanceWaiverApplyResponse>(
+      "/employees/attendance/waiver",
+      body
+    );
+    return data;
+  },
+  async attendanceDailyWaiverPreview(params: {
+    date: string;
+    waive_late?: boolean;
+    waive_early_sign_out?: boolean;
+    waive_absence?: boolean;
+  }) {
+    const { data } = await api.get<import("../types/api").AttendanceDailyWaiverPreview>(
+      "/employees/attendance/daily-waiver-preview",
+      { params }
+    );
+    return data;
+  },
+  async applyAttendanceDailyWaiver(body: {
+    attendance_date: string;
+    waive_late?: boolean;
+    waive_early_sign_out?: boolean;
+    waive_absence?: boolean;
+    reason_code: string;
+    reason_text?: string | null;
+  }) {
+    const { data } = await api.post<import("../types/api").AttendanceWaiverApplyResponse>(
+      "/employees/attendance/daily-waiver",
+      body
+    );
+    return data;
+  },
+  async reverseAttendanceWaiver(waiverId: number, body: { reversal_reason: string }) {
+    const { data } = await api.post<import("../types/api").AttendanceWaiverInfo>(
+      `/employees/attendance/waivers/${waiverId}/reverse`,
+      body
+    );
+    return data;
+  },
   async get(employeeId: number, params?: EmployeePeriodParams) {
     const { data } = await api.get<EmployeeDetail>(`/employees/${employeeId}`, { params });
     return data;
