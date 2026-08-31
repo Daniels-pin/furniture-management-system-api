@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import csv
@@ -15,10 +15,10 @@ from app import models
 from app.auth.auth import normalize_role, require_role
 from app.database import get_db
 from app.schemas import ExpenseEntryCreate, ExpenseEntryOut, ExpenseSummaryOut, ExpenseEntryUpdate
-from app.schemas import ExpenseEntriesPageOut
+from app.schemas import ExpenseEntriesPageOut, ExpenseDailySummaryOut
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
-from app.utils.timezone import lagos_today_utc_bounds
+from app.utils.timezone import lagos_day_utc_bounds, lagos_today_utc_bounds
 
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
 
@@ -27,16 +27,31 @@ def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
+def _apply_expense_filters(q, *, entry_date: date | None = None, search: str = ""):
+    if entry_date is not None:
+        day_start, day_end = lagos_day_utc_bounds(entry_date)
+        q = q.filter(
+            models.ExpenseEntry.entry_date >= day_start,
+            models.ExpenseEntry.entry_date < day_end,
+        )
+    s = (search or "").strip()
+    if s:
+        q = q.filter(models.ExpenseEntry.note.ilike(f"%{s}%"))
+    return q
+
+
 @router.get("", response_model=list[ExpenseEntryOut])
 def list_expenses(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["admin", "finance"])),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    entry_date: date | None = Query(None),
+    search: str = Query("", max_length=200),
 ):
+    q = _apply_expense_filters(db.query(models.ExpenseEntry), entry_date=entry_date, search=search)
     rows = (
-        db.query(models.ExpenseEntry)
-        .order_by(models.ExpenseEntry.entry_date.desc(), models.ExpenseEntry.id.desc())
+        q.order_by(models.ExpenseEntry.entry_date.desc(), models.ExpenseEntry.id.desc())
         .offset(int(offset))
         .limit(int(limit))
         .all()
@@ -68,11 +83,13 @@ def list_expenses_page(
     current_user=Depends(require_role(["admin", "finance"])),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    entry_date: date | None = Query(None),
+    search: str = Query("", max_length=200),
 ):
-    total = int(db.query(func.count(models.ExpenseEntry.id)).scalar() or 0)
+    base = _apply_expense_filters(db.query(models.ExpenseEntry), entry_date=entry_date, search=search)
+    total = int(base.with_entities(func.count(models.ExpenseEntry.id)).scalar() or 0)
     rows = (
-        db.query(models.ExpenseEntry)
-        .order_by(models.ExpenseEntry.entry_date.desc(), models.ExpenseEntry.id.desc())
+        base.order_by(models.ExpenseEntry.entry_date.desc(), models.ExpenseEntry.id.desc())
         .offset(int(offset))
         .limit(int(limit))
         .all()
@@ -133,6 +150,35 @@ def expense_summary(
         total_expenses=e,
         balance=c - e,
         today_total=_as_decimal(today_exp),
+    )
+
+
+@router.get("/daily-summary", response_model=ExpenseDailySummaryOut)
+def expense_daily_summary(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin", "finance"])),
+    entry_date: date = Query(...),
+    search: str = Query("", max_length=200),
+):
+    base = _apply_expense_filters(db.query(models.ExpenseEntry), entry_date=entry_date, search=search)
+    money_in = (
+        base.filter(models.ExpenseEntry.entry_type == "credit")
+        .with_entities(func.coalesce(func.sum(models.ExpenseEntry.amount), 0))
+        .scalar()
+        or 0
+    )
+    money_out = (
+        base.filter(models.ExpenseEntry.entry_type == "expense")
+        .with_entities(func.coalesce(func.sum(models.ExpenseEntry.amount), 0))
+        .scalar()
+        or 0
+    )
+    transaction_count = int(base.with_entities(func.count(models.ExpenseEntry.id)).scalar() or 0)
+    return ExpenseDailySummaryOut(
+        entry_date=entry_date,
+        total_money_in=_as_decimal(money_in),
+        total_money_out=_as_decimal(money_out),
+        transaction_count=transaction_count,
     )
 
 

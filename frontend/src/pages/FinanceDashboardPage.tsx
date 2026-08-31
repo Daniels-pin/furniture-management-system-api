@@ -26,7 +26,7 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 }
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
-import type { ExpenseEntry, ExpenseSummary, PendingEmployeePaymentItem, PendingEmployeePayments } from "../types/api";
+import type { ExpenseDailySummary, ExpenseEntry, ExpenseSummary, PendingEmployeePaymentItem, PendingEmployeePayments } from "../types/api";
 import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { canCancelUnpaidPaymentTransfer, getFinancialActivityStatusLabel } from "../utils/financialActivity";
@@ -39,6 +39,12 @@ import { MonthlyEmployeeAttendanceCard } from "../components/employee/MonthlyEmp
 import { useMonthlyEmployeeAttendance } from "../hooks/useMonthlyEmployeeAttendance";
 import { useContractPaymentAllocation } from "../hooks/useContractPaymentAllocation";
 import { collectLinkedJobIds } from "../utils/paymentAllocation";
+
+function formatFilterDateLabel(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
 
 export function FinanceDashboardPage() {
   const auth = useAuth();
@@ -105,6 +111,10 @@ export function FinanceDashboardPage() {
   const [pettyTotal, setPettyTotal] = useState(0);
   const [pettyOffset, setPettyOffset] = useState(0);
   const pettyPageLimit = 20;
+  const [pettyFilterDate, setPettyFilterDate] = useState("");
+  const [pettySearchQuery, setPettySearchQuery] = useState("");
+  const debouncedPettySearch = useDebouncedValue(pettySearchQuery, 300);
+  const [pettyDailySummary, setPettyDailySummary] = useState<ExpenseDailySummary | null>(null);
   const [pettyDetailFor, setPettyDetailFor] = useState<ExpenseEntry | null>(null);
 
   function fmtSentToFinanceDate(it: { sent_to_finance_at?: string | null; transaction: { created_at: string } }) {
@@ -339,14 +349,29 @@ export function FinanceDashboardPage() {
 
   async function refreshPetty(next?: { offset?: number }) {
     const offset = typeof next?.offset === "number" ? next.offset : pettyOffset;
-    const [page, sum] = await Promise.all([
-      expensesApi.page({ limit: pettyPageLimit, offset }),
-      expensesApi.summary()
+    const pageParams = {
+      limit: pettyPageLimit,
+      offset,
+      ...(pettyFilterDate ? { entry_date: pettyFilterDate } : {}),
+      ...(debouncedPettySearch.trim() ? { search: debouncedPettySearch.trim() } : {})
+    };
+    const [page, sum, daily] = await Promise.all([
+      expensesApi.page(pageParams),
+      expensesApi.summary(),
+      pettyFilterDate
+        ? expensesApi.dailySummary({ entry_date: pettyFilterDate, search: debouncedPettySearch.trim() || undefined })
+        : Promise.resolve(null)
     ]);
     setPettyRows(page.items);
     setPettySummary(sum);
     setPettyTotal(page.total ?? 0);
     setPettyOffset(page.offset ?? offset);
+    setPettyDailySummary(daily);
+  }
+
+  function clearPettyDateFilter() {
+    setPettyFilterDate("");
+    setPettyOffset(0);
   }
 
   useEffect(() => {
@@ -371,7 +396,7 @@ export function FinanceDashboardPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section, toast]);
+  }, [section, toast, pettyFilterDate, debouncedPettySearch]);
 
   usePageHeader({
     title: "Finance Dashboard",
@@ -534,6 +559,38 @@ export function FinanceDashboardPage() {
             <div className="rounded-2xl border border-black/10 bg-white p-4">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="text-sm font-bold">Petty cash history</div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <label className="min-w-[180px] flex-1 text-xs font-semibold text-black/60">
+                  Search
+                  <input
+                    className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                    value={pettySearchQuery}
+                    onChange={(e) => {
+                      setPettySearchQuery(e.target.value);
+                      setPettyOffset(0);
+                    }}
+                    placeholder="Search notes…"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-black/60">
+                  Date filter
+                  <input
+                    type="date"
+                    className="mt-1 block rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+                    value={pettyFilterDate}
+                    onChange={(e) => {
+                      setPettyFilterDate(e.target.value);
+                      setPettyOffset(0);
+                    }}
+                  />
+                </label>
+                {pettyFilterDate ? (
+                  <Button variant="ghost" onClick={clearPettyDateFilter}>
+                    Clear filter
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   isLoading={pettyLoading}
@@ -548,10 +605,32 @@ export function FinanceDashboardPage() {
                 </Button>
               </div>
 
+              {pettyFilterDate && pettyDailySummary ? (
+                <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                  <div className="text-sm font-bold text-black">Daily Summary — {formatFilterDateLabel(pettyFilterDate)}</div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div>
+                      <div className="text-xs font-semibold text-black/55">Total Money In</div>
+                      <div className="mt-1 text-base font-bold tabular-nums text-emerald-800">{formatMoney(pettyDailySummary.total_money_in)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-black/55">Total Money Out</div>
+                      <div className="mt-1 text-base font-bold tabular-nums text-red-800">{formatMoney(pettyDailySummary.total_money_out)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-black/55">Number of Transactions</div>
+                      <div className="mt-1 text-base font-bold tabular-nums">{pettyDailySummary.transaction_count}</div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
               {pettyLoading ? (
                 <div className="mt-3 text-sm text-black/60">Loading…</div>
               ) : pettyRows.length === 0 ? (
-                <div className="mt-3 text-sm text-black/60">No entries yet.</div>
+                <div className="mt-3 text-sm text-black/60">
+                  {pettyFilterDate ? "No petty cash transactions found for this date." : "No entries yet."}
+                </div>
               ) : (
                 <>
                   <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">

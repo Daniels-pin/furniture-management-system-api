@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -6,20 +6,39 @@ import { Modal } from "../components/ui/Modal";
 import { expensesApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
-import type { ExpenseEntry, ExpenseEntryType, ExpenseSummary } from "../types/api";
+import type { ExpenseDailySummary, ExpenseEntry, ExpenseEntryType, ExpenseSummary } from "../types/api";
 import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
 import { usePageHeader } from "../components/layout/pageHeader";
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+function formatFilterDateLabel(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
 
 export function ExpensesPage() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<ExpenseEntry[]>([]);
   const [summary, setSummary] = useState<ExpenseSummary | null>(null);
+  const [dailySummary, setDailySummary] = useState<ExpenseDailySummary | null>(null);
   const [offset, setOffset] = useState(0);
   const pageLimit = 20;
   const [total, setTotal] = useState(0);
+  const [filterDate, setFilterDate] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
 
   usePageHeader({
     title: "Expense / Petty Cash",
@@ -48,14 +67,29 @@ export function ExpensesPage() {
 
   const canPreview = useMemo(() => Boolean(previewUrl), [previewUrl]);
 
-  async function refresh(next?: { offset?: number }) {
-    const nextOffset = typeof next?.offset === "number" ? next.offset : offset;
-    const [page, sum] = await Promise.all([expensesApi.page({ limit: pageLimit, offset: nextOffset }), expensesApi.summary()]);
-    setRows(page.items);
-    setTotal(page.total ?? 0);
-    setOffset(page.offset ?? nextOffset);
-    setSummary(sum);
-  }
+  const refresh = useCallback(
+    async (next?: { offset?: number }) => {
+      const nextOffset = typeof next?.offset === "number" ? next.offset : offset;
+      const pageParams = {
+        limit: pageLimit,
+        offset: nextOffset,
+        ...(filterDate ? { entry_date: filterDate } : {}),
+        ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {})
+      };
+      const requests: [
+        ReturnType<typeof expensesApi.page>,
+        ReturnType<typeof expensesApi.summary>,
+        ReturnType<typeof expensesApi.dailySummary> | Promise<null>
+      ] = [expensesApi.page(pageParams), expensesApi.summary(), filterDate ? expensesApi.dailySummary({ entry_date: filterDate, search: debouncedSearch.trim() || undefined }) : Promise.resolve(null)];
+      const [page, sum, daily] = await Promise.all(requests);
+      setRows(page.items);
+      setTotal(page.total ?? 0);
+      setOffset(page.offset ?? nextOffset);
+      setSummary(sum);
+      setDailySummary(daily);
+    },
+    [offset, filterDate, debouncedSearch]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -72,7 +106,12 @@ export function ExpensesPage() {
     return () => {
       alive = false;
     };
-  }, [toast]);
+  }, [toast, filterDate, debouncedSearch]);
+
+  function clearDateFilter() {
+    setFilterDate("");
+    setOffset(0);
+  }
 
   function isInteractiveTarget(target: EventTarget | null): boolean {
     const el = target instanceof Element ? target : null;
@@ -82,6 +121,8 @@ export function ExpensesPage() {
 
   const page = Math.floor(offset / pageLimit) + 1;
   const totalPages = Math.max(1, Math.ceil((total || 0) / pageLimit));
+  const hasDateFilter = Boolean(filterDate);
+  const emptyMessage = hasDateFilter ? "No petty cash transactions found for this date." : "No entries yet.";
 
   return (
     <div className="space-y-6">
@@ -169,42 +210,92 @@ export function ExpensesPage() {
       </Card>
 
       <Card>
-        <div className="flex items-end justify-between gap-2">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-black">Entries</div>
             <div className="mt-1 text-xs text-black/55">No deletions; upload receipts per entry.</div>
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                void expensesApi
-                  .exportCsv()
-                  .then(() => toast.push("success", "Export downloaded."))
-                  .catch((e) => toast.push("error", getErrorMessage(e)));
-              }}
-            >
-              Export CSV
-            </Button>
-            <Button
-              variant="secondary"
-              isLoading={loading}
-              onClick={() => {
-                setLoading(true);
-                void refresh()
-                  .catch((e) => toast.push("error", getErrorMessage(e)))
-                  .finally(() => setLoading(false));
-              }}
-            >
-              Refresh
-            </Button>
-          </div>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void expensesApi
+                .exportCsv()
+                .then(() => toast.push("success", "Export downloaded."))
+                .catch((e) => toast.push("error", getErrorMessage(e)));
+            }}
+          >
+            Export CSV
+          </Button>
         </div>
+
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="min-w-[180px] flex-1 text-xs font-semibold text-black/60">
+            Search
+            <input
+              className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setOffset(0);
+              }}
+              placeholder="Search notes…"
+            />
+          </label>
+          <label className="text-xs font-semibold text-black/60">
+            Date filter
+            <input
+              type="date"
+              className="mt-1 block rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
+              value={filterDate}
+              onChange={(e) => {
+                setFilterDate(e.target.value);
+                setOffset(0);
+              }}
+            />
+          </label>
+          {hasDateFilter ? (
+            <Button variant="ghost" onClick={clearDateFilter}>
+              Clear filter
+            </Button>
+          ) : null}
+          <Button
+            variant="secondary"
+            isLoading={loading}
+            onClick={() => {
+              setLoading(true);
+              void refresh()
+                .catch((e) => toast.push("error", getErrorMessage(e)))
+                .finally(() => setLoading(false));
+            }}
+          >
+            Refresh
+          </Button>
+        </div>
+
+        {hasDateFilter && dailySummary ? (
+          <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+            <div className="text-sm font-bold text-black">Daily Summary — {formatFilterDateLabel(filterDate)}</div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <div className="text-xs font-semibold text-black/55">Total Money In</div>
+                <div className="mt-1 text-base font-bold tabular-nums text-emerald-800">{formatMoney(dailySummary.total_money_in)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-black/55">Total Money Out</div>
+                <div className="mt-1 text-base font-bold tabular-nums text-red-800">{formatMoney(dailySummary.total_money_out)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-black/55">Number of Transactions</div>
+                <div className="mt-1 text-base font-bold tabular-nums">{dailySummary.transaction_count}</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="mt-3 text-sm text-black/60">Loading…</div>
         ) : rows.length === 0 ? (
-          <div className="mt-3 text-sm text-black/60">No entries yet.</div>
+          <div className="mt-3 text-sm text-black/60">{emptyMessage}</div>
         ) : (
           <>
             <div className="mt-3 md:hidden space-y-3">

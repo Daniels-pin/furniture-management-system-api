@@ -2429,6 +2429,13 @@ class ExpenseSummaryOut(BaseModel):
     today_total: Decimal
 
 
+class ExpenseDailySummaryOut(BaseModel):
+    entry_date: date
+    total_money_in: Decimal
+    total_money_out: Decimal
+    transaction_count: int
+
+
 class ExpenseEntriesPageOut(BaseModel):
     items: List[ExpenseEntryOut]
     total: int = 0

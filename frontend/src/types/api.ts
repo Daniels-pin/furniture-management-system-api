@@ -1146,6 +1146,13 @@ export type ExpenseSummary = {
   today_total: string | number;
 };
 
+export type ExpenseDailySummary = {
+  entry_date: string;
+  total_money_in: string | number;
+  total_money_out: string | number;
+  transaction_count: number;
+};
+
 // --- Production material tracking ---
 
 export type ProductionMaterialSection = "painters_dept" | "mdf_section";

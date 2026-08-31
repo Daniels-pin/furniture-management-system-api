@@ -66,6 +66,7 @@ import type {
   AdminJobsSummary,
   ExpenseEntry,
   ExpenseSummary,
+  ExpenseDailySummary,
   DraftGetResponse,
   DraftLatestResponse,
   DraftModule,
@@ -1586,19 +1587,27 @@ export const employeePaymentsApi = {
 };
 
 export const expensesApi = {
-  async list(params?: { limit?: number; offset?: number }) {
+  async list(params?: { limit?: number; offset?: number; entry_date?: string; search?: string }) {
     const { data } = await api.get<ExpenseEntry[]>("/expenses", { params });
     return data;
   },
-  async page(params?: { limit?: number; offset?: number }) {
+  async page(params?: { limit?: number; offset?: number; entry_date?: string; search?: string }) {
     const qp: Record<string, any> = {};
     if (typeof params?.limit === "number") qp.limit = params.limit;
     if (typeof params?.offset === "number") qp.offset = params.offset;
+    if (params?.entry_date) qp.entry_date = params.entry_date;
+    if (params?.search?.trim()) qp.search = params.search.trim();
     const { data } = await api.get<ExpenseEntriesPage>("/expenses/page", { params: qp });
     return data;
   },
   async summary() {
     const { data } = await api.get<ExpenseSummary>("/expenses/summary");
+    return data;
+  },
+  async dailySummary(params: { entry_date: string; search?: string }) {
+    const qp: Record<string, string> = { entry_date: params.entry_date };
+    if (params.search?.trim()) qp.search = params.search.trim();
+    const { data } = await api.get<ExpenseDailySummary>("/expenses/daily-summary", { params: qp });
     return data;
   },
   async create(body: { entry_date: string; amount: string | number; entry_type: "expense" | "credit"; note?: string | null }) {
