@@ -106,6 +106,9 @@ async def lifespan(app: FastAPI):
             await cutoff_task
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        from app.utils.browser_pdf import shutdown_pdf_browser
+
+        await asyncio.to_thread(shutdown_pdf_browser)
 
 
 app = FastAPI(lifespan=lifespan) 
