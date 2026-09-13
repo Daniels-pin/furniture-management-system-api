@@ -21,6 +21,7 @@ import type {
 import { formatLagosDateTime, formatLateAttendanceTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { AttendanceAdminTable } from "../components/employee/AttendanceAdminTable";
+import { DataListCard, DataListMetric, ResponsiveDataList, ScrollTable } from "../components/ui/responsive";
 import { EmployeeEmploymentDocumentsSection } from "../components/employee/EmployeeEmploymentDocumentsSection";
 import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 import { isValidThousandsCommaNumber, parseMoneyInput } from "../utils/moneyInput";
@@ -700,7 +701,7 @@ export function MonthlyEmployeeDetailPage() {
         ) : att.length === 0 ? (
           <div className="mt-2 text-sm text-black/60">No attendance yet.</div>
         ) : (
-          <div className="mt-3 min-w-0 overflow-x-auto">
+          <div className="mt-3 min-w-0">
             <p className="mb-2 text-xs font-semibold text-black/55">Latest record</p>
             <AttendanceAdminTable rows={att.slice(0, 1)} />
             {att.length > 1 ? (
@@ -871,42 +872,72 @@ export function MonthlyEmployeeDetailPage() {
           <div className="mt-2 text-sm text-black/60">No adjustments yet.</div>
         ) : (
           <>
-            <div className="mt-3 min-w-0 overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="text-black/60">
-                  <tr className="border-b border-black/10">
-                    <th className="py-3 pr-4 font-semibold">Date</th>
-                    <th className="py-3 pr-4 font-semibold">Type</th>
-                    <th className="py-3 pr-4 text-right font-semibold">Amount</th>
-                    <th className="py-3 pr-4 font-semibold">Reason</th>
-                    <th className="py-3 pr-4 font-semibold">Added by</th>
-                    {isAdmin && detail.period.is_active ? <th className="py-3 pr-0 font-semibold">Actions</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedAdjustments.map((adj) => (
-                    <tr key={adj.id} className="border-b border-black/5">
-                      <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(adj.created_at)}</td>
-                      <td className="py-3 pr-4 font-semibold">{ADJUSTMENT_TYPE_LABELS[adj.adjustment_type]}</td>
-                      <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(adj.amount)}</td>
-                      <td className="py-3 pr-4 text-xs">{adj.reason}</td>
-                      <td className="py-3 pr-4 text-xs text-black/60">{adj.created_by_name ?? "—"}</td>
-                      {isAdmin && detail.period.is_active ? (
-                        <td className="py-3 pr-0">
-                          <div className="flex gap-2">
-                            <Button variant="secondary" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => startEditAdjustment(adj)}>
-                              Edit
-                            </Button>
-                            <Button variant="danger" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => void onDeleteAdjustment(adj)}>
-                              Delete
-                            </Button>
-                          </div>
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mt-3 min-w-0">
+              <ResponsiveDataList
+                mobile={pagedAdjustments.map((adj) => (
+                  <DataListCard
+                    key={adj.id}
+                    title={ADJUSTMENT_TYPE_LABELS[adj.adjustment_type]}
+                    subtitle={formatLagosDateTime(adj.created_at)}
+                    badge={<span className="text-sm font-bold tabular-nums">{formatMoney(adj.amount)}</span>}
+                    metrics={
+                      <>
+                        <DataListMetric label="Reason" value={adj.reason} />
+                        <DataListMetric label="Added by" value={adj.created_by_name ?? "—"} />
+                      </>
+                    }
+                    actions={
+                      isAdmin && detail.period.is_active ? (
+                        <>
+                          <Button variant="secondary" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => startEditAdjustment(adj)}>
+                            Edit
+                          </Button>
+                          <Button variant="danger" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => void onDeleteAdjustment(adj)}>
+                            Delete
+                          </Button>
+                        </>
+                      ) : undefined
+                    }
+                  />
+                ))}
+                desktop={
+                  <ScrollTable minWidth={920}>
+                    <thead className="text-black/60">
+                      <tr className="border-b border-black/10">
+                        <th className="py-3 pr-4 font-semibold">Date</th>
+                        <th className="py-3 pr-4 font-semibold">Type</th>
+                        <th className="py-3 pr-4 text-right font-semibold">Amount</th>
+                        <th className="py-3 pr-4 font-semibold">Reason</th>
+                        <th className="py-3 pr-4 font-semibold">Added by</th>
+                        {isAdmin && detail.period.is_active ? <th className="py-3 pr-0 font-semibold">Actions</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedAdjustments.map((adj) => (
+                        <tr key={adj.id} className="border-b border-black/5">
+                          <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(adj.created_at)}</td>
+                          <td className="py-3 pr-4 font-semibold">{ADJUSTMENT_TYPE_LABELS[adj.adjustment_type]}</td>
+                          <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(adj.amount)}</td>
+                          <td className="py-3 pr-4 text-xs">{adj.reason}</td>
+                          <td className="py-3 pr-4 text-xs text-black/60">{adj.created_by_name ?? "—"}</td>
+                          {isAdmin && detail.period.is_active ? (
+                            <td className="py-3 pr-0">
+                              <div className="flex gap-2">
+                                <Button variant="secondary" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => startEditAdjustment(adj)}>
+                                  Edit
+                                </Button>
+                                <Button variant="danger" className="!min-h-8 !px-2 !py-1 !text-xs" onClick={() => void onDeleteAdjustment(adj)}>
+                                  Delete
+                                </Button>
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </ScrollTable>
+                }
+              />
             </div>
             {adjustments.length > ADJ_PAGE_SIZE ? (
               <div className="mt-3 flex items-center justify-between text-xs font-semibold text-black/60">
@@ -1040,33 +1071,62 @@ export function MonthlyEmployeeDetailPage() {
         ) : txns.length === 0 ? (
           <div className="mt-2 text-sm text-black/60">No transactions yet.</div>
         ) : (
-          <div className="mt-3 min-w-0 overflow-x-auto">
-            <table className="w-full min-w-[860px] text-left text-sm">
-              <thead className="text-black/60">
-                <tr className="border-b border-black/10">
-                  <th className="py-3 pr-4 font-semibold">Date</th>
-                  <th className="py-3 pr-4 font-semibold">Type</th>
-                  <th className="py-3 pr-4 font-semibold">Status</th>
-                  <th className="py-3 pr-4 text-right font-semibold">Amount</th>
-                  <th className="py-3 pr-0 font-semibold">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {txns.map((t) => (
-                  <tr
-                    key={t.id}
-                    className="border-b border-black/5 hover:bg-black/[0.02] cursor-default"
-                    role="row"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      if (isInteractiveTarget(e.target)) return;
-                    }}
-                  >
-                    <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(t.created_at)}</td>
-                    <td className="py-3 pr-4 font-semibold">{t.txn_type}</td>
-                    <td className="py-3 pr-4">
-                      <span
-                        className={[
+          <div className="mt-3 min-w-0">
+            <ResponsiveDataList
+              mobile={txns.map((t) => (
+                <DataListCard
+                  key={t.id}
+                  title={t.txn_type}
+                  subtitle={formatLagosDateTime(t.created_at)}
+                  badge={
+                    <span
+                      className={[
+                        "rounded-full px-2 py-0.5 text-xs font-semibold capitalize",
+                        t.status === "paid"
+                          ? "bg-emerald-100 text-emerald-900"
+                          : t.status === "cancelled"
+                            ? "bg-black/10 text-black/60"
+                            : "bg-amber-100 text-amber-900"
+                      ].join(" ")}
+                    >
+                      {t.status}
+                    </span>
+                  }
+                  metrics={
+                    <>
+                      <DataListMetric label="Amount" value={<span className="tabular-nums">{formatMoney(t.amount)}</span>} />
+                      {t.note ? <DataListMetric label="Note" value={t.note} /> : null}
+                    </>
+                  }
+                />
+              ))}
+              desktop={
+                <ScrollTable minWidth={860}>
+                  <thead className="text-black/60">
+                    <tr className="border-b border-black/10">
+                      <th className="py-3 pr-4 font-semibold">Date</th>
+                      <th className="py-3 pr-4 font-semibold">Type</th>
+                      <th className="py-3 pr-4 font-semibold">Status</th>
+                      <th className="py-3 pr-4 text-right font-semibold">Amount</th>
+                      <th className="py-3 pr-0 font-semibold">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {txns.map((t) => (
+                      <tr
+                        key={t.id}
+                        className="border-b border-black/5 hover:bg-black/[0.02] cursor-default"
+                        role="row"
+                        tabIndex={-1}
+                        onClick={(e) => {
+                          if (isInteractiveTarget(e.target)) return;
+                        }}
+                      >
+                        <td className="py-3 pr-4 text-xs font-semibold text-black/60">{formatLagosDateTime(t.created_at)}</td>
+                        <td className="py-3 pr-4 font-semibold">{t.txn_type}</td>
+                        <td className="py-3 pr-4">
+                          <span
+                            className={[
                           "rounded-full px-2 py-0.5 text-xs font-semibold",
                           t.status === "paid"
                             ? "bg-emerald-100 text-emerald-900"
@@ -1078,12 +1138,14 @@ export function MonthlyEmployeeDetailPage() {
                         {t.status}
                       </span>
                     </td>
-                    <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(t.amount)}</td>
-                    <td className="py-3 pr-0 text-xs text-black/60">{t.note ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        <td className="py-3 pr-4 text-right font-bold tabular-nums">{formatMoney(t.amount)}</td>
+                        <td className="py-3 pr-0 text-xs text-black/60">{t.note ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </ScrollTable>
+              }
+            />
           </div>
         )}
       </Card>

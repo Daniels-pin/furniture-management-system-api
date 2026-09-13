@@ -9,6 +9,7 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { formatLagosDateTime, lagosDateKey } from "../utils/datetime";
+import { DataListCard, DataListMetric, ResponsiveDataList, ScrollTable } from "../components/ui/responsive";
 
 function todayYmd() {
   return lagosDateKey(new Date());
@@ -368,69 +369,105 @@ export function EquipmentPage() {
         <div className="mt-3 max-w-md">
           <Input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search name…" />
         </div>
-        <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
-              <tr>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2 text-right"> </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/10">
-              {dirLoading ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-black/60">
-                    Loading…
-                  </td>
-                </tr>
+        <div className="mt-4 min-w-0 rounded-2xl border border-black/10 md:border-0 md:p-0">
+          <ResponsiveDataList
+            mobile={
+              dirLoading ? (
+                <div className="p-4 text-center text-sm text-black/60">Loading…</div>
               ) : directoryRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-black/60">
-                    No items match.
-                  </td>
-                </tr>
+                <div className="p-4 text-center text-sm text-black/60">No items match.</div>
               ) : (
-                directoryRows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className="hover:bg-black/[0.015]">
-                    <td className="px-3 py-2">
-                      <span className="inline-flex rounded-full bg-black/[0.06] px-2 py-0.5 text-xs font-bold capitalize text-black/80">
-                        {r.kind}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 font-semibold">{r.name}</td>
-                    <td className="px-3 py-2">
-                      {(() => {
-                        const isInUse =
-                          r.kind === "tool" ? r.inUse : r.machineStatus === "in_use";
-                        const isAvailable =
-                          r.kind === "tool" ? !r.inUse : r.machineStatus === "available";
-                        const cls = isInUse
-                          ? "bg-yellow-100 text-yellow-900 ring-yellow-200"
-                          : isAvailable
-                            ? "bg-green-100 text-green-900 ring-green-200"
-                            : "bg-black/5 text-black/70 ring-black/10";
-                        return (
-                          <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", cls].join(" ")}>
-                            {r.statusLabel}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Link
-                        to={r.kind === "tool" ? `/equipment/tool/${r.id}` : `/equipment/machine/${r.id}`}
-                        className="inline-flex rounded-xl border border-black/15 bg-white px-3 py-1.5 text-xs font-bold hover:bg-black/[0.03]"
-                      >
-                        Open
-                      </Link>
-                    </td>
+                directoryRows.map((r) => {
+                  const isInUse = r.kind === "tool" ? r.inUse : r.machineStatus === "in_use";
+                  const isAvailable = r.kind === "tool" ? !r.inUse : r.machineStatus === "available";
+                  const cls = isInUse
+                    ? "bg-yellow-100 text-yellow-900"
+                    : isAvailable
+                      ? "bg-green-100 text-green-900"
+                      : "bg-black/5 text-black/70";
+                  return (
+                    <DataListCard
+                      key={`${r.kind}-${r.id}`}
+                      title={r.name}
+                      subtitle={r.kind}
+                      badge={
+                        <span className={["rounded-full px-2.5 py-1 text-xs font-semibold", cls].join(" ")}>
+                          {r.statusLabel}
+                        </span>
+                      }
+                      actions={
+                        <Link to={r.kind === "tool" ? `/equipment/tool/${r.id}` : `/equipment/machine/${r.id}`}>
+                          <Button variant="secondary">Open</Button>
+                        </Link>
+                      }
+                    />
+                  );
+                })
+              )
+            }
+            desktop={
+              <ScrollTable>
+                <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
+                  <tr>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2 text-right"> </th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-black/10">
+                  {dirLoading ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-black/60">
+                        Loading…
+                      </td>
+                    </tr>
+                  ) : directoryRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-black/60">
+                        No items match.
+                      </td>
+                    </tr>
+                  ) : (
+                    directoryRows.map((r) => (
+                      <tr key={`${r.kind}-${r.id}`} className="hover:bg-black/[0.015]">
+                        <td className="px-3 py-2">
+                          <span className="inline-flex rounded-full bg-black/[0.06] px-2 py-0.5 text-xs font-bold capitalize text-black/80">
+                            {r.kind}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-semibold">{r.name}</td>
+                        <td className="px-3 py-2">
+                          {(() => {
+                            const isInUse = r.kind === "tool" ? r.inUse : r.machineStatus === "in_use";
+                            const isAvailable = r.kind === "tool" ? !r.inUse : r.machineStatus === "available";
+                            const cls = isInUse
+                              ? "bg-yellow-100 text-yellow-900 ring-yellow-200"
+                              : isAvailable
+                                ? "bg-green-100 text-green-900 ring-green-200"
+                                : "bg-black/5 text-black/70 ring-black/10";
+                            return (
+                              <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", cls].join(" ")}>
+                                {r.statusLabel}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <Link
+                            to={r.kind === "tool" ? `/equipment/tool/${r.id}` : `/equipment/machine/${r.id}`}
+                            className="inline-flex rounded-xl border border-black/15 bg-white px-3 py-1.5 text-xs font-bold hover:bg-black/[0.03]"
+                          >
+                            Open
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </ScrollTable>
+            }
+          />
         </div>
       </Card>
 
@@ -519,41 +556,35 @@ export function EquipmentPage() {
             </div>
           </div>
 
-          <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
-                <tr>
-                  <th className="px-3 py-2">Tool</th>
-                  <th className="px-3 py-2">Out</th>
-                  <th className="px-3 py-2">Returned</th>
-                  <th className="px-3 py-2">Assigned to</th>
-                  <th className="px-3 py-2">By</th>
-                  <th className="px-3 py-2 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/10">
-                {recLoading ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-black/60">
-                      Loading…
-                    </td>
-                  </tr>
+          <div className="mt-4 min-w-0 rounded-2xl border border-black/10 md:border-0">
+            <ResponsiveDataList
+              mobile={
+                recLoading ? (
+                  <div className="p-4 text-center text-sm text-black/60">Loading…</div>
                 ) : records.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-black/60">
-                      No rows for this day / filter.
-                    </td>
-                  </tr>
+                  <div className="p-4 text-center text-sm text-black/60">No rows for this day / filter.</div>
                 ) : (
                   records.map((r) => (
-                    <tr key={r.id} className="hover:bg-black/[0.015]">
-                      <td className="px-3 py-2 font-semibold">{r.tool_name}</td>
-                      <td className="px-3 py-2 text-black/70">{fmtWhen(r.checkout_at)}</td>
-                      <td className="px-3 py-2 text-black/70">{r.returned_at ? fmtWhen(r.returned_at) : "—"}</td>
-                      <td className="px-3 py-2 text-black/70">{r.borrower_name ?? "—"}</td>
-                      <td className="px-3 py-2 text-black/70">{r.checked_out_by ?? "—"}</td>
-                      <td className="px-3 py-2 text-right">
-                        {!r.returned_at ? (
+                    <DataListCard
+                      key={r.id}
+                      title={r.tool_name}
+                      subtitle={r.borrower_name ?? "—"}
+                      badge={
+                        r.returned_at ? (
+                          <span className="text-xs font-semibold text-emerald-700">Returned</span>
+                        ) : (
+                          <span className="text-xs font-semibold text-amber-800">In use</span>
+                        )
+                      }
+                      metrics={
+                        <>
+                          <DataListMetric label="Out" value={fmtWhen(r.checkout_at)} />
+                          <DataListMetric label="Returned" value={r.returned_at ? fmtWhen(r.returned_at) : "—"} />
+                          <DataListMetric label="By" value={r.checked_out_by ?? "—"} />
+                        </>
+                      }
+                      actions={
+                        !r.returned_at ? (
                           <Button
                             type="button"
                             variant="secondary"
@@ -562,15 +593,66 @@ export function EquipmentPage() {
                           >
                             {returningId === r.id ? "Saving…" : "Mark returned"}
                           </Button>
-                        ) : (
-                          <span className="text-xs font-semibold text-emerald-700">Returned</span>
-                        )}
-                      </td>
-                    </tr>
+                        ) : undefined
+                      }
+                    />
                   ))
-                )}
-              </tbody>
-            </table>
+                )
+              }
+              desktop={
+                <ScrollTable minWidth={720}>
+                  <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
+                    <tr>
+                      <th className="px-3 py-2">Tool</th>
+                      <th className="px-3 py-2">Out</th>
+                      <th className="px-3 py-2">Returned</th>
+                      <th className="px-3 py-2">Assigned to</th>
+                      <th className="px-3 py-2">By</th>
+                      <th className="px-3 py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/10">
+                    {recLoading ? (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-6 text-center text-black/60">
+                          Loading…
+                        </td>
+                      </tr>
+                    ) : records.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-6 text-center text-black/60">
+                          No rows for this day / filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      records.map((r) => (
+                        <tr key={r.id} className="hover:bg-black/[0.015]">
+                          <td className="px-3 py-2 font-semibold">{r.tool_name}</td>
+                          <td className="px-3 py-2 text-black/70">{fmtWhen(r.checkout_at)}</td>
+                          <td className="px-3 py-2 text-black/70">{r.returned_at ? fmtWhen(r.returned_at) : "—"}</td>
+                          <td className="px-3 py-2 text-black/70">{r.borrower_name ?? "—"}</td>
+                          <td className="px-3 py-2 text-black/70">{r.checked_out_by ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            {!r.returned_at ? (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={returningId === r.id}
+                                onClick={() => void markReturned(r)}
+                              >
+                                {returningId === r.id ? "Saving…" : "Mark returned"}
+                              </Button>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-700">Returned</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </ScrollTable>
+              }
+            />
           </div>
 
           {recPages > 1 ? (

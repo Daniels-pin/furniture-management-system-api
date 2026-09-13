@@ -102,7 +102,8 @@ const NAV_GROUPS: NavGroupModel[] = [
       { key: "proforma", label: "Proforma Invoice", to: "/proforma", roles: ["admin", "showroom", "finance"] },
       { key: "invoices", label: "Invoices", to: "/invoices", roles: ["admin", "showroom", "finance"] },
       { key: "waybill", label: "Waybill", to: "/waybills", roles: ["admin", "showroom", "finance"] },
-      { key: "customers", label: "Customers", to: "/customers", roles: ["admin", "showroom", "finance"] }
+      { key: "customers", label: "Customers", to: "/customers", roles: ["admin", "showroom", "finance"] },
+      { key: "field-visits", label: "Field Visits", to: "/field-visits", roles: ["admin", "showroom"] }
     ]
   },
   {
@@ -932,13 +933,13 @@ export function AppLayout() {
         >
           <button
             type="button"
-            className="absolute inset-0 bg-black/40"
+            className="app-drawer-backdrop absolute inset-0 bg-black/40"
             aria-label="Close menu"
             onClick={closeDrawer}
           />
           <div
             id="app-mobile-nav"
-            className="relative flex h-full w-[min(19rem,88vw)] max-w-full min-w-0 flex-col border-r border-black/10 bg-white shadow-xl"
+            className="app-drawer-panel relative flex h-full w-[min(19rem,88vw)] max-w-full min-w-0 flex-col border-r border-black/10 bg-white shadow-xl"
           >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-black/10 px-4 py-3">
               <div className="flex min-w-0 items-center gap-2.5">

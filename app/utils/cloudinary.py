@@ -18,7 +18,7 @@ def _configure_cloudinary() -> None:
     cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret)
 
 
-def upload_image(file: UploadFile) -> str:
+def upload_image(file: UploadFile, *, folder: str | None = None) -> str:
     """
     Upload an image to Cloudinary and return the secure URL.
     """
@@ -28,7 +28,10 @@ def upload_image(file: UploadFile) -> str:
         raise HTTPException(status_code=500, detail=str(e))
 
     try:
-        result = cloudinary.uploader.upload(file.file, resource_type="image")
+        upload_kwargs: dict = {"resource_type": "image"}
+        if folder:
+            upload_kwargs["folder"] = folder
+        result = cloudinary.uploader.upload(file.file, **upload_kwargs)
         secure_url = result.get("secure_url")
         if not secure_url:
             raise HTTPException(status_code=502, detail="Image upload failed")
@@ -39,7 +42,7 @@ def upload_image(file: UploadFile) -> str:
         raise HTTPException(status_code=502, detail="Image upload failed")
 
 
-def upload_images(files: list[UploadFile]) -> list[str]:
+def upload_images(files: list[UploadFile], *, folder: str | None = None) -> list[str]:
     """
     Upload multiple images to Cloudinary and return secure URLs in order.
     """
@@ -47,7 +50,7 @@ def upload_images(files: list[UploadFile]) -> list[str]:
         return []
     urls: list[str] = []
     for f in files:
-        urls.append(upload_image(f))
+        urls.append(upload_image(f, folder=folder))
     return urls
 
 

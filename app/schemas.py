@@ -2707,3 +2707,131 @@ class ProductionMaterialContractEmployeeOption(BaseModel):
     full_name: str
     status: str
     assigned_to_section: bool = False
+
+
+# --- Field visits ---
+
+
+class FieldVisitOptionsOut(BaseModel):
+    project_types: List[str]
+    project_stages: List[str]
+    furniture_categories: List[str]
+    visit_outcomes: List[str]
+    boq_options: List[str]
+
+
+class FieldVisitCreate(BaseModel):
+    project_name: str = Field(..., min_length=1, max_length=500)
+    project_location: str = Field(..., min_length=1, max_length=500)
+    project_type: str = Field(..., min_length=1, max_length=100)
+    estimated_units: Optional[str] = Field(None, max_length=200)
+    project_stage: str = Field(..., min_length=1, max_length=100)
+    developer_owner: Optional[str] = Field(None, max_length=300)
+    contractor: Optional[str] = Field(None, max_length=300)
+    architect_designer: Optional[str] = Field(None, max_length=300)
+    decision_maker: Optional[str] = Field(None, max_length=300)
+    phone_number: str = Field(..., min_length=1, max_length=80)
+    whatsapp_number: Optional[str] = Field(None, max_length=80)
+    furniture_needed: List[str] = Field(..., min_length=1)
+    boq_available: str = Field(..., min_length=1, max_length=10)
+    estimated_opportunity_value: Optional[Decimal] = Field(None, ge=0)
+    existing_supplier: Optional[str] = Field(None, max_length=300)
+    visit_outcome: str = Field(..., min_length=1, max_length=100)
+    visit_outcome_other: Optional[str] = Field(None, max_length=2000)
+    notes: Optional[str] = Field(None, max_length=20000)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    existing_photo_urls: List[str] = Field(default_factory=list)
+
+
+class FieldVisitUpdate(FieldVisitCreate):
+    pass
+
+
+class FieldVisitListItemOut(BaseModel):
+    id: int
+    visit_number: str
+    visit_at: datetime
+    employee_id: int
+    employee_name: Optional[str] = None
+    project_name: str
+    project_location: str
+    project_type: str
+    furniture_needed: List[str]
+    estimated_opportunity_value: Optional[Decimal] = None
+    visit_outcome: str
+    photo_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("visit_at")
+    def _ser_visit_at(self, v: datetime) -> datetime:
+        return datetime_for_api(v)
+
+
+class FieldVisitDetailOut(BaseModel):
+    id: int
+    visit_number: str
+    visit_at: datetime
+    employee_id: int
+    employee_name: Optional[str] = None
+    project_name: str
+    project_location: str
+    project_type: str
+    estimated_units: Optional[str] = None
+    project_stage: str
+    developer_owner: Optional[str] = None
+    contractor: Optional[str] = None
+    architect_designer: Optional[str] = None
+    decision_maker: Optional[str] = None
+    phone_number: str
+    whatsapp_number: Optional[str] = None
+    furniture_needed: List[str]
+    boq_available: str
+    estimated_opportunity_value: Optional[Decimal] = None
+    existing_supplier: Optional[str] = None
+    visit_outcome: str
+    visit_outcome_other: Optional[str] = None
+    notes: Optional[str] = None
+    photo_urls: List[str] = Field(default_factory=list)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    google_maps_url: Optional[str] = None
+    gps_available: bool = True
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_by_id: Optional[int] = None
+    updated_by_name: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    can_edit: bool = False
+
+    class Config:
+        from_attributes = True
+
+    @field_serializer("visit_at", "created_at", "updated_at")
+    def _ser_dt(self, v: datetime | None) -> datetime | None:
+        if v is None:
+            return None
+        return datetime_for_api(v)
+
+
+class FieldVisitPageOut(BaseModel):
+    items: List[FieldVisitListItemOut]
+    total: int = 0
+    limit: int = 15
+    offset: int = 0
+
+
+class FieldVisitSummaryOut(BaseModel):
+    total_visits: int
+    visits_this_week: int
+    visits_this_month: int
+    estimated_pipeline_value: Decimal
+    active_showroom_employees: int
+
+
+class FieldVisitEmployeeOptionOut(BaseModel):
+    id: int
+    name: str

@@ -36,6 +36,7 @@ from app.routes.notifications import router as notifications_router
 from app.routes.company_locations import router as company_locations_router
 from app.routes.company_settings import router as company_settings_router
 from app.routes.production_materials import router as production_materials_router
+from app.routes.field_visits import router as field_visits_router
 
 logger = logging.getLogger(__name__)
 
@@ -221,4 +222,5 @@ app.include_router(notifications_router)
 app.include_router(company_locations_router)
 app.include_router(company_settings_router)
 app.include_router(production_materials_router)
+app.include_router(field_visits_router)
 

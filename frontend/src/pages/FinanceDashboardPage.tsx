@@ -633,7 +633,7 @@ export function FinanceDashboardPage() {
                 </div>
               ) : (
                 <>
-                  <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
+                  <div className="mt-3 hidden md:block min-w-0 overflow-x-touch">
                     <table className="w-full min-w-[980px] text-left text-sm">
                       <thead className="text-black/60">
                         <tr className="border-b border-black/10">
@@ -1010,7 +1010,7 @@ export function FinanceDashboardPage() {
               <div className="mt-3 text-sm text-black/60">No transactions found.</div>
             ) : (
               <>
-                <div className="mt-3 hidden md:block min-w-0 overflow-x-auto">
+                <div className="mt-3 hidden md:block min-w-0 overflow-x-touch">
                   <table className="w-full min-w-[980px] text-left text-sm">
                     <thead className="text-black/60">
                       <tr className="border-b border-black/10">

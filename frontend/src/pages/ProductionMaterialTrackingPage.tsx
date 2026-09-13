@@ -18,6 +18,7 @@ import type {
   ProductionMaterialType
 } from "../types/api";
 import { formatLagosDateTime } from "../utils/datetime";
+import { DataListCard, ResponsiveDataList, ScrollTable } from "../components/ui/responsive";
 
 function toDateTimeLocalValue(date: Date | string) {
   const d = date instanceof Date ? date : new Date(date);
@@ -502,8 +503,78 @@ export function ProductionMaterialTrackingPage() {
             No contract employees assigned to {overview?.section_label ?? "this section"} yet.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+          <ResponsiveDataList
+            mobile={
+              <div className="space-y-3 p-4">
+                {employees.map((row) => {
+                  const expanded = expandedEmployeeId === row.contract_employee_id;
+                  const overflowCount = employeeMaterialOverflowCount(row);
+                  return (
+                    <div key={row.contract_employee_id}>
+                      <DataListCard
+                        title={row.full_name}
+                        subtitle={
+                          <>
+                            {employeeMaterialSummary(row)}
+                            {overflowCount > 0 ? (
+                              <span className="ml-1 text-black/45">+{overflowCount} more</span>
+                            ) : null}
+                          </>
+                        }
+                        actions={
+                          <>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="secondary" onClick={() => openAllocModal(row)}>
+                              Add material
+                            </Button>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => toggleExpand(row.contract_employee_id)}>
+                              {expanded ? "Hide details" : "View details"}
+                            </Button>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => setUnassignTarget(row)}>
+                              Remove
+                            </Button>
+                          </>
+                        }
+                      />
+                      {expanded ? (
+                        <div className="mt-3 space-y-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                          {row.material_totals.length ? (
+                            <div className="flex flex-wrap gap-2">
+                              {row.material_totals.map((t) => (
+                                <div
+                                  key={`${t.material_type_id ?? "name"}-${t.material_name}`}
+                                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                                >
+                                  <span className="font-semibold">{t.material_name}</span>
+                                  <span className="text-black/60"> · {fmtQty(t.total_quantity)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-black/60">No materials recorded yet.</div>
+                          )}
+                          {historyLoading ? (
+                            <div className="text-sm text-black/60">Loading transaction history…</div>
+                          ) : history.length ? (
+                            <div className="space-y-2">
+                              {history.map((txn) => (
+                                <DataListCard
+                                  key={txn.id}
+                                  title={txn.material_name}
+                                  subtitle={formatLagosDateTime(txn.transaction_at)}
+                                  badge={<span className="text-xs font-semibold">{statusLabel(txn.status, txn.txn_type)}</span>}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            }
+            desktop={
+              <ScrollTable>
               <thead className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
                 <tr>
                   <th className="px-4 py-3">Employee</th>
@@ -600,7 +671,7 @@ export function ProductionMaterialTrackingPage() {
                                   <div className="text-xs font-semibold uppercase tracking-wide text-black/50">
                                     Material breakdown
                                   </div>
-                                  <div className="mt-3 overflow-x-auto rounded-xl border border-black/10 bg-white">
+                                  <div className="mt-3 min-w-0 overflow-x-touch rounded-xl border border-black/10 bg-white">
                                     <table className="min-w-full text-sm">
                                       <thead className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
                                         <tr>
@@ -638,7 +709,7 @@ export function ProductionMaterialTrackingPage() {
                                 ) : history.length === 0 ? (
                                   <div className="mt-2 text-sm text-black/60">No material entries yet.</div>
                                 ) : (
-                                  <div className="mt-3 overflow-x-auto rounded-xl border border-black/10 bg-white">
+                                  <div className="mt-3 min-w-0 overflow-x-touch rounded-xl border border-black/10 bg-white">
                                     <table className="min-w-full text-sm">
                                       <thead>
                                         <tr className="border-b border-black/10 bg-black/[0.02] text-left text-xs uppercase tracking-wide text-black/50">
@@ -700,8 +771,9 @@ export function ProductionMaterialTrackingPage() {
                   );
                 })}
               </tbody>
-            </table>
-          </div>
+              </ScrollTable>
+            }
+          />
         )}
       </Card>
 

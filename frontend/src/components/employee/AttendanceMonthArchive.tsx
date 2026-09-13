@@ -10,6 +10,7 @@ import {
 } from "../../utils/attendance";
 import { formatAttendanceDuration, formatLagosTime } from "../../utils/datetime";
 import { Button } from "../ui/Button";
+import { DataListCard, DataListMetric, ResponsiveDataList, ScrollTable } from "../ui/responsive";
 
 const PAGE_SIZE = 15;
 
@@ -25,49 +26,88 @@ function AttendanceHistoryRows({ rows }: { rows: EmployeeAttendanceHistoryItem[]
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-left text-sm">
-        <thead className="text-black/60">
-          <tr className="border-b border-black/10">
-            <th className="py-2.5 pr-4 font-semibold">Date</th>
-            <th className="py-2.5 pr-4 font-semibold">Shift</th>
-            <th className="py-2.5 pr-4 font-semibold">Check In</th>
-            <th className="py-2.5 pr-4 font-semibold">Check Out</th>
-            <th className="py-2.5 pr-4 font-semibold">Duration</th>
-            <th className="py-2.5 pr-0 font-semibold">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.record_type}-${row.id}-${row.attendance_date}`} className="border-b border-black/5">
-              <td className="py-2.5 pr-4 font-semibold">{formatMonthDay(row.attendance_date)}</td>
-              <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">{row.shift_label ?? "—"}</td>
-              <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
-                {row.status === "absent" || !row.check_in_at ? "—" : formatLagosTime(row.check_in_at)}
-              </td>
-              <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
-                {row.status === "absent" || !row.check_out_at ? "—" : formatLagosTime(row.check_out_at)}
-              </td>
-              <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
-                {typeof row.attendance_duration_minutes === "number"
-                  ? formatAttendanceDuration(row.attendance_duration_minutes)
-                  : "—"}
-              </td>
-              <td className="py-2.5 pr-0">
-                <span
-                  className={[
-                    "rounded-full px-2 py-0.5 text-xs font-semibold",
-                    attendanceHistoryStatusBadgeClass(row)
-                  ].join(" ")}
-                >
-                  {attendanceHistoryStatusLabel(row)}
-                </span>
-              </td>
+    <ResponsiveDataList
+      mobile={rows.map((row) => (
+        <DataListCard
+          key={`${row.record_type}-${row.id}-${row.attendance_date}`}
+          title={formatMonthDay(row.attendance_date)}
+          subtitle={row.shift_label ?? "—"}
+          badge={
+            <span
+              className={[
+                "rounded-full px-2 py-0.5 text-xs font-semibold",
+                attendanceHistoryStatusBadgeClass(row)
+              ].join(" ")}
+            >
+              {attendanceHistoryStatusLabel(row)}
+            </span>
+          }
+          metrics={
+            <>
+              <DataListMetric
+                label="Check in"
+                value={row.status === "absent" || !row.check_in_at ? "—" : formatLagosTime(row.check_in_at)}
+              />
+              <DataListMetric
+                label="Check out"
+                value={row.status === "absent" || !row.check_out_at ? "—" : formatLagosTime(row.check_out_at)}
+              />
+              <DataListMetric
+                label="Duration"
+                value={
+                  typeof row.attendance_duration_minutes === "number"
+                    ? formatAttendanceDuration(row.attendance_duration_minutes)
+                    : "—"
+                }
+              />
+            </>
+          }
+        />
+      ))}
+      desktop={
+        <ScrollTable minWidth={720}>
+          <thead className="text-black/60">
+            <tr className="border-b border-black/10">
+              <th className="py-2.5 pr-4 font-semibold">Date</th>
+              <th className="py-2.5 pr-4 font-semibold">Shift</th>
+              <th className="py-2.5 pr-4 font-semibold">Check In</th>
+              <th className="py-2.5 pr-4 font-semibold">Check Out</th>
+              <th className="py-2.5 pr-4 font-semibold">Duration</th>
+              <th className="py-2.5 pr-0 font-semibold">Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${row.record_type}-${row.id}-${row.attendance_date}`} className="border-b border-black/5">
+                <td className="py-2.5 pr-4 font-semibold">{formatMonthDay(row.attendance_date)}</td>
+                <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">{row.shift_label ?? "—"}</td>
+                <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
+                  {row.status === "absent" || !row.check_in_at ? "—" : formatLagosTime(row.check_in_at)}
+                </td>
+                <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
+                  {row.status === "absent" || !row.check_out_at ? "—" : formatLagosTime(row.check_out_at)}
+                </td>
+                <td className="py-2.5 pr-4 text-xs font-semibold text-black/60">
+                  {typeof row.attendance_duration_minutes === "number"
+                    ? formatAttendanceDuration(row.attendance_duration_minutes)
+                    : "—"}
+                </td>
+                <td className="py-2.5 pr-0">
+                  <span
+                    className={[
+                      "rounded-full px-2 py-0.5 text-xs font-semibold",
+                      attendanceHistoryStatusBadgeClass(row)
+                    ].join(" ")}
+                  >
+                    {attendanceHistoryStatusLabel(row)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </ScrollTable>
+      }
+    />
   );
 }
 

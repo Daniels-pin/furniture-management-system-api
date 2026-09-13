@@ -10,6 +10,7 @@ import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { ConfirmModal } from "../components/ui/ConfirmModal";
 import { formatLagosDateTime } from "../utils/datetime";
+import { DataListCard, DataListMetric, ResponsiveDataList, ScrollTable } from "../components/ui/responsive";
 
 function fmtWhen(iso: string) {
   return formatLagosDateTime(iso);
@@ -203,35 +204,65 @@ export function ToolDetailPage() {
       <Card className="!p-4">
         <div className="text-sm font-bold">History</div>
         <p className="mt-1 text-xs text-black/55">Check-outs and returns (newest first).</p>
-        <div className="mt-4 min-w-0 overflow-x-touch rounded-2xl border border-black/10">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
-              <tr>
-                <th className="px-3 py-2">Out</th>
-                <th className="px-3 py-2">Returned</th>
-                <th className="px-3 py-2">Assigned to</th>
-                <th className="px-3 py-2">By</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/10">
-              {!detail?.records?.length ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-black/60">
-                    No history yet.
-                  </td>
-                </tr>
+        <div className="mt-4 min-w-0 rounded-2xl border border-black/10 md:border-0">
+          <ResponsiveDataList
+            mobile={
+              !detail?.records?.length ? (
+                <div className="p-4 text-center text-sm text-black/60">No history yet.</div>
               ) : (
                 detail.records.map((r: ToolTrackingRecord) => (
-                  <tr key={r.id}>
-                    <td className="px-3 py-2 text-black/70">{fmtWhen(r.checkout_at)}</td>
-                    <td className="px-3 py-2 text-black/70">{r.returned_at ? fmtWhen(r.returned_at) : "—"}</td>
-                    <td className="px-3 py-2 text-black/70">{r.borrower_name ?? "—"}</td>
-                    <td className="px-3 py-2 text-black/70">{r.checked_out_by ?? "—"}</td>
-                  </tr>
+                  <DataListCard
+                    key={r.id}
+                    title={r.borrower_name ?? "—"}
+                    subtitle={fmtWhen(r.checkout_at)}
+                    badge={
+                      r.returned_at ? (
+                        <span className="text-xs font-semibold text-emerald-700">Returned</span>
+                      ) : (
+                        <span className="text-xs font-semibold text-amber-800">Out</span>
+                      )
+                    }
+                    metrics={
+                      <>
+                        <DataListMetric label="Returned" value={r.returned_at ? fmtWhen(r.returned_at) : "—"} />
+                        <DataListMetric label="By" value={r.checked_out_by ?? "—"} />
+                      </>
+                    }
+                  />
                 ))
-              )}
-            </tbody>
-          </table>
+              )
+            }
+            desktop={
+              <ScrollTable>
+                <thead className="bg-black/[0.02] text-xs font-bold uppercase tracking-wide text-black/50">
+                  <tr>
+                    <th className="px-3 py-2">Out</th>
+                    <th className="px-3 py-2">Returned</th>
+                    <th className="px-3 py-2">Assigned to</th>
+                    <th className="px-3 py-2">By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/10">
+                  {!detail?.records?.length ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-black/60">
+                        No history yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    detail.records.map((r: ToolTrackingRecord) => (
+                      <tr key={r.id}>
+                        <td className="px-3 py-2 text-black/70">{fmtWhen(r.checkout_at)}</td>
+                        <td className="px-3 py-2 text-black/70">{r.returned_at ? fmtWhen(r.returned_at) : "—"}</td>
+                        <td className="px-3 py-2 text-black/70">{r.borrower_name ?? "—"}</td>
+                        <td className="px-3 py-2 text-black/70">{r.checked_out_by ?? "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </ScrollTable>
+            }
+          />
         </div>
       </Card>
 

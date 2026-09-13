@@ -1299,3 +1299,108 @@ export type ProductionMaterialSectionOption = {
   label: string;
 };
 
+export type FieldVisitOptions = {
+  project_types: string[];
+  project_stages: string[];
+  furniture_categories: string[];
+  visit_outcomes: string[];
+  boq_options: string[];
+};
+
+export type FieldVisitListItem = {
+  id: number;
+  visit_number: string;
+  visit_at: string;
+  employee_id: number;
+  employee_name?: string | null;
+  project_name: string;
+  project_location: string;
+  project_type: string;
+  furniture_needed: string[];
+  estimated_opportunity_value?: string | number | null;
+  visit_outcome: string;
+  photo_count: number;
+};
+
+export type FieldVisitDetail = {
+  id: number;
+  visit_number: string;
+  visit_at: string;
+  employee_id: number;
+  employee_name?: string | null;
+  project_name: string;
+  project_location: string;
+  project_type: string;
+  estimated_units?: string | null;
+  project_stage: string;
+  developer_owner?: string | null;
+  contractor?: string | null;
+  architect_designer?: string | null;
+  decision_maker?: string | null;
+  phone_number: string;
+  whatsapp_number?: string | null;
+  furniture_needed: string[];
+  boq_available: string;
+  estimated_opportunity_value?: string | number | null;
+  existing_supplier?: string | null;
+  visit_outcome: string;
+  visit_outcome_other?: string | null;
+  notes?: string | null;
+  photo_urls: string[];
+  latitude?: number | null;
+  longitude?: number | null;
+  google_maps_url?: string | null;
+  gps_available: boolean;
+  created_by_id?: number | null;
+  created_by_name?: string | null;
+  created_at: string;
+  updated_by_id?: number | null;
+  updated_by_name?: string | null;
+  updated_at?: string | null;
+  can_edit: boolean;
+};
+
+export type FieldVisitPage = {
+  items: FieldVisitListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type FieldVisitSummary = {
+  total_visits: number;
+  visits_this_week: number;
+  visits_this_month: number;
+  estimated_pipeline_value: string | number;
+  active_showroom_employees: number;
+};
+
+export type FieldVisitEmployeeOption = {
+  id: number;
+  name: string;
+};
+
+export type FieldVisitPayload = {
+  project_name: string;
+  project_location: string;
+  project_type: string;
+  estimated_units?: string | null;
+  project_stage: string;
+  developer_owner?: string | null;
+  contractor?: string | null;
+  architect_designer?: string | null;
+  decision_maker?: string | null;
+  phone_number: string;
+  whatsapp_number?: string | null;
+  furniture_needed: string[];
+  boq_available: string;
+  estimated_opportunity_value?: number | null;
+  existing_supplier?: string | null;
+  visit_outcome: string;
+  visit_outcome_other?: string | null;
+  notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  existing_photo_urls?: string[];
+};
+

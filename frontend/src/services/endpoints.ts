@@ -80,7 +80,13 @@ import type {
   ProductionMaterialType,
   ProductionMaterialTransaction,
   ProductionMaterialContractEmployeeOption,
-  ProductionMaterialSectionOption
+  ProductionMaterialSectionOption,
+  FieldVisitDetail,
+  FieldVisitEmployeeOption,
+  FieldVisitOptions,
+  FieldVisitPage,
+  FieldVisitPayload,
+  FieldVisitSummary
 } from "../types/api";
 
 function downloadBlobResponse(res: { data: Blob; headers: Record<string, unknown> }, fallbackFilename: string) {
@@ -1716,6 +1722,66 @@ export const expensesApi = {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+};
+
+export const fieldVisitsApi = {
+  async options() {
+    const { data } = await api.get<FieldVisitOptions>("/field-visits/options");
+    return data;
+  },
+  async page(params?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    employee_id?: number;
+    project_type?: string;
+    furniture_needed?: string;
+    date_from?: string;
+    date_to?: string;
+    location?: string;
+    visit_outcome?: string;
+  }) {
+    const { data } = await api.get<FieldVisitPage>("/field-visits/page", { params });
+    return data;
+  },
+  async summary() {
+    const { data } = await api.get<FieldVisitSummary>("/field-visits/summary");
+    return data;
+  },
+  async employees() {
+    const { data } = await api.get<FieldVisitEmployeeOption[]>("/field-visits/employees");
+    return data;
+  },
+  async get(visitId: number) {
+    const { data } = await api.get<FieldVisitDetail>(`/field-visits/${visitId}`);
+    return data;
+  },
+  async create(payload: FieldVisitPayload, files: File[]) {
+    const fd = new FormData();
+    fd.append("data_json", JSON.stringify(payload));
+    for (const f of files) fd.append("images", f);
+    const { data } = await api.post<FieldVisitDetail>("/field-visits", fd, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async update(visitId: number, payload: FieldVisitPayload, files: File[]) {
+    const fd = new FormData();
+    fd.append("data_json", JSON.stringify(payload));
+    for (const f of files) fd.append("images", f);
+    const { data } = await api.put<FieldVisitDetail>(`/field-visits/${visitId}`, fd, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async delete(visitId: number) {
+    const { data } = await api.delete<{ ok: boolean }>(`/field-visits/${visitId}`);
+    return data;
+  },
+  async exportCsv(params?: Record<string, string | number | undefined>) {
+    const res = await api.get("/field-visits/export/csv", { params, responseType: "blob" });
+    downloadBlobResponse(res, "field_visits.csv");
   }
 };
 

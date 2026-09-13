@@ -1262,3 +1262,57 @@ class ProductionMaterialTransaction(Base):
         remote_side=[id],
         foreign_keys=[supersedes_id],
     )
+
+
+# --- Field visits (showroom site visits) ---
+
+
+class FieldVisit(Base):
+    __tablename__ = "field_visits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    visit_number = Column(String(32), nullable=False, unique=True, index=True)
+
+    visit_at = Column(DateTime, nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+
+    project_name = Column(String(500), nullable=False)
+    project_location = Column(String(500), nullable=False, index=True)
+    project_type = Column(String(100), nullable=False, index=True)
+
+    estimated_units = Column(String(200), nullable=True)
+    project_stage = Column(String(100), nullable=False)
+
+    developer_owner = Column(String(300), nullable=True)
+    contractor = Column(String(300), nullable=True)
+    architect_designer = Column(String(300), nullable=True)
+    decision_maker = Column(String(300), nullable=True, index=True)
+    phone_number = Column(String(80), nullable=False, index=True)
+    whatsapp_number = Column(String(80), nullable=True)
+
+    furniture_needed = Column(JSON, nullable=False)
+    boq_available = Column(String(10), nullable=False)
+    estimated_opportunity_value = Column(Numeric(14, 2), nullable=True)
+    existing_supplier = Column(String(300), nullable=True)
+
+    visit_outcome = Column(String(100), nullable=False, index=True)
+    visit_outcome_other = Column(String(2000), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    photo_urls = Column(JSON, nullable=True)
+
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    employee = relationship("User", foreign_keys=[employee_id])
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
+    updated_by_user = relationship("User", foreign_keys=[updated_by_id])
+    deleted_by_user = relationship("User", foreign_keys=[deleted_by_id])

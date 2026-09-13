@@ -44,8 +44,8 @@ export function MonthlyEmployeeFinancePanel({ emp }: { emp: EmployeeDetail }) {
           </span>
         ) : null}
       </div>
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[320px] text-sm">
+      <div className="mt-4 min-w-0 overflow-x-touch md:overflow-visible">
+        <table className="w-full min-w-[280px] text-sm">
           <thead>
             <tr className="border-b border-black/10 text-left text-xs font-semibold text-black/55">
               <th className="py-2 pr-4">Payroll summary</th>

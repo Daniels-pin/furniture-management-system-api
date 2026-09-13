@@ -50,6 +50,12 @@ const NAV_ICON_MAP: Record<string, ReactNode> = {
       <path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </NavSvg>
   ),
+  "field-visits": (
+    <NavSvg>
+      <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 11v4M12 8h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </NavSvg>
+  ),
   inventory: (
     <NavSvg>
       <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />

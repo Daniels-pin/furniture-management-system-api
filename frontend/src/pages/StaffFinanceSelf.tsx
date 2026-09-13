@@ -9,6 +9,7 @@ import { MonthlyEmployeeFinancePanel } from "../components/employee/MonthlyEmplo
 import { formatLagosDateTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
 import { sanitizeMoneyInput } from "../utils/moneyInput";
+import { DataListCard, DataListMetric, ResponsiveDataList, ScrollTable } from "../components/ui/responsive";
 
 export function StaffFinanceSelf() {
   const toast = useToast();
@@ -164,27 +165,42 @@ export function StaffFinanceSelf() {
         {txns.length === 0 ? (
           <p className="mt-2 text-sm text-black/60">No ledger entries for this period yet.</p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-sm">
-              <thead className="text-black/60">
-                <tr className="border-b border-black/10">
-                  <th className="py-2 pr-3 font-semibold">Date</th>
-                  <th className="py-2 pr-3 font-semibold">Type</th>
-                  <th className="py-2 pr-3 font-semibold">Status</th>
-                  <th className="py-2 pr-0 font-semibold">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {txns.map((t) => (
-                  <tr key={t.id} className="border-b border-black/5">
-                    <td className="py-2 pr-3 text-black/80">{formatLagosDateTime(t.created_at)}</td>
-                    <td className="py-2 pr-3 font-semibold">{t.txn_type}</td>
-                    <td className="py-2 pr-3">{t.status}</td>
-                    <td className="py-2 pr-0 tabular-nums font-semibold">{formatMoney(t.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-3">
+            <ResponsiveDataList
+              mobile={txns.map((t) => (
+                <DataListCard
+                  key={t.id}
+                  title={formatLagosDateTime(t.created_at)}
+                  subtitle={t.txn_type}
+                  badge={<span className="text-xs font-semibold capitalize">{t.status}</span>}
+                  metrics={
+                    <DataListMetric label="Amount" value={<span className="tabular-nums">{formatMoney(t.amount)}</span>} />
+                  }
+                />
+              ))}
+              desktop={
+                <ScrollTable minWidth={520}>
+                  <thead className="text-black/60">
+                    <tr className="border-b border-black/10">
+                      <th className="py-2 pr-3 font-semibold">Date</th>
+                      <th className="py-2 pr-3 font-semibold">Type</th>
+                      <th className="py-2 pr-3 font-semibold">Status</th>
+                      <th className="py-2 pr-0 font-semibold">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {txns.map((t) => (
+                      <tr key={t.id} className="border-b border-black/5">
+                        <td className="py-2 pr-3 text-black/80">{formatLagosDateTime(t.created_at)}</td>
+                        <td className="py-2 pr-3 font-semibold">{t.txn_type}</td>
+                        <td className="py-2 pr-3">{t.status}</td>
+                        <td className="py-2 pr-0 tabular-nums font-semibold">{formatMoney(t.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </ScrollTable>
+              }
+            />
           </div>
         )}
       </Card>

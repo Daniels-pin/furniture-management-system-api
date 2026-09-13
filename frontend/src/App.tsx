@@ -114,6 +114,11 @@ const ContractJobDetailPage = lazy(() =>
   import("./pages/ContractJobDetailPage").then((m) => ({ default: m.ContractJobDetailPage }))
 );
 const ExpensesPage = lazy(() => import("./pages/ExpensesPage").then((m) => ({ default: m.ExpensesPage })));
+const FieldVisitsPage = lazy(() => import("./pages/FieldVisitsPage").then((m) => ({ default: m.FieldVisitsPage })));
+const FieldVisitFormPage = lazy(() => import("./pages/FieldVisitFormPage").then((m) => ({ default: m.FieldVisitFormPage })));
+const FieldVisitDetailPage = lazy(() =>
+  import("./pages/FieldVisitDetailPage").then((m) => ({ default: m.FieldVisitDetailPage }))
+);
 const FinanceDashboardPage = lazy(() =>
   import("./pages/FinanceDashboardPage").then((m) => ({ default: m.FinanceDashboardPage }))
 );
@@ -384,6 +389,46 @@ export default function App() {
             <RequireAuth roles={["admin", "showroom", "finance"]}>
               <LazyPage>
                 <CustomersPage />
+              </LazyPage>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="field-visits/new"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <LazyPage>
+                <FieldVisitFormPage />
+              </LazyPage>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="field-visits/:visitId/edit"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <LazyPage>
+                <FieldVisitFormPage />
+              </LazyPage>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="field-visits/:visitId"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <LazyPage>
+                <FieldVisitDetailPage />
+              </LazyPage>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="field-visits"
+          element={
+            <RequireAuth roles={["admin", "showroom"]}>
+              <LazyPage>
+                <FieldVisitsPage />
               </LazyPage>
             </RequireAuth>
           }

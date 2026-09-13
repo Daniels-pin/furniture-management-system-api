@@ -26,6 +26,12 @@ import {
 } from "../utils/attendance";
 import { formatLagosTime } from "../utils/datetime";
 import { formatMoney } from "../utils/money";
+import {
+  DataListCard,
+  DataListMetric,
+  ResponsiveDataList,
+  ScrollTable
+} from "../components/ui/responsive";
 
 const POLL_VISIBLE_MS = 15_000;
 const POLL_HIDDEN_MS = 60_000;
@@ -190,111 +196,201 @@ export function AttendanceRecordsPage() {
           />
         </div>
 
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-left text-sm">
-            <thead className="text-black/60">
-              <tr className="border-b border-black/10">
-                <th className="py-3 pr-4 font-semibold">Employee</th>
-                <th className="py-3 pr-4 font-semibold">Location</th>
-                <th className="py-3 pr-4 font-semibold">Shift</th>
-                <th className="py-3 pr-4 font-semibold">Check In</th>
-                <th className="py-3 pr-4 font-semibold">Check Out</th>
-                <th className="py-3 pr-4 font-semibold">Status</th>
-                <th className="py-3 pr-4 font-semibold text-right">Day Deductions</th>
-                <th className="py-3 pr-4 font-semibold text-right">Month Total</th>
-                <th className="py-3 pr-0 text-right font-semibold">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-8 text-center text-sm font-semibold text-black/55">
-                    {loading ? "Loading employees…" : "No employees match your filters."}
-                  </td>
-                </tr>
+        <div className="mt-5">
+          <ResponsiveDataList
+            mobile={
+              rows.length === 0 ? (
+                <div className="text-center text-sm font-semibold text-black/55">
+                  {loading ? "Loading employees…" : "No employees match your filters."}
+                </div>
               ) : (
                 rows.map((row) => {
                   const waivedLabel = attendanceWaivedBadgeLabel(row);
                   return (
-                    <tr key={row.employee_id} className="border-b border-black/5 hover:bg-black/[0.02]">
-                      <td className="py-3 pr-4 font-semibold">{row.full_name}</td>
-                      <td className="py-3 pr-4 text-black/70">{row.work_location?.name ?? "—"}</td>
-                      <td className="py-3 pr-4 text-black/70">{row.shift_label ?? "—"}</td>
-                      <td className="py-3 pr-4 text-black/70">
-                        {row.check_in_at ? formatLagosTime(row.check_in_at) : "—"}
-                      </td>
-                      <td className="py-3 pr-4 text-black/70">
-                        {row.check_out_at ? formatLagosTime(row.check_out_at) : "—"}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <span
-                          className={[
-                            "rounded-full px-2 py-0.5 text-xs font-semibold",
-                            attendanceMonitorStatusBadgeClass(row.status)
-                          ].join(" ")}
-                        >
-                          {attendanceMonitorStatusLabel(row.status)}
-                        </span>
-                        {waivedLabel ? (
+                    <DataListCard
+                      key={row.employee_id}
+                      title={row.full_name}
+                      subtitle={row.work_location?.name ?? "—"}
+                      badge={
+                        <div className="flex flex-wrap justify-end gap-1">
                           <span
                             className={[
-                              "ml-2 rounded-full px-2 py-0.5 text-xs font-semibold",
-                              attendanceWaivedBadgeClass()
+                              "rounded-full px-2 py-0.5 text-xs font-semibold",
+                              attendanceMonitorStatusBadgeClass(row.status)
                             ].join(" ")}
-                            title={row.waivers?.length ? formatWaiverTooltip(row.waivers) : undefined}
                           >
-                            {waivedLabel}
+                            {attendanceMonitorStatusLabel(row.status)}
                           </span>
-                        ) : null}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums font-semibold text-red-800">
-                        {formatMoney(row.total_attendance_deductions_naira ?? 0)}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-black/70">
-                        <div className="text-xs">
-                          Late {formatMoney(row.period_late_deduction_total_naira ?? 0)}
+                          {waivedLabel ? (
+                            <span
+                              className={[
+                                "rounded-full px-2 py-0.5 text-xs font-semibold",
+                                attendanceWaivedBadgeClass()
+                              ].join(" ")}
+                            >
+                              {waivedLabel}
+                            </span>
+                          ) : null}
                         </div>
-                        <div className="text-xs">
-                          Early {formatMoney(row.period_early_sign_out_deduction_total_naira ?? 0)}
-                        </div>
-                        <div className="text-xs">
-                          Abs {formatMoney(row.period_absence_deduction_total_naira ?? 0)}
-                        </div>
-                        <div className="font-bold text-red-800">
-                          {formatMoney(row.period_total_attendance_deductions_naira ?? 0)}
-                        </div>
-                      </td>
-                      <td className="py-3 pr-0 text-right">
-                        <div className="flex flex-wrap justify-end gap-2">
+                      }
+                      metrics={
+                        <>
+                          <DataListMetric label="Shift" value={row.shift_label ?? "—"} />
+                          <DataListMetric
+                            label="Check In"
+                            value={row.check_in_at ? formatLagosTime(row.check_in_at) : "—"}
+                          />
+                          <DataListMetric
+                            label="Check Out"
+                            value={row.check_out_at ? formatLagosTime(row.check_out_at) : "—"}
+                          />
+                          <DataListMetric
+                            label="Day Deductions"
+                            value={
+                              <span className="text-red-800">
+                                {formatMoney(row.total_attendance_deductions_naira ?? 0)}
+                              </span>
+                            }
+                          />
+                        </>
+                      }
+                      actions={
+                        <>
                           {isAdmin ? (
-                            <button
-                              type="button"
-                              className="text-sm font-semibold text-violet-700 hover:underline disabled:opacity-40"
+                            <Button
+                              variant="secondary"
                               disabled={row.payroll_finalized || row.can_adjust_attendance === false}
-                              title={
-                                row.payroll_finalized
-                                  ? "Payroll finalized — reopen month before adjusting"
-                                  : undefined
-                              }
                               onClick={() => setAdjustRow(row)}
                             >
-                              Adjust Attendance
-                            </button>
+                              Adjust
+                            </Button>
                           ) : null}
-                          <Link
-                            to={`/attendance-records/${row.employee_id}`}
-                            className="text-sm font-semibold text-blue-700 hover:underline"
-                          >
-                            View
+                          <Link to={`/attendance-records/${row.employee_id}`}>
+                            <Button variant="secondary">View</Button>
                           </Link>
+                        </>
+                      }
+                    >
+                      <div className="mt-3 rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-xs text-black/70">
+                        <div>Late {formatMoney(row.period_late_deduction_total_naira ?? 0)}</div>
+                        <div>Early {formatMoney(row.period_early_sign_out_deduction_total_naira ?? 0)}</div>
+                        <div>Abs {formatMoney(row.period_absence_deduction_total_naira ?? 0)}</div>
+                        <div className="mt-1 font-bold text-red-800">
+                          Month total {formatMoney(row.period_total_attendance_deductions_naira ?? 0)}
                         </div>
-                      </td>
-                    </tr>
+                      </div>
+                    </DataListCard>
                   );
                 })
-              )}
-            </tbody>
-          </table>
+              )
+            }
+            desktop={
+              <ScrollTable minWidth={1200}>
+                <thead className="text-black/60">
+                  <tr className="border-b border-black/10">
+                    <th className="py-3 pr-4 font-semibold">Employee</th>
+                    <th className="py-3 pr-4 font-semibold">Location</th>
+                    <th className="py-3 pr-4 font-semibold">Shift</th>
+                    <th className="py-3 pr-4 font-semibold">Check In</th>
+                    <th className="py-3 pr-4 font-semibold">Check Out</th>
+                    <th className="py-3 pr-4 font-semibold">Status</th>
+                    <th className="py-3 pr-4 font-semibold text-right">Day Deductions</th>
+                    <th className="py-3 pr-4 font-semibold text-right">Month Total</th>
+                    <th className="py-3 pr-0 text-right font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-sm font-semibold text-black/55">
+                        {loading ? "Loading employees…" : "No employees match your filters."}
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((row) => {
+                      const waivedLabel = attendanceWaivedBadgeLabel(row);
+                      return (
+                        <tr key={row.employee_id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                          <td className="py-3 pr-4 font-semibold">{row.full_name}</td>
+                          <td className="py-3 pr-4 text-black/70">{row.work_location?.name ?? "—"}</td>
+                          <td className="py-3 pr-4 text-black/70">{row.shift_label ?? "—"}</td>
+                          <td className="py-3 pr-4 text-black/70">
+                            {row.check_in_at ? formatLagosTime(row.check_in_at) : "—"}
+                          </td>
+                          <td className="py-3 pr-4 text-black/70">
+                            {row.check_out_at ? formatLagosTime(row.check_out_at) : "—"}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <span
+                              className={[
+                                "rounded-full px-2 py-0.5 text-xs font-semibold",
+                                attendanceMonitorStatusBadgeClass(row.status)
+                              ].join(" ")}
+                            >
+                              {attendanceMonitorStatusLabel(row.status)}
+                            </span>
+                            {waivedLabel ? (
+                              <span
+                                className={[
+                                  "ml-2 rounded-full px-2 py-0.5 text-xs font-semibold",
+                                  attendanceWaivedBadgeClass()
+                                ].join(" ")}
+                                title={row.waivers?.length ? formatWaiverTooltip(row.waivers) : undefined}
+                              >
+                                {waivedLabel}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums font-semibold text-red-800">
+                            {formatMoney(row.total_attendance_deductions_naira ?? 0)}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums text-black/70">
+                            <div className="text-xs">
+                              Late {formatMoney(row.period_late_deduction_total_naira ?? 0)}
+                            </div>
+                            <div className="text-xs">
+                              Early {formatMoney(row.period_early_sign_out_deduction_total_naira ?? 0)}
+                            </div>
+                            <div className="text-xs">
+                              Abs {formatMoney(row.period_absence_deduction_total_naira ?? 0)}
+                            </div>
+                            <div className="font-bold text-red-800">
+                              {formatMoney(row.period_total_attendance_deductions_naira ?? 0)}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-0 text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {isAdmin ? (
+                                <button
+                                  type="button"
+                                  className="text-sm font-semibold text-violet-700 hover:underline disabled:opacity-40"
+                                  disabled={row.payroll_finalized || row.can_adjust_attendance === false}
+                                  title={
+                                    row.payroll_finalized
+                                      ? "Payroll finalized — reopen month before adjusting"
+                                      : undefined
+                                  }
+                                  onClick={() => setAdjustRow(row)}
+                                >
+                                  Adjust Attendance
+                                </button>
+                              ) : null}
+                              <Link
+                                to={`/attendance-records/${row.employee_id}`}
+                                className="text-sm font-semibold text-blue-700 hover:underline"
+                              >
+                                View
+                              </Link>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </ScrollTable>
+            }
+          />
         </div>
         {rowsTotal > PAGE_SIZE ? (
           <PaginationFooter page={page} pageSize={PAGE_SIZE} total={rowsTotal} onPageChange={setPage} />

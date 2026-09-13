@@ -4,11 +4,14 @@ export function Modal({
   open,
   title,
   children,
+  footer,
   onClose
 }: {
   open: boolean;
   title: string;
   children: React.ReactNode;
+  /** Sticky footer — action buttons stay visible on mobile while body scrolls */
+  footer?: React.ReactNode;
   onClose(): void;
 }) {
   useEffect(() => {
@@ -43,6 +46,11 @@ export function Modal({
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6 sm:pb-6">{children}</div>
+          {footer ? (
+            <div className="shrink-0 border-t border-black/10 px-4 py-3 sm:px-6 sm:py-4">
+              <div className="flex flex-wrap justify-end gap-2">{footer}</div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
