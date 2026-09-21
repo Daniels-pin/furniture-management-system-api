@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -47,6 +47,12 @@ function discountValueText(dType?: unknown, dValue?: unknown) {
   }
   // fixed
   return formatMoney(dValue as any);
+}
+
+function orderImageList(data: { image_urls?: string[] | null; image_url?: string | null } | null | undefined): string[] {
+  const xs = (data?.image_urls ?? []).filter(Boolean);
+  if (xs.length) return xs;
+  return data?.image_url ? [data.image_url] : [];
 }
 
 export function OrderDetailsPage() {
@@ -138,12 +144,7 @@ export function OrderDetailsPage() {
     };
   }, [id, toast]);
 
-  const images = useMemo(() => {
-    const xs = (((data as any)?.image_urls as string[] | null | undefined) ?? []).filter(Boolean);
-    if (xs.length) return xs;
-    const legacy = (data as any)?.image_url;
-    return legacy ? [legacy] : [];
-  }, [data]);
+  const images = useMemo(() => orderImageList(data), [data]);
 
   return (
     <div className="space-y-6">
@@ -692,6 +693,13 @@ export function OrderDetailsPage() {
           initial={data}
           invoicePrepFlow={invoicePrepEditFlow}
           onClose={closeEditModal}
+          onImagesUpdated={(updated) => {
+            setData((prev) =>
+              prev
+                ? { ...prev, image_url: updated.image_url, image_urls: updated.image_urls }
+                : updated
+            );
+          }}
           onSaved={async (updated, fromInvoicePrep) => {
             setEditOpen(false);
             setInvoicePrepEditFlow(false);
@@ -790,6 +798,7 @@ function EditOrderModal({
   initial,
   invoicePrepFlow,
   onClose,
+  onImagesUpdated,
   onSaved
 }: {
   open: boolean;
@@ -797,6 +806,7 @@ function EditOrderModal({
   initial: Details;
   invoicePrepFlow: boolean;
   onClose(): void;
+  onImagesUpdated?(updated: Details): void;
   onSaved(updated: Details, fromInvoicePrep: boolean): Promise<void>;
 }) {
   const toast = useToast();
@@ -850,6 +860,10 @@ function EditOrderModal({
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<Record<string, string>>({});
+  const [imageUrls, setImageUrls] = useState<string[]>(() => orderImageList(initial));
+  const [imageBusy, setImageBusy] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const hydrateKey = open ? orderId : 0;
 
   useEffect(() => {
     if (!open) return;
@@ -870,8 +884,11 @@ function EditOrderModal({
         amount: it.amount != null && it.amount !== "" ? String(it.amount) : ""
       }))
     );
+    setImageUrls(orderImageList(initial));
     setErr({});
-  }, [open, initial]);
+    // Hydrate only when the modal opens for an order, not when parent image fields refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrateKey]);
 
   function validate() {
     const e: Record<string, string> = {};
@@ -924,6 +941,44 @@ function EditOrderModal({
 
     setErr(e);
     return { ok: Object.keys(e).length === 0, payload, errors: e };
+  }
+
+  function applyImageUpdate(updated: Details) {
+    const next = orderImageList(updated);
+    setImageUrls(next);
+    onImagesUpdated?.(updated);
+  }
+
+  async function uploadSelectedImages(fileList: FileList | null) {
+    const files = Array.from(fileList ?? []);
+    if (!files.length) return;
+    setImageBusy(true);
+    try {
+      const form = new FormData();
+      for (const f of files) form.append("images", f);
+      form.append("replace", "true");
+      const updated = await ordersApi.updateImages(orderId, form);
+      applyImageUpdate(updated);
+      toast.push("success", imageUrls.length ? "Image replaced" : "Image uploaded");
+    } catch (er) {
+      toast.push("error", getErrorMessage(er));
+    } finally {
+      setImageBusy(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  }
+
+  async function removeOrderImage() {
+    setImageBusy(true);
+    try {
+      const updated = await ordersApi.removeImages(orderId);
+      applyImageUpdate(updated);
+      toast.push("success", "Image removed");
+    } catch (er) {
+      toast.push("error", getErrorMessage(er));
+    } finally {
+      setImageBusy(false);
+    }
   }
 
   async function submit(ev: React.FormEvent) {
@@ -1120,6 +1175,69 @@ function EditOrderModal({
             placeholder={discountType === "percentage" ? "e.g. 10" : "e.g. 500.00"}
             error={err.discountValue}
           />
+        </div>
+
+        <div>
+          <div className="text-sm font-semibold">Order Image</div>
+          <input
+            ref={imageInputRef}
+            className="hidden"
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => void uploadSelectedImages(e.target.files)}
+          />
+          {imageUrls.length ? (
+            <div className="mt-2 space-y-3">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                {imageUrls.map((src, idx) => (
+                  <div
+                    key={`${src}-${idx}`}
+                    className="overflow-hidden rounded-2xl border border-black/10 bg-black/[0.02]"
+                  >
+                    <img
+                      src={cloudinaryThumbnail(src, { w: 400, h: 300 })}
+                      alt={`Order image ${idx + 1}`}
+                      className="aspect-[4/3] w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  isLoading={imageBusy}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  Replace Image
+                </Button>
+                <Button type="button" variant="ghost" disabled={imageBusy} onClick={() => void removeOrderImage()}>
+                  Remove Image
+                </Button>
+              </div>
+              <div className="text-xs text-black/50">
+                Optional. You can select multiple images; uploads via backend to Cloudinary.
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 space-y-3">
+              <div className="flex aspect-[4/3] max-w-xs items-center justify-center rounded-2xl border border-black/10 bg-black/[0.02] text-sm text-black/50">
+                No image uploaded.
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                isLoading={imageBusy}
+                onClick={() => imageInputRef.current?.click()}
+              >
+                Upload Image
+              </Button>
+              <div className="text-xs text-black/50">
+                Optional. You can select multiple images; uploads via backend to Cloudinary.
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-2">

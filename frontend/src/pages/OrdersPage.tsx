@@ -243,7 +243,7 @@ export function OrdersPage() {
     toast.push("success", "Draft discarded");
   }
 
-  const canCreate = auth.role === "showroom" || auth.isAdmin;
+  const canCreate = auth.role === "showroom" || auth.role === "finance" || auth.isAdmin;
   function canDeleteOrder(o: Order): boolean {
     if (auth.isAdmin) return true;
     if (auth.role === "showroom" && typeof auth.userId === "number" && o.created_by_id === auth.userId) {
@@ -252,7 +252,7 @@ export function OrdersPage() {
     return false;
   }
   const canSeePricing = auth.isAdmin || auth.role === "showroom" || auth.role === "finance";
-  const canInputPricingOnCreate = auth.role === "showroom" || auth.isAdmin;
+  const canInputPricingOnCreate = auth.role === "showroom" || auth.role === "finance" || auth.isAdmin;
   const canUpdateStatus = auth.isAdmin || auth.role === "factory";
 
   const statusParam = view === "completed" ? "completed" : "open";
@@ -289,6 +289,19 @@ export function OrdersPage() {
   async function openCreate() {
     setCreateOpen(true);
   }
+
+  const autoCreateHandled = useRef(false);
+  useEffect(() => {
+    if (autoCreateHandled.current) return;
+    if (!canCreate) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("new") !== "1") return;
+    autoCreateHandled.current = true;
+    params.delete("new");
+    const search = params.toString();
+    nav({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true, state: location.state });
+    setCreateOpen(true);
+  }, [canCreate, location.pathname, location.search, location.state, nav]);
 
   // Prompt on module entry if a draft exists.
   useEffect(() => {

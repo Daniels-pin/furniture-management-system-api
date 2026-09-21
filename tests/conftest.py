@@ -64,6 +64,14 @@ def _seed_users() -> None:
                 role="factory",
             )
         )
+        db.add(
+            models.User(
+                name="finance",
+                email="finance@company.com",
+                password=hash_password("finance123"),
+                role="finance",
+            )
+        )
         db.commit()
     finally:
         db.close()
@@ -130,6 +138,16 @@ def factory_token(client):
     r = client.post(
         "/auth/login",
         json={"email": "factory@company.com", "password": "factory123"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture
+def finance_token(client):
+    r = client.post(
+        "/auth/login",
+        json={"email": "finance@company.com", "password": "finance123"},
     )
     assert r.status_code == 200, r.text
     return r.json()["access_token"]

@@ -298,6 +298,60 @@ export const ordersApi = {
     }>(`/orders/${orderId}`, payload);
     return data;
   },
+  async updateImages(orderId: number, form: FormData) {
+    const { data } = await api.post<{
+      order_id: number;
+      customer: Customer | null;
+      items: Order["items"];
+      status: Order["status"];
+      due_date?: string | null;
+      image_url?: string | null;
+      image_urls?: string[] | null;
+      total_price?: string | number | null;
+      discount_type?: "fixed" | "percentage" | null;
+      discount_value?: string | number | null;
+      discount_amount?: string | number | null;
+      final_price?: string | number | null;
+      tax_percent?: string | number | null;
+      tax?: string | number | null;
+      total?: string | number | null;
+      amount_paid?: string | number | null;
+      balance?: string | number | null;
+      payment_status?: string | null;
+      created_by?: string | null;
+      updated_by?: string | null;
+      invoice_id?: number | null;
+    }>(`/orders/${orderId}/images`, form, {
+      headers: { "Content-Type": "multipart/form-data" }
+    });
+    return data;
+  },
+  async removeImages(orderId: number) {
+    const { data } = await api.delete<{
+      order_id: number;
+      customer: Customer | null;
+      items: Order["items"];
+      status: Order["status"];
+      due_date?: string | null;
+      image_url?: string | null;
+      image_urls?: string[] | null;
+      total_price?: string | number | null;
+      discount_type?: "fixed" | "percentage" | null;
+      discount_value?: string | number | null;
+      discount_amount?: string | number | null;
+      final_price?: string | number | null;
+      tax_percent?: string | number | null;
+      tax?: string | number | null;
+      total?: string | number | null;
+      amount_paid?: string | number | null;
+      balance?: string | number | null;
+      payment_status?: string | null;
+      created_by?: string | null;
+      updated_by?: string | null;
+      invoice_id?: number | null;
+    }>(`/orders/${orderId}/images`);
+    return data;
+  },
   async updatePricing(orderId: number, payload: { total_price?: number | null; amount_paid?: number | null; tax?: number | null }) {
     const { data } = await api.patch<{
       id: number;

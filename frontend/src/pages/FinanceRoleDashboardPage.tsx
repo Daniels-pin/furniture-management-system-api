@@ -86,6 +86,24 @@ export function FinanceRoleDashboardPage() {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-black">Sales documents</div>
+            <div className="mt-0.5 text-xs text-black/60">Create orders, quotations, and proforma invoices</div>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button onClick={() => navigate("/orders?new=1")}>New Order</Button>
+          <Button variant="secondary" onClick={() => navigate("/quotations/new")}>
+            New Quotation
+          </Button>
+          <Button variant="secondary" onClick={() => navigate("/proforma/new")}>
+            New Proforma Invoice
+          </Button>
+        </div>
+      </Card>
+
       <MonthlyEmployeeAttendanceCard
         empLoading={attendance.empLoading}
         emp={attendance.emp}

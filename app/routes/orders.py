@@ -32,7 +32,7 @@ from app.schemas import (
 from fastapi import Query
 from typing import List, Optional
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html
-from app.utils.cloudinary import upload_image, upload_images
+from app.utils.cloudinary import destroy_image_urls, upload_image, upload_images
 from app.utils.emailer import EmailConfigError, send_email_html_with_pdf_attachment
 from app.utils.pdf_job import document_pdf_bytes_via_ui
 from app.utils.pricing import compute_discount, compute_pricing, compute_totals
@@ -125,6 +125,37 @@ def _customer_public_payload(customer: models.Customer) -> dict:
         "birth_day": customer.birth_day,
         "birth_month": customer.birth_month,
     }
+
+
+def _collect_order_image_urls(order: models.Order) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for u in order.image_urls or []:
+        if isinstance(u, str) and u and u not in seen:
+            urls.append(u)
+            seen.add(u)
+    legacy = getattr(order, "image_url", None)
+    if isinstance(legacy, str) and legacy and legacy not in seen:
+        urls.append(legacy)
+    return urls
+
+
+def _apply_order_images(order: models.Order, urls: list[str]) -> None:
+    clean = [u for u in urls if u]
+    order.image_urls = clean or None
+    order.image_url = clean[0] if clean else None
+
+
+def _incoming_image_files(
+    image: UploadFile | None,
+    images: list[UploadFile] | None,
+) -> list[UploadFile]:
+    files: list[UploadFile] = []
+    if images:
+        files.extend([f for f in images if f is not None and getattr(f, "filename", None)])
+    if image is not None and getattr(image, "filename", None):
+        files.append(image)
+    return files
 
 
 def _apply_birthday_to_customer(
@@ -453,7 +484,7 @@ def create_order(
     discount_value: Decimal | None = Form(None),
     tax: Decimal | None = Form(None),
     db: Session = Depends(get_db),
-    user=Depends(require_role(["showroom", "admin"])),
+    user=Depends(require_role(["showroom", "admin", "finance"])),
 ):
     # 1) Parse items
     items_payload: list[OrderItemCreate] = []
@@ -604,7 +635,7 @@ def create_order(
 def create_order_json(
     order: OrderCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["showroom", "admin"])),
+    user=Depends(require_role(["showroom", "admin", "finance"])),
 ):
     if not order.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
@@ -1118,6 +1149,78 @@ def put_order_admin(
         if inv_row:
             base["invoice_id"] = inv_row[0]
     return base
+
+
+@router.post("/orders/{order_id}/images", response_model=OrderDetailsResponse, response_model_exclude_none=True)
+def upload_order_images(
+    order_id: int,
+    image: UploadFile | None = File(None),
+    images: list[UploadFile] | None = File(None),
+    replace: bool = Form(True),
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    files = _incoming_image_files(image, images)
+    if not files:
+        raise HTTPException(status_code=422, detail="Image file required")
+
+    previous = _collect_order_image_urls(order)
+    new_urls = upload_images(files)
+
+    if replace:
+        _apply_order_images(order, new_urls)
+        obsolete = [u for u in previous if u not in new_urls]
+    else:
+        combined = previous + [u for u in new_urls if u not in previous]
+        _apply_order_images(order, combined)
+        obsolete = []
+
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
+    log_activity(
+        db,
+        action=ORDER_UPDATED,
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+        meta={"images": "replaced" if replace else "uploaded"},
+    )
+    db.commit()
+    if obsolete:
+        destroy_image_urls(obsolete)
+    return get_order(order_id, db, user)
+
+
+@router.delete("/orders/{order_id}/images", response_model=OrderDetailsResponse, response_model_exclude_none=True)
+def remove_order_images(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_role(["admin", "showroom"])),
+):
+    order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    previous = _collect_order_image_urls(order)
+    _apply_order_images(order, [])
+    order.updated_by = user.id
+    order.updated_at = datetime.utcnow()
+    log_activity(
+        db,
+        action=ORDER_UPDATED,
+        entity_type="order",
+        entity_id=order.id,
+        actor_user=user,
+        meta={"images": "removed"},
+    )
+    db.commit()
+    if previous:
+        destroy_image_urls(previous)
+    return get_order(order_id, db, user)
 
 
 @router.patch("/orders/{order_id}")

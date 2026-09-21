@@ -143,7 +143,7 @@ export function QuotationListPage() {
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
         <div>
           <div className="text-2xl font-bold tracking-tight">Quotation</div>
-          <div className="mt-1 text-sm text-black/60">Early-stage pricing before proforma or invoice. Drafts: admin and showroom only.</div>
+          <div className="mt-1 text-sm text-black/60">Early-stage pricing before proforma or invoice.</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (

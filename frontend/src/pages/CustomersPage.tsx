@@ -30,7 +30,7 @@ export function CustomersPage() {
   const canSeePrivate = auth.role !== "factory";
   const canDelete = auth.isAdmin;
   const canExport = auth.isAdmin;
-  const canCreate = auth.isAdmin || auth.role === "showroom";
+  const canCreate = auth.isAdmin || auth.role === "showroom" || auth.role === "finance";
   const canEdit = auth.isAdmin || auth.role === "showroom";
 
   const [editOpen, setEditOpen] = useState(false);

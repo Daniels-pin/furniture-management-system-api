@@ -118,7 +118,7 @@ export function ProformaListPage() {
       <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
         <div>
           <div className="text-2xl font-bold tracking-tight">Proforma Invoice</div>
-          <div className="mt-1 text-sm text-black/60">Quotations and pre-payment billing. Drafts are visible to admin and showroom only.</div>
+          <div className="mt-1 text-sm text-black/60">Quotations and pre-payment billing.</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {auth.isAdmin || auth.role === "showroom" || auth.role === "finance" ? (

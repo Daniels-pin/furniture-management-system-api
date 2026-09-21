@@ -14,9 +14,16 @@ const ALL_ACTIONS: QuickAction[] = [
   {
     key: "order",
     label: "New order",
+    to: "/orders?new=1",
+    icon: <IconPlus size={16} />,
+    roles: ["admin", "showroom", "finance"]
+  },
+  {
+    key: "order-factory",
+    label: "New order",
     to: "/orders",
     icon: <IconPlus size={16} />,
-    roles: ["admin", "showroom", "factory", "finance"]
+    roles: ["factory"]
   },
   {
     key: "customer",
@@ -27,9 +34,16 @@ const ALL_ACTIONS: QuickAction[] = [
   },
   {
     key: "quotation",
-    label: "Quotation",
+    label: "New quotation",
     to: "/quotations/new",
     icon: <IconFileText size={16} />,
+    roles: ["admin", "showroom", "finance"]
+  },
+  {
+    key: "proforma",
+    label: "New proforma invoice",
+    to: "/proforma/new",
+    icon: <IconReceipt size={16} />,
     roles: ["admin", "showroom", "finance"]
   },
   {

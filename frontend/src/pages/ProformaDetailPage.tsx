@@ -58,12 +58,13 @@ export function ProformaDetailPage() {
     };
   }, [id, toast]);
 
-  const isReadOnly = auth.role === "finance";
-  const canEdit = !isReadOnly && data && data.status !== "converted";
-  const canFinalize = !isReadOnly && data?.status === "draft";
-  const canConvert = !isReadOnly && data && data.status !== "converted" && !data.converted_order_id;
-  const canPresalesDelete = !isReadOnly && (auth.isAdmin || auth.role === "showroom") && data;
-  const canDocActions = !isReadOnly && Boolean(data);
+  const isFinance = auth.role === "finance";
+  const canMutateDocument = auth.isAdmin || auth.role === "showroom" || isFinance;
+  const canEdit = canMutateDocument && data && data.status !== "converted";
+  const canFinalize = canMutateDocument && data?.status === "draft";
+  const canConvert = (auth.isAdmin || auth.role === "showroom") && data && data.status !== "converted" && !data.converted_order_id;
+  const canPresalesDelete = (auth.isAdmin || auth.role === "showroom") && Boolean(data);
+  const canDocActions = (auth.isAdmin || auth.role === "showroom") && Boolean(data);
 
   return (
     <div className="space-y-6">

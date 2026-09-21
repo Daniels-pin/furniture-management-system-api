@@ -124,7 +124,7 @@ def export_customer_contacts(
 def create_customer(
     customer: CustomerCreate,
     db: Session = Depends(get_db),
-    user=Depends(require_role(["admin", "showroom"])),
+    user=Depends(require_role(["admin", "showroom", "finance"])),
 ):
     new_customer = models.Customer(
         name=customer.name,
