@@ -20,6 +20,7 @@ from app import models
 from app.auth.auth import get_current_user, has_admin_privileges, normalize_role, require_role
 from app.auth.pdf_access import require_payroll_period_reader
 from app.database import get_db
+from app.utils.route_db import release_request_db
 from app.utils.cloudinary import upload_asset
 from app.utils.financial_audit import log_financial_action
 from app.utils.pdf_job import document_pdf_bytes_via_ui
@@ -3014,15 +3015,17 @@ def export_payroll_pdf(
     period_month: Optional[int] = Query(None, ge=1, le=12),
 ):
     period = resolve_period(db, period_year, period_month)
+    period_id = period.id
+    safe_label = period.label.replace(" ", "_")
+    release_request_db(db)
     try:
-        pdf_bytes = document_pdf_bytes_via_ui("payroll", "payroll", period.id)
+        pdf_bytes = document_pdf_bytes_via_ui("payroll", "payroll", period_id)
     except RuntimeError as e:
         logger.exception("Payroll PDF export failed")
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
         logger.exception("Payroll PDF export failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
-    safe_label = period.label.replace(" ", "_")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

@@ -534,7 +534,7 @@ def test_deleted_proforma_resets_quotation_conversion_state(client, admin_token)
     dele = client.delete(f"/proforma/{pid}", headers=headers)
     assert dele.status_code == 200, dele.text
 
-    # Quotation should no longer be "converted" and should be convertible again.
+    # Deleting the proforma is the action that clears the conversion. Viewing must not be required.
     q2 = client.get(f"/quotations/{qid}", headers=headers)
     assert q2.status_code == 200, q2.text
     body = q2.json()

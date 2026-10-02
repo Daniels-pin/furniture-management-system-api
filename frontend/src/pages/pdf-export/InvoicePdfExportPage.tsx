@@ -30,6 +30,7 @@ export function InvoicePdfExportPage() {
     <div
       className="min-h-screen bg-[#f5f5f5] p-6"
       {...(ready ? { "data-pdf-ready": "true" as const } : {})}
+      {...(err ? { "data-pdf-error": "true" as const } : {})}
     >
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
       {!err && !data ? <p className="text-sm text-black/60">Loading…</p> : null}

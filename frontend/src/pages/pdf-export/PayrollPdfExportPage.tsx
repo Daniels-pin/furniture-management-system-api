@@ -30,6 +30,7 @@ export function PayrollPdfExportPage() {
     <div
       className="min-h-screen bg-[#f5f5f5]"
       {...(ready ? { "data-pdf-ready": "true" as const } : {})}
+      {...(err ? { "data-pdf-error": "true" as const } : {})}
     >
       {err ? <p className="p-6 text-sm text-red-600">{err}</p> : null}
       {!err && !data ? <p className="p-6 text-sm text-black/60">Loading payroll export…</p> : null}

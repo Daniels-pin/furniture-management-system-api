@@ -20,7 +20,7 @@ from app.auth.pdf_access import require_proforma_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
 from app.database import get_db
 from app.utils.company_settings import get_rc_number
-from app.utils.route_db import route_db_session
+from app.utils.route_db import actor_snapshot, release_request_db, route_db_session
 from app.db.alive import customer_alive, proforma_alive
 from app.schemas import ConvertPresalesToInvoiceRequest, ProformaCreate, ProformaDetailResponse, ProformaItemIn, ProformaUpdate
 from app.utils.activity_log import (
@@ -512,8 +512,10 @@ def finalize_proforma(
 @router.post("/proforma/{proforma_id}/send-email")
 def send_proforma_email(
     proforma_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         p = (
             db.query(models.ProformaInvoice)
@@ -534,6 +536,7 @@ def send_proforma_email(
         html = _render_proforma_email_html(p, rc_number)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.proforma_number or "proforma")
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", pid)
     except RuntimeError as e:
@@ -572,7 +575,7 @@ def send_proforma_email(
             action=PROFORMA_SENT,
             entity_type="proforma",
             entity_id=pid,
-            actor_user=user,
+            actor_user=actor,
             meta={"to": to_email},
         )
     return {"message": "Proforma sent"}
@@ -607,8 +610,10 @@ def record_proforma_print(
 @router.post("/proforma/{proforma_id}/download")
 def download_proforma_pdf(
     proforma_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         p = (
             db.query(models.ProformaInvoice)
@@ -622,6 +627,7 @@ def download_proforma_pdf(
         pid = p.id
         proforma_number = p.proforma_number
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("proforma", "proforma", pid)
     except RuntimeError as e:
@@ -637,7 +643,7 @@ def download_proforma_pdf(
             action=PROFORMA_DOWNLOADED,
             entity_type="proforma",
             entity_id=pid,
-            actor_user=user,
+            actor_user=actor,
             meta={"proforma_number": proforma_number},
         )
 

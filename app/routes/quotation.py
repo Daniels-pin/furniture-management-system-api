@@ -20,7 +20,7 @@ from app.auth.pdf_access import require_quotation_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
 from app.database import get_db
 from app.utils.company_settings import get_rc_number
-from app.utils.route_db import route_db_session
+from app.utils.route_db import actor_snapshot, release_request_db, route_db_session
 from app.db.alive import customer_alive, invoice_alive, order_alive, proforma_alive, quotation_alive
 from app.schemas import (
     ConvertPresalesToInvoiceRequest,
@@ -77,29 +77,30 @@ def _user_label(db: Session, user_id: int | None, cache: dict[int, str | None] |
     return user_label(db, user_id, cache)
 
 
-def _reset_quotation_conversion_if_link_missing(db: Session, q: models.Quotation, *, actor_user_id: int | None) -> bool:
+def _stale_conversion_fields(db: Session, q: models.Quotation) -> dict | None:
     """
-    Quotations store conversion pointers; if the linked proforma/order/invoice is deleted,
-    clear the pointer(s) and revert status so the user can convert again.
+    If a converted quotation points at a trashed proforma, order, or invoice, describe
+    the cleared pointers. This does not write.
     """
+    proforma_id = getattr(q, "converted_proforma_id", None)
+    order_id = getattr(q, "converted_order_id", None)
     changed = False
-    now = datetime.utcnow()
 
-    if getattr(q, "converted_proforma_id", None) is not None:
+    if proforma_id is not None:
         pf = (
             db.query(models.ProformaInvoice)
-            .filter(models.ProformaInvoice.id == q.converted_proforma_id)
+            .filter(models.ProformaInvoice.id == proforma_id)
             .filter(proforma_alive())
             .first()
         )
         if pf is None:
-            q.converted_proforma_id = None
+            proforma_id = None
             changed = True
 
-    if getattr(q, "converted_order_id", None) is not None:
+    if order_id is not None:
         order = (
             db.query(models.Order)
-            .filter(models.Order.id == q.converted_order_id)
+            .filter(models.Order.id == order_id)
             .filter(order_alive())
             .first()
         )
@@ -113,27 +114,45 @@ def _reset_quotation_conversion_if_link_missing(db: Session, q: models.Quotation
                 is not None
             )
         if order is None or not inv_ok:
-            q.converted_order_id = None
+            order_id = None
             changed = True
 
-    if changed:
-        if q.status == "converted":
-            # Only finalized quotations are allowed to convert; revert to finalized.
-            q.status = "finalized"
-        q.updated_at = now
-        if actor_user_id is not None:
-            q.updated_by = actor_user_id
-        db.commit()
-        db.refresh(q)
-    return changed
+    if not changed:
+        return None
+    status = "finalized" if q.status == "converted" else q.status
+    return {
+        "converted_proforma_id": proforma_id,
+        "converted_order_id": order_id,
+        "status": status,
+    }
+
+
+def _reset_quotation_conversion_if_link_missing(db: Session, q: models.Quotation, *, actor_user_id: int | None) -> bool:
+    """
+    Persist cleared conversion pointers. Call this only from an explicit convert action,
+    never from a read or PDF export.
+    """
+    fields = _stale_conversion_fields(db, q)
+    if fields is None:
+        return False
+    q.converted_proforma_id = fields["converted_proforma_id"]
+    q.converted_order_id = fields["converted_order_id"]
+    q.status = fields["status"]
+    q.updated_at = datetime.utcnow()
+    if isinstance(actor_user_id, int) and actor_user_id > 0:
+        q.updated_by = actor_user_id
+    db.commit()
+    db.refresh(q)
+    return True
 
 
 def _quotation_to_detail(db: Session, p: models.Quotation) -> dict:
     items = sorted(p.items or [], key=lambda x: x.id)
+    stale = _stale_conversion_fields(db, p) or {}
     return {
         "id": p.id,
         "quote_number": p.quote_number,
-        "status": p.status,
+        "status": stale.get("status", p.status),
         "customer_name": p.customer_name,
         "phone": p.phone,
         "address": p.address,
@@ -162,8 +181,8 @@ def _quotation_to_detail(db: Session, p: models.Quotation) -> dict:
         "updated_at": p.updated_at,
         "created_by": _user_label(db, p.created_by),
         "updated_by": _user_label(db, p.updated_by),
-        "converted_order_id": p.converted_order_id,
-        "converted_proforma_id": p.converted_proforma_id,
+        "converted_order_id": stale.get("converted_order_id", p.converted_order_id),
+        "converted_proforma_id": stale.get("converted_proforma_id", p.converted_proforma_id),
         "company_rc_number": get_rc_number(db),
     }
 
@@ -469,7 +488,7 @@ def create_quotation(
 def get_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    user=Depends(require_quotation_reader),
+    _reader=Depends(require_quotation_reader),
 ):
     p = (
         db.query(models.Quotation)
@@ -480,7 +499,6 @@ def get_quotation(
     )
     if not p:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    _reset_quotation_conversion_if_link_missing(db, p, actor_user_id=getattr(user, "id", None))
     return _quotation_to_detail(db, p)
 
 
@@ -608,11 +626,13 @@ def finalize_quotation(
 @router.post("/quotations/{quotation_id}/send-email")
 def send_quotation_email(
     quotation_id: int,
+    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    with route_db_session() as db:
+    actor = actor_snapshot(user)
+    with route_db_session() as read_db:
         p = (
-            db.query(models.Quotation)
+            read_db.query(models.Quotation)
             .options(joinedload(models.Quotation.items))
             .filter(models.Quotation.id == quotation_id)
             .filter(quotation_alive())
@@ -626,10 +646,11 @@ def send_quotation_email(
         qid = p.id
         to_email = p.email.strip()
         subject = f"{APP_NAME} - Quotation {p.quote_number}"
-        rc_number = get_rc_number(db)
+        rc_number = get_rc_number(read_db)
         html = _render_quotation_email_html(p, rc_number)
         safe_n = re.sub(r"[^\w.\-]+", "_", p.quote_number or "quotation")
 
+    release_request_db(db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", qid)
     except RuntimeError as e:
@@ -662,13 +683,13 @@ def send_quotation_email(
         logger.exception("Failed to send proforma email")
         raise HTTPException(status_code=502, detail="Failed to send email") from e
 
-    with route_db_session(commit=True) as db:
+    with route_db_session(commit=True) as write_db:
         log_activity(
-            db,
+            write_db,
             action=QUOTATION_SENT,
             entity_type="quotation",
             entity_id=qid,
-            actor_user=user,
+            actor_user=actor,
             meta={"to": to_email},
         )
     return {"message": "Quotation sent"}
@@ -703,11 +724,13 @@ def record_quotation_print(
 @router.post("/quotations/{quotation_id}/download")
 def download_quotation_pdf(
     quotation_id: int,
+    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    with route_db_session() as db:
+    actor = actor_snapshot(user)
+    with route_db_session() as read_db:
         p = (
-            db.query(models.Quotation)
+            read_db.query(models.Quotation)
             .options(joinedload(models.Quotation.items))
             .filter(models.Quotation.id == quotation_id)
             .filter(quotation_alive())
@@ -718,6 +741,7 @@ def download_quotation_pdf(
         qid = p.id
         quote_number = p.quote_number
 
+    release_request_db(db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("quotation", "quotation", qid)
     except RuntimeError as e:
@@ -727,13 +751,13 @@ def download_quotation_pdf(
         logger.exception("Quotation PDF download failed")
         raise HTTPException(status_code=500, detail="Could not generate PDF") from e
 
-    with route_db_session(commit=True) as db:
+    with route_db_session(commit=True) as write_db:
         log_activity(
-            db,
+            write_db,
             action=QUOTATION_DOWNLOADED,
             entity_type="quotation",
             entity_id=qid,
-            actor_user=user,
+            actor_user=actor,
             meta={"quote_number": quote_number},
         )
 

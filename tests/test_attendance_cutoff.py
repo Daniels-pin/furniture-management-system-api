@@ -73,7 +73,12 @@ def _assign_location(client, admin_token: str, employee_id: int, location_id: in
 
 def _backdate_employee_hire(db, emp_id: int, *, year: int = 2026, month: int = 4) -> None:
     emp = db.query(models.Employee).filter_by(id=emp_id).one()
-    emp.created_at = datetime(year, month, 1, 8, 0, 0)
+    hired = datetime(year, month, 1, 8, 0, 0)
+    emp.created_at = hired
+    # Assignment is stamped with the real clock. Backdate it with the hire so a
+    # historical cutoff date is not treated as "before this employee was assigned".
+    if emp.work_location_assigned_at is not None:
+        emp.work_location_assigned_at = hired
     db.flush()
     from app.routes.employees import ensure_payroll_periods_current
 
@@ -114,7 +119,11 @@ def test_cutoff_processor_creates_absence_and_updates_payroll(client, admin_toke
 
     # Employee salary breakdown should reflect absence deduction immediately.
     with patch("app.routes.employees.now_lagos", return_value=fake_now):
-        detail = client.get(f"/employees/{emp_id}", headers=_auth(admin_token)).json()
+        detail = client.get(
+            f"/employees/{emp_id}",
+            params={"period_year": 2026, "period_month": 5},
+            headers=_auth(admin_token),
+        ).json()
     salary = detail["salary"]
     assert Decimal(str(salary["base_salary"])) == Decimal("100000")
     assert Decimal(str(salary["absence_deduction"])) == Decimal("1000")

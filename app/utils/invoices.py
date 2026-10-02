@@ -3,27 +3,22 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
 
 
 def next_invoice_number(db: Session) -> str:
-    """Next INV-### suffix based on existing numbers so deleted rows do not cause duplicates."""
-    max_seq = 0
-    for (raw,) in db.query(models.Invoice.invoice_number).all():
-        s = (raw or "").strip().upper()
-        if not s.startswith("INV-"):
-            continue
-        tail = s[4:].strip()
-        if not tail:
-            continue
-        try:
-            max_seq = max(max_seq, int(tail, 10))
-        except ValueError:
-            continue
-    return f"INV-{max_seq + 1:03d}"
+    """Next INV-###. The counter never rewinds when an invoice is deleted or purged."""
+    from app.utils.presales_order import _next_sequential_number
+
+    return _next_sequential_number(
+        db,
+        name="invoice",
+        prefix="INV",
+        column=models.Invoice.invoice_number,
+        width=3,
+    )
 
 
 def create_invoice_for_order(db: Session, order: models.Order, customer_id: int) -> models.Invoice:

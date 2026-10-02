@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -18,12 +19,19 @@ def invalidate_company_settings_cache() -> None:
 
 
 def get_company_settings_row(db: Session) -> models.CompanySettings:
+    """Return the singleton row. Does not commit, so a read cannot persist other pending changes."""
     row = db.query(models.CompanySettings).filter(models.CompanySettings.id == SINGLETON_ID).first()
-    if row is None:
-        row = models.CompanySettings(id=SINGLETON_ID, rc_number=None, updated_at=datetime.utcnow())
-        db.add(row)
-        db.commit()
-        db.refresh(row)
+    if row is not None:
+        return row
+    try:
+        with db.begin_nested():
+            row = models.CompanySettings(id=SINGLETON_ID, rc_number=None, updated_at=datetime.utcnow())
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        row = db.query(models.CompanySettings).filter(models.CompanySettings.id == SINGLETON_ID).first()
+        if row is None:
+            raise
     return row
 
 

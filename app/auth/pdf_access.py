@@ -18,8 +18,11 @@ bearer_optional = HTTPBearer(auto_error=False)
 
 
 def _pdf_actor():
-    """Synthetic user so existing handlers treat PDF export like showroom (full customer data)."""
-    return SimpleNamespace(id=0, role="showroom", email="pdf-render@local", name="PDF Render")
+    """Synthetic user so existing handlers treat PDF export like showroom (full customer data).
+
+    ``id`` is None so a mistaken write cannot store user id 0, which is not a real users row.
+    """
+    return SimpleNamespace(id=None, role="showroom", email="pdf-render@local", name="PDF Render")
 
 
 def _user_from_login_token(token: str, db: Session) -> models.User:

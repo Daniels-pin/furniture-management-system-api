@@ -3,11 +3,14 @@ Create (or update) an admin user in the configured DATABASE_URL.
 
 Usage (PowerShell):
   $env:DATABASE_URL="postgresql+psycopg2://..."
+  $env:ADMIN_EMAIL="admin@example.com"
+  $env:ADMIN_PASSWORD="a-long-random-password"
   python .\\scripts\\create_admin_user.py
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -22,12 +25,17 @@ from app.auth.utils import hash_password  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 
 
-EMAIL = "uche@nolimits.com"
-PASSWORD = "123456"
+EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
+PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ROLE = "admin"
 
 
 def main() -> None:
+    if not EMAIL:
+        raise SystemExit("ADMIN_EMAIL is required")
+    if len(PASSWORD) < 8:
+        raise SystemExit("ADMIN_PASSWORD must be at least 8 characters")
+
     db = SessionLocal()
     try:
         user = db.query(models.User).filter(models.User.email == EMAIL).first()

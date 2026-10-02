@@ -459,6 +459,15 @@ class CompanyLocation(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DocumentNumberSequence(Base):
+    """Monotonic counters for document numbers. Deletes never rewind these."""
+
+    __tablename__ = "document_number_sequences"
+
+    name = Column(String(32), primary_key=True)
+    last_value = Column(Integer, nullable=False)
+
+
 class CompanySettings(Base):
     """Singleton row (id=1) for company-wide settings such as RC number."""
 

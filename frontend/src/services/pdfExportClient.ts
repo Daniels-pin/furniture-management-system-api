@@ -5,7 +5,7 @@ import { env } from "../env";
 export function createPdfExportClient(token: string) {
   return axios.create({
     baseURL: env.apiBaseUrl,
-    timeout: 120_000,
+    timeout: 20_000,
     headers: { Authorization: `Bearer ${token}` }
   });
 }

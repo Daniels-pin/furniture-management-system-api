@@ -10,7 +10,6 @@ from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
@@ -18,7 +17,7 @@ from app.auth.auth import require_role
 from app.auth.pdf_access import require_waybill_reader
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html
 from app.database import get_db
-from app.utils.route_db import route_db_session
+from app.utils.route_db import actor_snapshot, release_request_db, route_db_session
 from app.db.alive import order_alive, waybill_alive
 from app.schemas import WaybillCreate, WaybillLogisticsUpdate, WaybillStatusUpdate
 from app.utils.activity_log import (
@@ -60,8 +59,16 @@ def _user_label(db: Session, user_id: int | None, cache: dict[int, str | None] |
 
 
 def next_waybill_number(db: Session) -> str:
-    n = db.query(func.count(models.Waybill.id)).scalar() or 0
-    return f"WB-{int(n) + 1:04d}"
+    """Next WB-####. A purge must not collide with a number that is still in use."""
+    from app.utils.presales_order import _next_sequential_number
+
+    return _next_sequential_number(
+        db,
+        name="waybill",
+        prefix="WB",
+        column=models.Waybill.waybill_number,
+        width=4,
+    )
 
 
 def _waybill_items_payload(db: Session, order: models.Order) -> list[dict]:
@@ -425,8 +432,10 @@ def update_waybill_status(
 @router.post("/waybills/{waybill_id}/send-email")
 def send_waybill_email(
     waybill_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         wb = (
             db.query(models.Waybill)
@@ -450,6 +459,7 @@ def send_waybill_email(
         html = _render_waybill_html(db, wb)
         safe_n = re.sub(r"[^\w.\-]+", "_", waybill_number or "waybill")
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb_id)
     except RuntimeError as e:
@@ -488,7 +498,7 @@ def send_waybill_email(
             action=WAYBILL_SENT,
             entity_type="waybill",
             entity_id=wb_id,
-            actor_user=user,
+            actor_user=actor,
             meta={"waybill_number": waybill_number, "to": to_email},
         )
     return {"message": "Waybill sent"}
@@ -520,8 +530,10 @@ def record_waybill_print(
 @router.post("/waybills/{waybill_id}/download")
 def download_waybill(
     waybill_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         wb = (
             db.query(models.Waybill)
@@ -537,6 +549,7 @@ def download_waybill(
         wb_id = wb.id
         waybill_number = wb.waybill_number
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("waybill", "waybill", wb_id)
     except RuntimeError as e:
@@ -552,7 +565,7 @@ def download_waybill(
             action=WAYBILL_DOWNLOADED,
             entity_type="waybill",
             entity_id=wb_id,
-            actor_user=user,
+            actor_user=actor,
             meta={"waybill_number": waybill_number},
         )
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -50,14 +51,94 @@ def store_computed_totals(
     entity.grand_total = totals.total
 
 
+def _max_prefixed_number(db: Session, column, prefix: str) -> int:
+    """Highest numeric suffix already stored for PREFIX-###, including trashed rows."""
+    max_seq = 0
+    head = f"{prefix.upper()}-"
+    for (raw,) in db.query(column).all():
+        text = (raw or "").strip().upper()
+        if not text.startswith(head):
+            continue
+        tail = text[len(head) :].strip()
+        if not tail:
+            continue
+        try:
+            max_seq = max(max_seq, int(tail, 10))
+        except ValueError:
+            continue
+    return max_seq
+
+
+def _sequence_insert(db: Session):
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    return insert
+
+
+def _ensure_sequence_row(db: Session, name: str, floor: int) -> None:
+    existing = (
+        db.query(models.DocumentNumberSequence)
+        .filter(models.DocumentNumberSequence.name == name)
+        .first()
+    )
+    if existing is not None:
+        return
+    insert = _sequence_insert(db)
+    try:
+        with db.begin_nested():
+            db.execute(
+                insert(models.DocumentNumberSequence)
+                .values(name=name, last_value=floor)
+                .on_conflict_do_nothing(index_elements=["name"])
+            )
+    except IntegrityError:
+        return
+
+
+def _next_sequential_number(db: Session, *, name: str, prefix: str, column, width: int = 3) -> str:
+    """
+    Next PREFIX-### value.
+
+    The counter only moves forward, so deleting or purging a document cannot reuse
+    its number. The increment is a single UPDATE, which the database serializes
+    across concurrent transactions.
+    """
+    floor = _max_prefixed_number(db, column, prefix)
+    _ensure_sequence_row(db, name, floor)
+    db.execute(
+        update(models.DocumentNumberSequence)
+        .where(models.DocumentNumberSequence.name == name)
+        .where(models.DocumentNumberSequence.last_value < floor)
+        .values(last_value=floor)
+    )
+    value = db.execute(
+        update(models.DocumentNumberSequence)
+        .where(models.DocumentNumberSequence.name == name)
+        .values(last_value=models.DocumentNumberSequence.last_value + 1)
+        .returning(models.DocumentNumberSequence.last_value)
+    ).scalar_one()
+    return f"{prefix}-{int(value):0{width}d}"
+
+
 def next_proforma_number(db: Session) -> str:
-    count = db.query(func.count(models.ProformaInvoice.id)).scalar() or 0
-    return f"PROF-{int(count) + 1:03d}"
+    return _next_sequential_number(
+        db,
+        name="proforma",
+        prefix="PROF",
+        column=models.ProformaInvoice.proforma_number,
+    )
 
 
 def next_quotation_number(db: Session) -> str:
-    count = db.query(func.count(models.Quotation.id)).scalar() or 0
-    return f"QUO-{int(count) + 1:03d}"
+    return _next_sequential_number(
+        db,
+        name="quotation",
+        prefix="QUO",
+        column=models.Quotation.quote_number,
+    )
 
 
 def presales_to_invoice_activity_meta(

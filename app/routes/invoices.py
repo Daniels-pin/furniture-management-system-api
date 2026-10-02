@@ -16,7 +16,7 @@ from app import models
 from app.auth.auth import get_current_user, require_role
 from app.auth.pdf_access import require_invoice_reader
 from app.database import get_db
-from app.utils.route_db import route_db_session
+from app.utils.route_db import actor_snapshot, release_request_db, route_db_session
 from app.db.alive import invoice_alive, order_alive
 from app.schemas import InvoiceDetailResponse, InvoiceListItem
 from app.constants import APP_NAME, COMPANY_ADDRESSES, company_contact_line_html, company_payment_details_html, company_rc_line_html
@@ -525,11 +525,13 @@ def delete_invoice(
 @router.post("/invoices/{invoice_id}/send-email")
 def send_invoice_email(
     invoice_id: int,
+    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    with route_db_session() as db:
+    actor = actor_snapshot(user)
+    with route_db_session() as read_db:
         inv = (
-            db.query(models.Invoice)
+            read_db.query(models.Invoice)
             .options(joinedload(models.Invoice.customer), joinedload(models.Invoice.order))
             .filter(models.Invoice.id == invoice_id)
             .filter(invoice_alive())
@@ -544,7 +546,7 @@ def send_invoice_email(
         if not order or order.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Order not found")
         items = (
-            db.query(models.OrderItem)
+            read_db.query(models.OrderItem)
             .filter(models.OrderItem.order_id == order.id)
             .order_by(models.OrderItem.id.asc())
             .all()
@@ -553,10 +555,11 @@ def send_invoice_email(
         inv_id = inv.id
         to_email = inv.customer.email.strip()
         subject = f"{APP_NAME} - Invoice {inv.invoice_number}"
-        rc_number = get_rc_number(db)
+        rc_number = get_rc_number(read_db)
         html = _render_invoice_email(inv, items, rc_number)
         safe_inv = re.sub(r"[^\w.\-]+", "_", inv.invoice_number or "invoice")
 
+    release_request_db(db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv_id)
     except RuntimeError as e:
@@ -596,7 +599,7 @@ def send_invoice_email(
                 action=INVOICE_EMAIL_SENT,
                 entity_type="invoice",
                 entity_id=inv_id,
-                actor_user=user,
+                actor_user=actor,
                 meta={"to": to_email},
             )
     except Exception:
@@ -634,11 +637,13 @@ def record_invoice_print(
 @router.post("/invoices/{invoice_id}/download")
 def download_invoice_pdf(
     invoice_id: int,
+    db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
-    with route_db_session() as db:
+    actor = actor_snapshot(user)
+    with route_db_session() as read_db:
         inv = (
-            db.query(models.Invoice)
+            read_db.query(models.Invoice)
             .filter(models.Invoice.id == invoice_id)
             .filter(invoice_alive())
             .first()
@@ -648,6 +653,7 @@ def download_invoice_pdf(
         inv_id = inv.id
         inv_number = inv.invoice_number
 
+    release_request_db(db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("invoice", "invoice", inv_id)
     except RuntimeError as e:
@@ -663,7 +669,7 @@ def download_invoice_pdf(
             action=INVOICE_DOWNLOADED,
             entity_type="invoice",
             entity_id=inv_id,
-            actor_user=user,
+            actor_user=actor,
             meta={"invoice_number": inv_number},
         )
 

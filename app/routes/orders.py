@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
-from app.utils.route_db import route_db_session
+from app.utils.route_db import actor_snapshot, release_request_db, route_db_session
 from app import models
 from app.auth.auth import get_current_user, has_admin_privileges, is_factory_user, normalize_role, reject_staff, require_role
 from app.db.alive import customer_alive, order_alive
@@ -1331,8 +1331,10 @@ def update_order_status_patch(
 @router.post("/orders/{order_id}/send-email")
 def send_order_email(
     order_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         order = (
             db.query(models.Order)
@@ -1359,6 +1361,7 @@ def send_order_email(
         subject = f"{APP_NAME} - Order #{oid}"
         html = _render_order_document_html(order, cust, items)
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("order", "order", oid)
     except Exception as e:
@@ -1390,7 +1393,7 @@ def send_order_email(
             action=ORDER_EMAIL_SENT,
             entity_type="order",
             entity_id=oid,
-            actor_user=user,
+            actor_user=actor,
             meta={"order_id": oid, "to": to_email},
         )
     return {"message": "Order sent"}
@@ -1399,14 +1402,17 @@ def send_order_email(
 @router.post("/orders/{order_id}/download")
 def download_order_pdf(
     order_id: int,
+    request_db: Session = Depends(get_db),
     user=Depends(require_role(["admin", "showroom"])),
 ):
+    actor = actor_snapshot(user)
     with route_db_session() as db:
         order = db.query(models.Order).filter(models.Order.id == order_id).filter(order_alive()).first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         oid = order.id
 
+    release_request_db(request_db)
     try:
         pdf_bytes = document_pdf_bytes_via_ui("order", "order", oid)
     except RuntimeError as e:
@@ -1422,14 +1428,14 @@ def download_order_pdf(
             action=ORDER_DOWNLOADED,
             entity_type="order",
             entity_id=oid,
-            actor_user=user,
+            actor_user=actor,
             meta={"order_id": oid},
         )
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="order-{order.id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="order-{oid}.pdf"'},
     )
 
 

@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, PDF_DOWNLOAD_TIMEOUT_MS } from "./api";
 import type {
   AuditLogItem,
   ChangePasswordRequest,
@@ -89,20 +89,49 @@ import type {
   FieldVisitSummary
 } from "../types/api";
 
-function downloadBlobResponse(res: { data: Blob; headers: Record<string, unknown> }, fallbackFilename: string) {
-  const blob = res.data as Blob;
-  const cd = res.headers["content-disposition"] as string | undefined;
-  let filename = fallbackFilename;
-  if (cd) {
-    const m = /filename="([^"]+)"/.exec(cd);
-    if (m) filename = m[1];
-  }
+function filenameFromDisposition(cd: string | undefined, fallbackFilename: string) {
+  if (!cd) return fallbackFilename;
+  const m = /filename="([^"]+)"/.exec(cd);
+  return m?.[1] || fallbackFilename;
+}
+
+function triggerBrowserDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function downloadBlobResponse(res: { data: Blob; headers: Record<string, unknown> }, fallbackFilename: string) {
+  const blob = res.data as Blob;
+  const cd = res.headers["content-disposition"] as string | undefined;
+  triggerBrowserDownload(blob, filenameFromDisposition(cd, fallbackFilename));
+}
+
+const pdfDownloadConfig = { responseType: "blob" as const, timeout: PDF_DOWNLOAD_TIMEOUT_MS };
+
+async function downloadPdfResponse(
+  res: { data: Blob; headers: Record<string, unknown> },
+  fallbackFilename: string
+) {
+  const blob = res.data as Blob;
+  const head = await blob.slice(0, 5).text();
+  if (!head.startsWith("%PDF-")) {
+    let message = "Download failed. The server did not return a PDF.";
+    try {
+      const parsed = JSON.parse(await blob.text()) as { detail?: unknown };
+      if (typeof parsed?.detail === "string" && parsed.detail.trim()) message = parsed.detail;
+    } catch {
+      // Response was neither a PDF nor a JSON error.
+    }
+    throw new Error(message);
+  }
+  const cd = res.headers["content-disposition"] as string | undefined;
+  triggerBrowserDownload(blob, filenameFromDisposition(cd, fallbackFilename));
 }
 
 export const authApi = {
@@ -369,20 +398,8 @@ export const ordersApi = {
     return data;
   },
   async download(orderId: number) {
-    const res = await api.post(`/orders/${orderId}/download`, {}, { responseType: "blob" });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `order-${orderId}.pdf`;
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await api.post(`/orders/${orderId}/download`, {}, pdfDownloadConfig);
+    await downloadPdfResponse(res, `order-${orderId}.pdf`);
   },
   async createMultipart(form: FormData) {
     const { data } = await api.post<Order>("/orders", form, {
@@ -462,20 +479,8 @@ export const invoicesApi = {
     return data;
   },
   async download(invoiceId: number) {
-    const res = await api.post(`/invoices/${invoiceId}/download`, {}, { responseType: "blob" });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `invoice-${invoiceId}.pdf`;
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await api.post(`/invoices/${invoiceId}/download`, {}, pdfDownloadConfig);
+    await downloadPdfResponse(res, `invoice-${invoiceId}.pdf`);
   },
   async delete(invoiceId: number) {
     const { data } = await api.delete<{ message: string; order_id?: number }>(`/invoices/${invoiceId}`);
@@ -571,20 +576,8 @@ export const proformaApi = {
     return data;
   },
   async download(id: number) {
-    const res = await api.post(`/proforma/${id}/download`, {}, { responseType: "blob" });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `proforma-${id}.pdf`;
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await api.post(`/proforma/${id}/download`, {}, pdfDownloadConfig);
+    await downloadPdfResponse(res, `proforma-${id}.pdf`);
   },
   async convertToInvoice(id: number, payload?: { amount_paid?: number | null }) {
     const { data } = await api.post<{
@@ -638,20 +631,8 @@ export const quotationApi = {
     return data;
   },
   async download(id: number) {
-    const res = await api.post(`/quotations/${id}/download`, {}, { responseType: "blob" });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `quotation-${id}.pdf`;
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await api.post(`/quotations/${id}/download`, {}, pdfDownloadConfig);
+    await downloadPdfResponse(res, `quotation-${id}.pdf`);
   },
   async convertToProforma(id: number) {
     const { data } = await api.post<{ message: string; proforma_id: number }>(`/quotations/${id}/convert-to-proforma`);
@@ -720,20 +701,8 @@ export const waybillApi = {
     return data;
   },
   async download(id: number) {
-    const res = await api.post(`/waybills/${id}/download`, {}, { responseType: "blob" });
-    const blob = res.data as Blob;
-    const cd = res.headers["content-disposition"] as string | undefined;
-    let filename = `waybill-${id}.pdf`;
-    if (cd) {
-      const m = /filename="([^"]+)"/.exec(cd);
-      if (m) filename = m[1];
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await api.post(`/waybills/${id}/download`, {}, pdfDownloadConfig);
+    await downloadPdfResponse(res, `waybill-${id}.pdf`);
   },
   async delete(id: number) {
     const { data } = await api.delete<{ message: string }>(`/waybills/${id}`);
@@ -1049,8 +1018,8 @@ export const employeesApi = {
     downloadBlobResponse(res, "payroll_export.xlsx");
   },
   async exportPayrollPdf(params: EmployeePeriodParams) {
-    const res = await api.get("/employees/export/payroll.pdf", { responseType: "blob", params });
-    downloadBlobResponse(res, "payroll_export.pdf");
+    const res = await api.get("/employees/export/payroll.pdf", { ...pdfDownloadConfig, params });
+    await downloadPdfResponse(res, "payroll_export.pdf");
   },
   async getPayrollExport(periodId: number) {
     const { data } = await api.get<import("../types/api").PayrollExport>(

@@ -28,8 +28,8 @@ from app.database import SessionLocal  # noqa: E402
 from app.utils.root_admin import ROOT_ADMIN_ROLE  # noqa: E402
 
 
-EMAIL = os.getenv("ROOT_ADMIN_EMAIL", "root@nolimits.com").strip()
-PASSWORD = os.getenv("ROOT_ADMIN_PASSWORD", "change-me-now")
+EMAIL = os.getenv("ROOT_ADMIN_EMAIL", "").strip()
+PASSWORD = os.getenv("ROOT_ADMIN_PASSWORD", "")
 ROLE = ROOT_ADMIN_ROLE
 
 

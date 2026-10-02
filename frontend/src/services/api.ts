@@ -37,6 +37,9 @@ export const api = axios.create({
   timeout: 20000
 });
 
+/** PDF renders run longer than ordinary API calls. Keep this above the API render timeout. */
+export const PDF_DOWNLOAD_TIMEOUT_MS = 110_000;
+
 function sleep(ms: number) {
   return new Promise((r) => window.setTimeout(r, ms));
 }
@@ -79,6 +82,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
+    const data = error?.response?.data;
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      try {
+        const text = await data.text();
+        error.response.data = JSON.parse(text);
+      } catch {
+        // Leave non-JSON bodies unchanged so callers can still inspect them.
+      }
+    }
+
     const status = error?.response?.status;
 
     // Central auth handling
