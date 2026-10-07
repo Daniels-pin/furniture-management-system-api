@@ -1030,6 +1030,9 @@ export type ContractEmployeeListItem = {
 
 export type ContractEmployeeDetail = ContractEmployeeListItem & {
   address?: string | null;
+  linked_user_id?: number | null;
+  linked_username?: string | null;
+  linked_user_role?: Role | null;
   transactions: EmployeeTransaction[];
   created_at: string;
   updated_at?: string | null;

@@ -1413,6 +1413,17 @@ export const contractEmployeesApi = {
   async remove(employeeId: number) {
     const { data } = await api.delete<{ action: "deleted" | "inactivated"; message: string }>(`/contract-employees/${employeeId}`);
     return data;
+  },
+  async createUserAccount(
+    employeeId: number,
+    body: { username: string; password: string; role: string }
+  ) {
+    const { data } = await api.post<ContractEmployeeDetail>(`/contract-employees/${employeeId}/user-account`, body);
+    return data;
+  },
+  async updateUserAccount(employeeId: number, body: { username?: string; role?: string }) {
+    const { data } = await api.patch<ContractEmployeeDetail>(`/contract-employees/${employeeId}/user-account`, body);
+    return data;
   }
 };
 

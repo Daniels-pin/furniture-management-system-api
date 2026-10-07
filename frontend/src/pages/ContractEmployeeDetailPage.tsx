@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Modal } from "../components/ui/Modal";
-import { contractEmployeeAdminSecurityApi, contractEmployeesApi, contractJobsApi, employeePaymentsApi, notificationsApi } from "../services/endpoints";
+import { contractEmployeesApi, contractJobsApi, employeePaymentsApi, notificationsApi } from "../services/endpoints";
 import { getErrorMessage } from "../services/api";
 import { useToast } from "../state/toast";
 import { useAuth } from "../state/auth";
@@ -17,6 +17,7 @@ import {
   sortJobsByAttention
 } from "../utils/jobNotifications";
 import { ContractEmployeeLedger } from "../components/ContractEmployeeLedger";
+import { ContractEmployeeSystemAccessSection } from "../components/contractEmployee/ContractEmployeeSystemAccessSection";
 import { UserAccountInactiveBadge } from "../components/UserAccountStatusBadge";
 
 function getNumber(v: unknown): number {
@@ -167,11 +168,6 @@ export function ContractEmployeeDetailPage() {
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  const [resetOpen, setResetOpen] = useState(false);
-  const [resetPw, setResetPw] = useState("");
-  const [resetForce, setResetForce] = useState(true);
-  const [resetting, setResetting] = useState(false);
 
   const backTo = "/employees?tab=contract";
 
@@ -390,11 +386,6 @@ export function ContractEmployeeDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {auth.isAdmin ? (
-            <Button variant="secondary" disabled={!detail} onClick={() => setResetOpen(true)}>
-              Reset Password
-            </Button>
-          ) : null}
-          {auth.isAdmin ? (
             <Button
               variant="danger"
               disabled={!detail || deleting}
@@ -475,6 +466,8 @@ export function ContractEmployeeDetailPage() {
               </div>
             </div>
           </Card>
+
+          <ContractEmployeeSystemAccessSection detail={detail} onUpdated={setDetail} />
 
           <Card className="!p-4">
             <div className="text-xs font-semibold text-black/55">Financial summary</div>
@@ -1183,61 +1176,6 @@ export function ContractEmployeeDetailPage() {
             </div>
           </Modal>
 
-          <Modal open={resetOpen} title="Reset password" onClose={() => (resetting ? null : setResetOpen(false))}>
-            <div className="space-y-4">
-              <div className="text-sm text-black/70">
-                Set a new password for this contract employee. This takes effect immediately.
-              </div>
-              <label className="text-xs font-semibold text-black/60">
-                New password
-                <input
-                  className="mt-1 w-full rounded-xl border border-black/15 bg-white px-3 py-2.5 text-sm font-semibold"
-                  value={resetPw}
-                  onChange={(e) => setResetPw(e.target.value)}
-                  type="password"
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="inline-flex items-center gap-2 text-xs font-semibold text-black/70">
-                <input
-                  type="checkbox"
-                  checked={resetForce}
-                  onChange={(e) => setResetForce(e.target.checked)}
-                />
-                Force password change on next login (recommended)
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  isLoading={resetting}
-                  disabled={!detail}
-                  onClick={() => {
-                    if (!detail) return;
-                    if (resetPw.trim().length < 8) {
-                      toast.push("error", "Password must be at least 8 characters.");
-                      return;
-                    }
-                    setResetting(true);
-                    void contractEmployeeAdminSecurityApi
-                      .resetPassword(detail.id, { new_password: resetPw, force_change_on_next_login: resetForce })
-                      .then(() => toast.push("success", "Password reset."))
-                      .then(() => {
-                        setResetOpen(false);
-                        setResetPw("");
-                        setResetForce(true);
-                      })
-                      .catch((e) => toast.push("error", getErrorMessage(e)))
-                      .finally(() => setResetting(false));
-                  }}
-                >
-                  Reset
-                </Button>
-                <Button variant="ghost" disabled={resetting} onClick={() => setResetOpen(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </Modal>
             </>
           )}
         </>

@@ -34,9 +34,13 @@ from app.schemas import (
     ContractJobFinanceRow,
     ContractEmployeeUpdate,
     ContractEmployeeSendPaymentToFinanceIn,
+    ContractEmployeeUserAccountCreate,
+    ContractEmployeeUserAccountUpdate,
     EmployeeSendPaymentToFinance,
     EmployeeTransactionOut,
 )
+from app.utils.activity_log import USER_CREATED, log_activity
+from app.utils.root_admin import assert_can_create_role, assert_can_manage_user
 from app.utils.user_account import linked_user_account_active
 from app.utils.contract_employee_ledger import (
     build_contract_employee_ledger,
@@ -52,6 +56,28 @@ def _as_decimal(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
+def _linked_user_info(db: Session, user_id: int | None) -> tuple[int | None, str | None, str | None]:
+    if user_id is None:
+        return None, None, None
+    u = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if u is None:
+        return int(user_id), None, None
+    return int(u.id), (u.email or u.name), (u.role or None)
+
+
+def _assert_user_not_linked_elsewhere(db: Session, user_id: int, *, contract_employee_id: int) -> None:
+    other_ce = (
+        db.query(models.ContractEmployee)
+        .filter(models.ContractEmployee.user_id == user_id, models.ContractEmployee.id != contract_employee_id)
+        .first()
+    )
+    if other_ce:
+        raise HTTPException(status_code=409, detail="That user is already linked to another contract employee.")
+    other_emp = db.query(models.Employee).filter(models.Employee.user_id == user_id).first()
+    if other_emp:
+        raise HTTPException(status_code=409, detail="That user is already linked to a payroll employee record.")
+
+
 def _to_out(
     emp: models.ContractEmployee,
     *,
@@ -62,6 +88,9 @@ def _to_out(
     total_paid = derived_totals.total_paid if derived_totals is not None else Decimal(str(emp.total_paid or 0))
     balance = derived_totals.balance if derived_totals is not None else Decimal(str(emp.balance or 0))
     initiated_by_by_txn_id = initiated_by_by_txn_id or {}
+    linked_user_id, linked_username, linked_user_role = (
+        _linked_user_info(db, emp.user_id) if db is not None else (None, None, None)
+    )
 
     return ContractEmployeeOut(
         id=emp.id,
@@ -74,6 +103,9 @@ def _to_out(
         total_paid=total_paid,
         balance=balance,
         user_account_active=linked_user_account_active(db, emp.user_id) if db is not None else None,
+        linked_user_id=linked_user_id,
+        linked_username=linked_username,
+        linked_user_role=linked_user_role,
         transactions=[
             EmployeeTransactionOut.model_validate(
                 (setattr(t, "initiated_by", initiated_by_by_txn_id.get(int(t.id))) or t) if getattr(t, "id", None) else t
@@ -327,8 +359,6 @@ def admin_reset_contract_employee_password(
     u = db.query(models.User).filter(models.User.id == emp.user_id).first()
     if u is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if (u.role or "") != "contract_employee":
-        raise HTTPException(status_code=409, detail="Linked user is not a contract_employee account.")
 
     u.password = hash_password(new_password)
     u.must_change_password = force_change
@@ -349,6 +379,104 @@ def patch_contract_employee(
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(emp, k, v)
+    emp.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived, db=db)
+
+
+@router.post("/{employee_id}/user-account", response_model=ContractEmployeeOut)
+def create_contract_employee_user_account(
+    employee_id: int,
+    body: ContractEmployeeUserAccountCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+):
+    emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Contract employee not found")
+    if emp.user_id is not None:
+        raise HTTPException(status_code=409, detail="This contract employee already has a linked user account.")
+
+    username = (body.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+
+    role_value = body.role.value
+    assert_can_create_role(current_user, role_value)
+
+    existing_user = db.query(models.User).filter(models.User.email == username).first()
+    if existing_user:
+        raise HTTPException(status_code=409, detail="username must be unique")
+
+    display_name = (emp.full_name or "").strip() or username
+    u = models.User(
+        name=display_name,
+        email=username,
+        password=hash_password(body.password),
+        role=role_value,
+        must_change_password=True,
+        is_active=True,
+    )
+    db.add(u)
+    db.flush()
+
+    emp.user_id = u.id
+    emp.updated_at = datetime.utcnow()
+
+    log_activity(
+        db,
+        action=USER_CREATED,
+        entity_type="user",
+        entity_id=u.id,
+        actor_user=current_user,
+        meta={"role": u.role, "contract_employee_id": emp.id, "source": "contract_employee_profile"},
+    )
+    db.commit()
+    db.refresh(emp)
+    derived, _debug = compute_contract_employee_financials(db, emp.id)
+    return _to_out(emp, derived_totals=derived, db=db)
+
+
+@router.patch("/{employee_id}/user-account", response_model=ContractEmployeeOut)
+def update_contract_employee_user_account(
+    employee_id: int,
+    body: ContractEmployeeUserAccountUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(["admin"])),
+):
+    emp = db.query(models.ContractEmployee).filter(models.ContractEmployee.id == employee_id).first()
+    if emp is None:
+        raise HTTPException(status_code=404, detail="Contract employee not found")
+    if emp.user_id is None:
+        raise HTTPException(status_code=409, detail="This contract employee has no linked login account.")
+
+    u = db.query(models.User).filter(models.User.id == emp.user_id).first()
+    if u is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    assert_can_manage_user(current_user, u)
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if "username" in data:
+        username = (data["username"] or "").strip()
+        if not username:
+            raise HTTPException(status_code=400, detail="username is required")
+        taken = db.query(models.User).filter(models.User.email == username, models.User.id != u.id).first()
+        if taken:
+            raise HTTPException(status_code=409, detail="username must be unique")
+        u.email = username
+        if not (emp.full_name or "").strip():
+            u.name = username
+
+    if "role" in data and data["role"] is not None:
+        role_value = data["role"].value if hasattr(data["role"], "value") else str(data["role"])
+        assert_can_create_role(current_user, role_value)
+        u.role = role_value
+
     emp.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(emp)
@@ -378,6 +506,7 @@ def link_contract_employee_user(
     )
     if taken:
         raise HTTPException(status_code=409, detail="That user is already linked to another contract employee.")
+    _assert_user_not_linked_elsewhere(db, u.id, contract_employee_id=employee_id)
     emp.user_id = u.id
     emp.updated_at = datetime.utcnow()
     db.commit()

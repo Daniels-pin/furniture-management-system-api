@@ -2141,8 +2141,48 @@ class EmployeeTransactionOut(BaseModel):
         from_attributes = True
 
 
+class ContractEmployeeUserAccountRole(str, Enum):
+    """Roles assignable when creating or editing a login linked to a contract employee."""
+
+    contract_employee = "contract_employee"
+    showroom = "showroom"
+    factory = "factory"
+    admin = "admin"
+    finance = "finance"
+    staff = "staff"
+
+
+class ContractEmployeeUserAccountCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=320)
+    password: str = Field(..., min_length=8, max_length=128)
+    role: ContractEmployeeUserAccountRole = ContractEmployeeUserAccountRole.contract_employee
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _strip_username(cls, v: object) -> object:
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class ContractEmployeeUserAccountUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=1, max_length=320)
+    role: Optional[ContractEmployeeUserAccountRole] = None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _strip_username(cls, v: object) -> object:
+        if v is None:
+            return v
+        s = str(v).strip()
+        return s or None
+
+
 class ContractEmployeeOut(ContractEmployeeListItemOut):
     address: Optional[str] = None
+    linked_user_id: Optional[int] = None
+    linked_username: Optional[str] = None
+    linked_user_role: Optional[UserRole] = None
     transactions: List[EmployeeTransactionOut] = []
     created_at: datetime
     updated_at: Optional[datetime] = None
